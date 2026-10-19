@@ -1,0 +1,1796 @@
+{
+  "groups": [
+    {
+      "name": "rootshell-vnc",
+      "destination": "internal/ard/third_party/rootshell-vnc",
+      "files": {
+        "LICENSE": {
+          "url": "https://raw.githubusercontent.com/kitknox/rootshell-vnc/3950a452ad6ed75f82177964418092d1fa88a929/LICENSE",
+          "sha256": "a262166dbf148a28d773f62b48decef801c7c7f319fe3429f3bafe16ade12be1",
+          "size": 1080
+        }
+      }
+    },
+    {
+      "name": "go-ios",
+      "destination": "internal/coredevice/third_party/go-ios",
+      "files": {
+        "LICENSE": {
+          "url": "https://raw.githubusercontent.com/danielpaulus/go-ios/v1.0.218/LICENSE",
+          "sha256": "d368be6f632f8f928369c6f1923cf2f884a1ae42a5f0dd218acd96f9bcfa75b4",
+          "size": 1069
+        }
+      }
+    },
+    {
+      "name": "playfair",
+      "url": "https://codeload.github.com/FD-/RPiPlay/tar.gz/64d0341ed3bef098c940c9ed0675948870a271f9",
+      "sha256": "de150f398967d9e5ebe4f1ed61da313b944b5a03f62b58dce217b11714bea281",
+      "destination": "internal/airplay/playfair/third_party",
+      "files": {
+        "hand_garble.c": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/hand_garble.c",
+          "sha256": "cac6be5bb721e07d36d44577d112de63b40b8a12dd663495cd7cd600ab8743e4",
+          "size": 20325
+        },
+        "modified_md5.c": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/modified_md5.c",
+          "sha256": "850c815fd99c9f8459e2ff323c25963e20873328b838cda33fff88400fba2667",
+          "size": 3459
+        },
+        "omg_hax.c": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/omg_hax.c",
+          "sha256": "1bfdce59d4b462cf3b5c39f3d8b3f0f6a9c20eccf003128f972bcc7572f50823",
+          "size": 21648
+        },
+        "omg_hax.h": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/omg_hax.h",
+          "sha256": "839517a07a208435bce0f789f3c7a3b10d698f65509fdb6a2e601249ac4e3e88",
+          "size": 483271
+        },
+        "playfair.c": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/playfair.c",
+          "sha256": "322077cfb1f4ca555c302ec4f4f718c7daa42fbb358f9c7738e95d522263b707",
+          "size": 1025
+        },
+        "playfair.h": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/playfair.h",
+          "sha256": "5160ba53c5557f207d81998cc17a126ecb07842dc157c002ed54b397c536e613",
+          "size": 145
+        },
+        "sap_hash.c": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/sap_hash.c",
+          "sha256": "ec90021e184776e825582486588d3edf61f70b494bf74915e28bd6d37870a70d",
+          "size": 3357
+        },
+        "LICENSE.md": {
+          "member": "RPiPlay-64d0341ed3bef098c940c9ed0675948870a271f9/lib/playfair/LICENSE.md",
+          "sha256": "0b7cf235e6136b426f00870c3200bac308950973d062a733bdc3fc1eca36fa06",
+          "size": 34941
+        }
+      }
+    },
+    {
+      "name": "enet",
+      "url": "https://codeload.github.com/cgutman/enet/tar.gz/299ab267c9d83e9a8c5c6279e408568b9d455a6e",
+      "sha256": "fc23297e8caf60a95f74ece3640d600e8a1706d8926f56a139145ea4580c0080",
+      "destination": "internal/gamestream/native/third_party/enet",
+      "files": {
+        "callbacks.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/callbacks.c",
+          "sha256": "0d42c2a191c7d22ed0da2b14617b958cce2efd2a185b3aef9fe51a0fb6704ba2",
+          "size": 971
+        },
+        "compress.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/compress.c",
+          "sha256": "6af9da787bf5aaeb44befcf4e4a822d6e4d0972279bac73004f628bf06788774",
+          "size": 21286
+        },
+        "host.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/host.c",
+          "sha256": "2f9982c80122f368072ca0f42c6bfab38e9361f88899b63fed0ccf1f96845255",
+          "size": 17593
+        },
+        "include/enet/callbacks.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/callbacks.h",
+          "sha256": "20b3d8834bd19b77d9e8b6bcef4cd6fccb9875a4c1cdb0e5f7881b1b285c8d16",
+          "size": 522
+        },
+        "include/enet/enet.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/enet.h",
+          "sha256": "1eb023c8080f64a330a5330d3675725fbc05843c48b069ab73a3705d1b6a592a",
+          "size": 24109
+        },
+        "include/enet/list.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/list.h",
+          "sha256": "845120efb4ad1633eb2f61c8d8f5529b33de2170152779bc6046ac0453cab46b",
+          "size": 1099
+        },
+        "include/enet/protocol.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/protocol.h",
+          "sha256": "32de2a7e94e7dcfdf1b9fae2e4cde44f2e44ef49e9a1c4a9dac2165289da281f",
+          "size": 5748
+        },
+        "include/enet/time.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/time.h",
+          "sha256": "808d5c402c908c14afd0df385855a1b8713e5f69a04008c341a70928647d3e6e",
+          "size": 530
+        },
+        "include/enet/types.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/types.h",
+          "sha256": "543482db06a0086983641f550effec827e0ccf722667d4e1956cc92cb074dca6",
+          "size": 347
+        },
+        "include/enet/unix.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/unix.h",
+          "sha256": "79559bfd44fcba1d4cff55fd5e28b82b7d42ba3abc8c7661723b063a59ae4c9d",
+          "size": 1323
+        },
+        "include/enet/utility.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/utility.h",
+          "sha256": "819af3863e8cece7f588669b9281bce1728ab2a9bcfd309470ff350d4a1225e5",
+          "size": 237
+        },
+        "include/enet/win32.h": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/include/enet/win32.h",
+          "sha256": "e22685007924a43dfb802c0638de9dd264260fec655b80de03dafb0715648a1b",
+          "size": 1447
+        },
+        "list.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/list.c",
+          "sha256": "c5350bfa7b7d3cc49fa4b2ebab92e359995e4b1ca47c2c17b0fa338dad87e5a4",
+          "size": 1579
+        },
+        "packet.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/packet.c",
+          "sha256": "3528f05308bc132f056026c98ddd85581e8028e965412c1abb4df9ac06f425b1",
+          "size": 3904
+        },
+        "peer.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/peer.c",
+          "sha256": "753fe8800f9e40eb45fcc0a58bccb25bfb889a5c91539deadc88e56115275ac4",
+          "size": 37900
+        },
+        "protocol.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/protocol.c",
+          "sha256": "269b7131b50b90e7f978a04c7897c36d5dd1535f7261ac38079d2689632bc927",
+          "size": 70804
+        },
+        "unix.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/unix.c",
+          "sha256": "62814161c028c369dcbbdd7846dd162da7d0ae104b29618bed63a3dfa68e933b",
+          "size": 14908
+        },
+        "win32.c": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/win32.c",
+          "sha256": "c7f0d6a7b7802618a7d7b248bc956944d0f68c1b76176e1c019d1691a0e1fb00",
+          "size": 11229
+        },
+        "LICENSE": {
+          "member": "enet-299ab267c9d83e9a8c5c6279e408568b9d455a6e/LICENSE",
+          "sha256": "678ecf38808fd8cdfe0d07ae2edde62d99f00c96b59357e3334042d28cedd4e5",
+          "size": 1060
+        }
+      }
+    },
+    {
+      "name": "nanors",
+      "url": "https://codeload.github.com/sleepybishop/nanors/tar.gz/f3dc50c67ccfdd6c20177e57658a011a7d26e2bd",
+      "sha256": "d8e76020ad88cacfe19a1b379caec3f5a3c87059be93e7232cc7c4b18d0e8ef8",
+      "destination": "internal/gamestream/native/third_party/nanors",
+      "files": {
+        "deps/obl/gf2_8_affine_mat.h": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/deps/obl/gf2_8_affine_mat.h",
+          "sha256": "7742dcb53c95a6c04771b60ebd60f281a50684faf4599b4a9b0962daa5161d2a",
+          "size": 6229
+        },
+        "deps/obl/gf2_8_tables.h": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/deps/obl/gf2_8_tables.h",
+          "sha256": "ed4480ba7cb72217724b24ae2cb51c58c74a10456bb0d7c8317f9a5e613a31db",
+          "size": 37800
+        },
+        "deps/obl/oblas_common.c": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/deps/obl/oblas_common.c",
+          "sha256": "ef8b1e6e680326cfdd6032884009db94e6057a0922a07ad15f7c6f48546e6dad",
+          "size": 1901
+        },
+        "deps/obl/oblas_common.h": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/deps/obl/oblas_common.h",
+          "sha256": "2bc99fd7b5909713d4bb1d4b8cbb11ddff806a10bbb9a76ddaae44f3e905423d",
+          "size": 3260
+        },
+        "deps/obl/oblas_lite.c": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/deps/obl/oblas_lite.c",
+          "sha256": "489302482d8ecd758367889605ec9a4e6ccfe792e22ac59143fe1a43c28cf33e",
+          "size": 27700
+        },
+        "deps/obl/oblas_lite.h": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/deps/obl/oblas_lite.h",
+          "sha256": "ff68e76d40146de1273b7ea013fc6b741096681664df885938235f6fbc0a38c7",
+          "size": 643
+        },
+        "rs.c": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/rs.c",
+          "sha256": "b7f9aa3f1fc13f71f792561c0f0b7c95e75c985d4d3cfd0402dd83c98bdec75b",
+          "size": 5828
+        },
+        "rs.h": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/rs.h",
+          "sha256": "804149bd92bb4a17607897a5b6d233a05c1fd9ded02f0aa8dc10cec69a8f2bd5",
+          "size": 1670
+        },
+        "LICENSE": {
+          "member": "nanors-f3dc50c67ccfdd6c20177e57658a011a7d26e2bd/LICENSE",
+          "sha256": "3fdda5f011d8490331950398e86427d67dfae05e048681476c2c6b8c34bdd033",
+          "size": 1072
+        }
+      }
+    },
+    {
+      "name": "ffmpeg",
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+      "destination": "internal/avmedia/third_party",
+      "files": {
+        "libavcodec/d3d11va.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/d3d11va.h",
+          "sha256": "0a5b324124f3dd67942bac8d8288aba152215fb0ef2dede40d492198e0989346",
+          "size": 2610
+        },
+        "libavcodec/codec_id.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/codec_id.h",
+          "sha256": "765765fee16f9551ebd4fb5441fc6e5fc3d93c4754703831673bf887f2b1c87d",
+          "size": 18573
+        },
+        "libavcodec/dv_profile.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/dv_profile.h",
+          "sha256": "19f59e0b20ac583de4bfd76d18889d334bf0b6cdf7b5356723a33f3874738466",
+          "size": 3694
+        },
+        "libavcodec/defs.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/defs.h",
+          "sha256": "f1d391ac2417702b59b7a4b6ae3927eea8c8b5e9858ae9ade6fdd009a60bd9ce",
+          "size": 13333
+        },
+        "libavcodec/mediacodec.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/mediacodec.h",
+          "sha256": "1f64544000dd2f2ec94604d5fcf7c2a6d26d32d085264356084a4b53a7f0c3f0",
+          "size": 3570
+        },
+        "libavcodec/dxva2.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/dxva2.h",
+          "sha256": "3a603c2cf8bc00d0c9df6cc80a5f0ed091d48d20303713baac1c7e432619f0bb",
+          "size": 2128
+        },
+        "libavcodec/vdpau.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/vdpau.h",
+          "sha256": "014ec822b00aa33305d503ea128c04287e7d1265194fda3a91cc00cd2a763272",
+          "size": 4555
+        },
+        "libavcodec/version.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/version.h",
+          "sha256": "fd125ee7795a7ada495fb5491f01f09b72aa81d7c01ffb0aa42bc24e7b019b6f",
+          "size": 1619
+        },
+        "libavcodec/avcodec.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/avcodec.h",
+          "sha256": "324452903f0d3b4bb4078652ca32c9ca29d7b3db5e005e1af04487409bd3090d",
+          "size": 108600
+        },
+        "libavcodec/codec.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/codec.h",
+          "sha256": "ad4550b3f8ff7c7dd1c79a373721ba43273c4d1f156c683e11e27f9b5d89be1a",
+          "size": 11788
+        },
+        "libavcodec/packet.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/packet.h",
+          "sha256": "2e10c19c2fd953a5f18198eea1106334254d963f86df7999857c293dee8ac056",
+          "size": 32798
+        },
+        "libavcodec/smpte_436m.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/smpte_436m.h",
+          "sha256": "6e5a93aad21b7c098fb8ac5d1e4ba469887f8cfce0eb21762b35c2fd1097f2a8",
+          "size": 11580
+        },
+        "libavcodec/videotoolbox.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/videotoolbox.h",
+          "sha256": "b182be72a4404f99dc761680193f647c47c2a792ab50d975f6d8b75984c6f5b9",
+          "size": 2445
+        },
+        "libavcodec/dirac.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/dirac.h",
+          "sha256": "09fd1f670422ee61713568abd90fdf371b30e6fe35bc6fb8213f1ad32b45cf56",
+          "size": 4126
+        },
+        "libavcodec/qsv.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/qsv.h",
+          "sha256": "e45780237ab0e9ea9ec11aab9f62dfb8b059138f846632ecacdc024db16dfb1b",
+          "size": 3844
+        },
+        "libavcodec/adts_parser.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/adts_parser.h",
+          "sha256": "d466583a8dc1260b015e588adbe3abd45f3f8ca0e43722f3088b472e80492a15",
+          "size": 1354
+        },
+        "libavcodec/version_major.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/version_major.h",
+          "sha256": "4ce6f0974cff7069900045ee551001bb57902a2f5ec0b5f538fbc1e4e9f6aa83",
+          "size": 1629
+        },
+        "libavcodec/avdct.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/avdct.h",
+          "sha256": "c13d581750798e92f6d93e5903fbfdf81ee3a3b56003cbb2683f95d87e84b725",
+          "size": 2767
+        },
+        "libavcodec/jni.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/jni.h",
+          "sha256": "f98405ffb7ba26665cde92daef33bc4371c91aa6c85b522b36864ed289600ebc",
+          "size": 2263
+        },
+        "libavcodec/codec_desc.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/codec_desc.h",
+          "sha256": "d1fc6e89a3a7e49e61893620e00256d4f00db994764435ebe159b46a3c4326b5",
+          "size": 4264
+        },
+        "libavcodec/exif.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/exif.h",
+          "sha256": "f3305bce9777fe9bafdb6abf2b90ebdd9c3b17a4149b33002d8c22d1c4d9a6d3",
+          "size": 8430
+        },
+        "libavcodec/bsf.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/bsf.h",
+          "sha256": "cc26676aa44638fa5cbef953d967e19e2084b46aaa100f0a35ba2d34b302301c",
+          "size": 11540
+        },
+        "libavcodec/ac3_parser.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/ac3_parser.h",
+          "sha256": "200c6d2e96975196e8ba5f5716223dc9dda999d51578dabce2fca93175a05252",
+          "size": 1207
+        },
+        "libavcodec/codec_par.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/codec_par.h",
+          "sha256": "c33270179f2d44d94a75438923400f6a1c6dacf7b755692e723e3101cbeb65d3",
+          "size": 8400
+        },
+        "libavcodec/vorbis_parser.h": {
+          "member": "ffmpeg-9.0.2/libavcodec/vorbis_parser.h",
+          "sha256": "57077b2e1d28d42636cab0f69e4b92b1ad64ac2eaa2843c270a6afaf308a76ae",
+          "size": 2285
+        },
+        "libswscale/version.h": {
+          "member": "ffmpeg-9.0.2/libswscale/version.h",
+          "sha256": "ff958451c8c25cc4f6afa659fc2d7acf3bef43a36d5462f6c39552b0a204d80b",
+          "size": 1589
+        },
+        "libswscale/swscale.h": {
+          "member": "ffmpeg-9.0.2/libswscale/swscale.h",
+          "sha256": "3c3c7c2aec2494f4881e8fed8baf01ef0db8c08e7c01a3300946ea3bb102a162",
+          "size": 28916
+        },
+        "libswscale/version_major.h": {
+          "member": "ffmpeg-9.0.2/libswscale/version_major.h",
+          "sha256": "b5981c7a57dda91c1b58aa9df212dd0214091f9d87448f2d86dac07f0ea17549",
+          "size": 1176
+        },
+        "libavfilter/version.h": {
+          "member": "ffmpeg-9.0.2/libavfilter/version.h",
+          "sha256": "669a42c6e0d3caf894dd22cb417537e7b689e2cc2b16456ae8369a99d653125c",
+          "size": 1653
+        },
+        "libavfilter/buffersink.h": {
+          "member": "ffmpeg-9.0.2/libavfilter/buffersink.h",
+          "sha256": "72c8ae2993837c280cfdf176db13cf7dfaec6b0aec3fb81a899037083c62e2be",
+          "size": 6979
+        },
+        "libavfilter/version_major.h": {
+          "member": "ffmpeg-9.0.2/libavfilter/version_major.h",
+          "sha256": "1e25372ff02d13346c534159d48d965e67cee1caa63400dc5074e76fe0bdb222",
+          "size": 1223
+        },
+        "libavfilter/avfilter.h": {
+          "member": "ffmpeg-9.0.2/libavfilter/avfilter.h",
+          "sha256": "c80d2ee378b654c9bafbd466a762201fd894093420005ec24effe6b145debbac",
+          "size": 45670
+        },
+        "libavfilter/buffersrc.h": {
+          "member": "ffmpeg-9.0.2/libavfilter/buffersrc.h",
+          "sha256": "8f4131e9c38aff4ef8c0dd6b736a47f7601adeaf49344d48effa41c02b5f9745",
+          "size": 7227
+        },
+        "libavutil/parseutils.h": {
+          "member": "ffmpeg-9.0.2/libavutil/parseutils.h",
+          "sha256": "e8efed69396851f429a8258d50e9c4f0431f921687a7c31bf6db13d14f7482c3",
+          "size": 7888
+        },
+        "libavutil/pixelutils.h": {
+          "member": "ffmpeg-9.0.2/libavutil/pixelutils.h",
+          "sha256": "339cd6ffb6460d06401801c5dfb91ca66b9bdc028e1acc9ff4a0f447cfd3785c",
+          "size": 2051
+        },
+        "libavutil/hwcontext_oh.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_oh.h",
+          "sha256": "62df338901602b1ac41b8a61fb26b2179de39662e78f3e2b87b6464c53895ddc",
+          "size": 1098
+        },
+        "libavutil/error.h": {
+          "member": "ffmpeg-9.0.2/libavutil/error.h",
+          "sha256": "bcf4f7e69c7e0d658ad6e81611810f7cf1f0b8334ebe948d27e518c459e4104c",
+          "size": 5555
+        },
+        "libavutil/timestamp.h": {
+          "member": "ffmpeg-9.0.2/libavutil/timestamp.h",
+          "sha256": "dfd2e2071577f04ddc3cae200abd96ba0fb7d38f53359025af319d4b902f1947",
+          "size": 2726
+        },
+        "libavutil/avassert.h": {
+          "member": "ffmpeg-9.0.2/libavutil/avassert.h",
+          "sha256": "986182bd395e6559ec1a20243e540018ac99a64f1cd148f203ab6fbc4878f3ac",
+          "size": 4015
+        },
+        "libavutil/threadmessage.h": {
+          "member": "ffmpeg-9.0.2/libavutil/threadmessage.h",
+          "sha256": "9bb242d7adc48662b947726843108aff7c34547d7a4a0d0e6f58f54a00fc4c9f",
+          "size": 3910
+        },
+        "libavutil/lzo.h": {
+          "member": "ffmpeg-9.0.2/libavutil/lzo.h",
+          "sha256": "61e89928dee9d83030adececac06aa6c1ae2aada06c5682fde52c52015c53556",
+          "size": 2048
+        },
+        "libavutil/cast5.h": {
+          "member": "ffmpeg-9.0.2/libavutil/cast5.h",
+          "sha256": "05b2e13aecaa0adbb470081a689f45baffb8e03a71997c31f37a22ea4e383a60",
+          "size": 2561
+        },
+        "libavutil/encryption_info.h": {
+          "member": "ffmpeg-9.0.2/libavutil/encryption_info.h",
+          "sha256": "ccc3a4a889b8a3c5aaf37b9fb2407bcdf23a065487c7cba718518a517c463b18",
+          "size": 7056
+        },
+        "libavutil/ripemd.h": {
+          "member": "ffmpeg-9.0.2/libavutil/ripemd.h",
+          "sha256": "df9ef8c29ee31e5bd8ea299b03d51bd25fe937583793a994db53d1df2b316620",
+          "size": 2158
+        },
+        "libavutil/hwcontext_videotoolbox.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_videotoolbox.h",
+          "sha256": "71bbb6baf2dceff96c8673ef5afc5467548efb7b99c4d98d67df49c624f740c1",
+          "size": 3877
+        },
+        "libavutil/xtea.h": {
+          "member": "ffmpeg-9.0.2/libavutil/xtea.h",
+          "sha256": "2eb91f780cc4ad86095e4ebbce453475d40f4e9b8737d52bdf20a068dfafcdf0",
+          "size": 2834
+        },
+        "libavutil/channel_layout.h": {
+          "member": "ffmpeg-9.0.2/libavutil/channel_layout.h",
+          "sha256": "fbd3246297cd72be45268eacd9229d23247dfe394fb15b6a40ce8773422661c6",
+          "size": 34091
+        },
+        "libavutil/mem.h": {
+          "member": "ffmpeg-9.0.2/libavutil/mem.h",
+          "sha256": "bf9a1d8c218c38b333efb16be076c5778d31d66a0691bdd6175f171c08283d7c",
+          "size": 20457
+        },
+        "libavutil/time.h": {
+          "member": "ffmpeg-9.0.2/libavutil/time.h",
+          "sha256": "40e11fa242e0585996753affb054443e78be25919b7c3063042d0aaff1656760",
+          "size": 1800
+        },
+        "libavutil/hash.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hash.h",
+          "sha256": "b0896571267220736679eea28c454783795a02a0f1aef008ebe7c40489a75fdd",
+          "size": 8457
+        },
+        "libavutil/md5.h": {
+          "member": "ffmpeg-9.0.2/libavutil/md5.h",
+          "sha256": "5b42de1758d289f78b4d20c47686f443e4ea8a5a6411c0deb357f709d2ef34d7",
+          "size": 2092
+        },
+        "libavutil/hwcontext_drm.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_drm.h",
+          "sha256": "b598f37f40cf1342f923c0b97784a6f2830b543868eccee046375e096fbd5f24",
+          "size": 4673
+        },
+        "libavutil/detection_bbox.h": {
+          "member": "ffmpeg-9.0.2/libavutil/detection_bbox.h",
+          "sha256": "8f5817d77af243a52e905947aa5ae73c218d68dba909040b2f63bd2ca6f93922",
+          "size": 3524
+        },
+        "libavutil/lfg.h": {
+          "member": "ffmpeg-9.0.2/libavutil/lfg.h",
+          "sha256": "6f094721480df57814cad6e6ce0f3f81867ffec24c58ee4d3e1800ec3484a061",
+          "size": 2542
+        },
+        "libavutil/iamf.h": {
+          "member": "ffmpeg-9.0.2/libavutil/iamf.h",
+          "sha256": "c085745f71262d01c47f7c4eadbfd624cfd192056a87e4a83a9224e868c789ce",
+          "size": 21603
+        },
+        "libavutil/video_hint.h": {
+          "member": "ffmpeg-9.0.2/libavutil/video_hint.h",
+          "sha256": "7ae7b1e152aa7daf0ae55e29b1ed673039678d62d3f7a11d9c9443cfc8236997",
+          "size": 3585
+        },
+        "libavutil/timecode.h": {
+          "member": "ffmpeg-9.0.2/libavutil/timecode.h",
+          "sha256": "20936b639afa89e7a356bd5f5317b33745b1f4c3d467486ad043cb9b5d51527a",
+          "size": 7843
+        },
+        "libavutil/hwcontext_d3d12va.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_d3d12va.h",
+          "sha256": "62c67ab00795c6a521801d3ac32e9e09180982958130d3737a48f38d2db9d75b",
+          "size": 6201
+        },
+        "libavutil/base64.h": {
+          "member": "ffmpeg-9.0.2/libavutil/base64.h",
+          "sha256": "81ac13d23f3744fe85ea2651ce903e201cd55fc63fcdd899d2cfe5560d50ef3d",
+          "size": 2285
+        },
+        "libavutil/replaygain.h": {
+          "member": "ffmpeg-9.0.2/libavutil/replaygain.h",
+          "sha256": "4ec82edbdc4e5493fba3cae6a27566f0f15d1399ccf16e25073ffd50ba8187ea",
+          "size": 1607
+        },
+        "libavutil/frame.h": {
+          "member": "ffmpeg-9.0.2/libavutil/frame.h",
+          "sha256": "2eb83475589dbe72d9dbbb5367370b7c1384fbb20afffbcf482de0437b6eaf8e",
+          "size": 43901
+        },
+        "libavutil/version.h": {
+          "member": "ffmpeg-9.0.2/libavutil/version.h",
+          "sha256": "9173c3eae6d2a81d5db376784431768b37f436bfb42c00d70abc99d34d8ddbac",
+          "size": 4124
+        },
+        "libavutil/refstruct.h": {
+          "member": "ffmpeg-9.0.2/libavutil/refstruct.h",
+          "sha256": "8e7be80109d14fce52e3de7a30932efea283abe963ccdd755787e219a4699b19",
+          "size": 12172
+        },
+        "libavutil/hwcontext_d3d11va.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_d3d11va.h",
+          "sha256": "ac6ffe37fb89e9b935c2654cebd931f78972b960cd16406dfe9cc2b80869eef9",
+          "size": 7193
+        },
+        "libavutil/hwcontext_cuda.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_cuda.h",
+          "sha256": "4878f46347271bc7a9ff26bb1573449a99cc81447684e1034a3edd4b0ff91d9a",
+          "size": 1843
+        },
+        "libavutil/audio_fifo.h": {
+          "member": "ffmpeg-9.0.2/libavutil/audio_fifo.h",
+          "sha256": "3c513ca46927346c0673cd9db302afe62dbbf976844f36da0307fd10f7f47bfd",
+          "size": 5966
+        },
+        "libavutil/common.h": {
+          "member": "ffmpeg-9.0.2/libavutil/common.h",
+          "sha256": "08f14cf0ea3fede141d3790b30df2ed6edfc5dd81eb3c8181c3a33c314c46bbb",
+          "size": 17359
+        },
+        "libavutil/adler32.h": {
+          "member": "ffmpeg-9.0.2/libavutil/adler32.h",
+          "sha256": "f21a861957bf4b1812ed67fdc528890f9cff1bb483facf0f5109e4a51932fe3b",
+          "size": 1696
+        },
+        "libavutil/bprint.h": {
+          "member": "ffmpeg-9.0.2/libavutil/bprint.h",
+          "sha256": "5e3800d797fb8f67ffa7917420d3710c759afaca6f84b655fb64bf4dfa4650d2",
+          "size": 8818
+        },
+        "libavutil/log.h": {
+          "member": "ffmpeg-9.0.2/libavutil/log.h",
+          "sha256": "b8ef46be6210baadb3ad61eb72ee48e7dd7d6be39c17c3a8bbc8c81ba9e26110",
+          "size": 14088
+        },
+        "libavutil/file.h": {
+          "member": "ffmpeg-9.0.2/libavutil/file.h",
+          "sha256": "10daa0d0f1f2a3bedf2b7d8b5c4fea208dd9cf8caabb81dac341fc6ad24f685f",
+          "size": 2225
+        },
+        "libavutil/executor.h": {
+          "member": "ffmpeg-9.0.2/libavutil/executor.h",
+          "sha256": "db578edacd55adbb7be49ff6662777f3ddb84f530e0ad7d7cd8e0c18f0aae878",
+          "size": 1924
+        },
+        "libavutil/opt.h": {
+          "member": "ffmpeg-9.0.2/libavutil/opt.h",
+          "sha256": "ed473055a2c58dc24bc560d9c86dbbc51558c3e87836f1c0869011130783d999",
+          "size": 46030
+        },
+        "libavutil/samplefmt.h": {
+          "member": "ffmpeg-9.0.2/libavutil/samplefmt.h",
+          "sha256": "bec4e2708b42a026450c1227e137661f71850698f19b89f6e9f721fe993f56a9",
+          "size": 10270
+        },
+        "libavutil/avutil.h": {
+          "member": "ffmpeg-9.0.2/libavutil/avutil.h",
+          "sha256": "01a511d927eaab20cf57076611ff5649bc6089d2d766c4b20c9d11c3da095efd",
+          "size": 8702
+        },
+        "libavutil/raw_color_params.h": {
+          "member": "ffmpeg-9.0.2/libavutil/raw_color_params.h",
+          "sha256": "75710ebb3492d2d08734ac5530bca3b4ee60b614fb619aa50acd6da81e9f74c5",
+          "size": 4724
+        },
+        "libavutil/tx.h": {
+          "member": "ffmpeg-9.0.2/libavutil/tx.h",
+          "sha256": "a1c5c309f493cc22f4637e67696581be676cd33fdcaa0661a01f5bb4345c900a",
+          "size": 7141
+        },
+        "libavutil/hdr_dynamic_metadata.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hdr_dynamic_metadata.h",
+          "sha256": "a33138bdb7eea6c7895c8daa2cfcdf6eec5bea0774d40f4d62051426ddab8678",
+          "size": 18320
+        },
+        "libavutil/hdr_dynamic_vivid_metadata.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hdr_dynamic_vivid_metadata.h",
+          "sha256": "91580e9f4eb39ef296365aa756ef48a170b57c07b288be4bb10affd98ede83f2",
+          "size": 8427
+        },
+        "libavutil/eval.h": {
+          "member": "ffmpeg-9.0.2/libavutil/eval.h",
+          "sha256": "68efeaa9b6600ec47dae9031d1f0869818c88083b24fb133de3c2cf73f8adf1f",
+          "size": 6600
+        },
+        "libavutil/fifo.h": {
+          "member": "ffmpeg-9.0.2/libavutil/fifo.h",
+          "sha256": "9d6e9a6db887d32ee3f4bdafab68869d00f9d89590e33718922c37067eb7f5fe",
+          "size": 8487
+        },
+        "libavutil/uuid.h": {
+          "member": "ffmpeg-9.0.2/libavutil/uuid.h",
+          "sha256": "e669ce76a6b987e189b4d7ff62d0fd9ad6e334fa4967076cc6d912976574b646",
+          "size": 4895
+        },
+        "libavutil/downmix_info.h": {
+          "member": "ffmpeg-9.0.2/libavutil/downmix_info.h",
+          "sha256": "2fc23ad8f0750d82fcd6aa3b653998e2ea9721f9d1664df7b6cb80e93d7fa3aa",
+          "size": 3235
+        },
+        "libavutil/macros.h": {
+          "member": "ffmpeg-9.0.2/libavutil/macros.h",
+          "sha256": "b63b3a268b096f0eed1e91b821714cff334e5dc5bb34365148704393ae15321e",
+          "size": 2304
+        },
+        "libavutil/stereo3d.h": {
+          "member": "ffmpeg-9.0.2/libavutil/stereo3d.h",
+          "sha256": "32cc28caac01b5bf18ae016af4b0ffffbe40feb77e96cb434d723954a83b776a",
+          "size": 7446
+        },
+        "libavutil/intreadwrite.h": {
+          "member": "ffmpeg-9.0.2/libavutil/intreadwrite.h",
+          "sha256": "6e9c404e70f71a02208af81910434e47c501cbe1b0a80116e731cb673f98c734",
+          "size": 19426
+        },
+        "libavutil/film_grain_params.h": {
+          "member": "ffmpeg-9.0.2/libavutil/film_grain_params.h",
+          "sha256": "414d2755769a6993d0c3f4b5a7e92e22a558675f0c49b44df3afc876473e825c",
+          "size": 9190
+        },
+        "libavutil/cpu.h": {
+          "member": "ffmpeg-9.0.2/libavutil/cpu.h",
+          "sha256": "52034bd08c5fa7b476451acb4578152bfd88e650774a92c107c810e820314063",
+          "size": 6857
+        },
+        "libavutil/dovi_meta.h": {
+          "member": "ffmpeg-9.0.2/libavutil/dovi_meta.h",
+          "sha256": "e0ca4be00b203f35ceff50b53c92f448450c823eb24df7f01db0cd0d6c9077cb",
+          "size": 12730
+        },
+        "libavutil/hwcontext_dxva2.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_dxva2.h",
+          "sha256": "73a0333b65e99675834dcb1b63a5e9339638ccc619f1a2fcba85cdd0e179ade0",
+          "size": 2411
+        },
+        "libavutil/ambient_viewing_environment.h": {
+          "member": "ffmpeg-9.0.2/libavutil/ambient_viewing_environment.h",
+          "sha256": "00135de08089f8c711bb113588f80575a1d26e86d50b6dac5928a27a0ff9a8c7",
+          "size": 2585
+        },
+        "libavutil/murmur3.h": {
+          "member": "ffmpeg-9.0.2/libavutil/murmur3.h",
+          "sha256": "649258a51c4737fa19a025a489e2ac9e9b06a96eafa802f2765178c684382887",
+          "size": 3507
+        },
+        "libavutil/intfloat.h": {
+          "member": "ffmpeg-9.0.2/libavutil/intfloat.h",
+          "sha256": "3a29e4eebc8c269cfd867b96de91d8231773d392c12a8820e46eaba96d2b4ca1",
+          "size": 1726
+        },
+        "libavutil/hwcontext.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext.h",
+          "sha256": "229c918d0809dbbaa0aaebd18848bece039ad458538f0fcafc11015fd2111fc2",
+          "size": 24170
+        },
+        "libavutil/hmac.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hmac.h",
+          "sha256": "d14d625a897d6bba0668acdf33dc597bb0050237c5c1a5f7e568fe36822782e7",
+          "size": 2865
+        },
+        "libavutil/hwcontext_vaapi.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_vaapi.h",
+          "sha256": "5a63f50d3f1972b63038f03e005d53d8e666f119d8015f07038312c713aaf0f1",
+          "size": 3784
+        },
+        "libavutil/bswap.h": {
+          "member": "ffmpeg-9.0.2/libavutil/bswap.h",
+          "sha256": "1d985324139f195d3247c3bb59aa7976c074fbaaf85b8b783f88c178c59f48d3",
+          "size": 2788
+        },
+        "libavutil/aes.h": {
+          "member": "ffmpeg-9.0.2/libavutil/aes.h",
+          "sha256": "0a86ebeaf9ed33548bf0f92359f7047e521d4d80fe6b0ef1c8ef9505e38b6d28",
+          "size": 1912
+        },
+        "libavutil/rational.h": {
+          "member": "ffmpeg-9.0.2/libavutil/rational.h",
+          "sha256": "f4fb850924b414f9ca35579df4e50d6f406734eb9735bbfbf388ae22ec5a0a9c",
+          "size": 6287
+        },
+        "libavutil/sha512.h": {
+          "member": "ffmpeg-9.0.2/libavutil/sha512.h",
+          "sha256": "da265152798b221706d7fe95293a0e8cd18fa2b5087bf32504a8120f10e7658f",
+          "size": 2413
+        },
+        "libavutil/attributes.h": {
+          "member": "ffmpeg-9.0.2/libavutil/attributes.h",
+          "sha256": "041300e50a7e4c97d5ab3ea8c92d3db637e7047c8cb021f64ead2874391ee954",
+          "size": 6672
+        },
+        "libavutil/buffer.h": {
+          "member": "ffmpeg-9.0.2/libavutil/buffer.h",
+          "sha256": "f16742d574216434580573a2b09f56fc5b66b7dda1960d4f02ba59e3269ba548",
+          "size": 11998
+        },
+        "libavutil/hwcontext_amf.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_amf.h",
+          "sha256": "ce2775092bba5f8b5b24d281394487bcf89ba560eb115547bfe43f0698bca8b9",
+          "size": 2217
+        },
+        "libavutil/camellia.h": {
+          "member": "ffmpeg-9.0.2/libavutil/camellia.h",
+          "sha256": "1db30753e71c73f1937e807850069e8215cdf37a1bc3ff89d3a6370a719c1fde",
+          "size": 2139
+        },
+        "libavutil/hwcontext_qsv.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_qsv.h",
+          "sha256": "735168cd07100f41000e2cb4121786dcbd7d54fc12585b4682faae28f883d653",
+          "size": 2515
+        },
+        "libavutil/avstring.h": {
+          "member": "ffmpeg-9.0.2/libavutil/avstring.h",
+          "sha256": "630d231013e996b10b2c9aec98c569f8f88dc53a425491d435d868172a53ecb0",
+          "size": 14962
+        },
+        "libavutil/hwcontext_vulkan.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_vulkan.h",
+          "sha256": "aeb211e2a4c97eac7fd2ff8908e57b075dc2a125f66a2fe47e770c8cf7cc2634",
+          "size": 11870
+        },
+        "libavutil/sha.h": {
+          "member": "ffmpeg-9.0.2/libavutil/sha.h",
+          "sha256": "91280db6995b1b99b9e5aad0aa211a3177dc4d2841da2fea097f54964b7891fd",
+          "size": 2368
+        },
+        "libavutil/mastering_display_metadata.h": {
+          "member": "ffmpeg-9.0.2/libavutil/mastering_display_metadata.h",
+          "sha256": "dbb1584931d4d8ff7d7a868b519097b6d92f0426d781543987cb784f80ba973a",
+          "size": 4284
+        },
+        "libavutil/crc.h": {
+          "member": "ffmpeg-9.0.2/libavutil/crc.h",
+          "sha256": "5728cf65705a46723ea28b4f6c8361aad82b76a90e859943efe8af0edb79ec86",
+          "size": 3259
+        },
+        "libavutil/twofish.h": {
+          "member": "ffmpeg-9.0.2/libavutil/twofish.h",
+          "sha256": "b71714336821e1c606b65620ba4b1ea47e431666be41f3174facbc51047fd814",
+          "size": 2245
+        },
+        "libavutil/random_seed.h": {
+          "member": "ffmpeg-9.0.2/libavutil/random_seed.h",
+          "sha256": "4490fd79919aadb18f765caac0c210d22cafa4d63cddcf9275e6f5bf66e2fdea",
+          "size": 1889
+        },
+        "libavutil/aes_ctr.h": {
+          "member": "ffmpeg-9.0.2/libavutil/aes_ctr.h",
+          "sha256": "fbbb94888bfab2ea7141e7e1afa5872de099e7ee57baea17632c3d4fdd2cba3f",
+          "size": 2443
+        },
+        "libavutil/display.h": {
+          "member": "ffmpeg-9.0.2/libavutil/display.h",
+          "sha256": "b9c78c80aa9331b945802b6bcd1db4ecc9ec4f9fad41993cc82b880c0dec2576",
+          "size": 3472
+        },
+        "libavutil/blowfish.h": {
+          "member": "ffmpeg-9.0.2/libavutil/blowfish.h",
+          "sha256": "b955a63c60c8b3be0203ec6c3973f9084d848cf884fe56cd56088301aeef7992",
+          "size": 2394
+        },
+        "libavutil/pixfmt.h": {
+          "member": "ffmpeg-9.0.2/libavutil/pixfmt.h",
+          "sha256": "6a8f5a61fe8d3bda60a62e59cc15237f61555ebd77adf477fc6d69ab8e609f77",
+          "size": 47890
+        },
+        "libavutil/container_fifo.h": {
+          "member": "ffmpeg-9.0.2/libavutil/container_fifo.h",
+          "sha256": "d8bbe3f1f4dfcdcd56f40618961736ff3bc34fafd81f52ac6c993c91ef43916a",
+          "size": 4855
+        },
+        "libavutil/des.h": {
+          "member": "ffmpeg-9.0.2/libavutil/des.h",
+          "sha256": "15ebdda1af65d91c4607a3444c5f749d5e9757ff5d7f4b04213b3194603f74d9",
+          "size": 2514
+        },
+        "libavutil/pixdesc.h": {
+          "member": "ffmpeg-9.0.2/libavutil/pixdesc.h",
+          "sha256": "4dc17f708daedb294fd3aa7ec1940f4b9a504518b4d4813be83db605ac13494d",
+          "size": 16432
+        },
+        "libavutil/motion_vector.h": {
+          "member": "ffmpeg-9.0.2/libavutil/motion_vector.h",
+          "sha256": "dc0b0a15a638c8b91df95a418c5951ee5e787d518f22b6e3d70094922536e8bb",
+          "size": 1770
+        },
+        "libavutil/tree.h": {
+          "member": "ffmpeg-9.0.2/libavutil/tree.h",
+          "sha256": "2f8e906917612a05c138036dea7ed9f8faee5899413a523fdad4eb51711bc1e5",
+          "size": 5408
+        },
+        "libavutil/rc4.h": {
+          "member": "ffmpeg-9.0.2/libavutil/rc4.h",
+          "sha256": "61b69b7bc0183b17e5d6e4a56e991fa2452bb97c0d4512c4b0d70b69656ee305",
+          "size": 2004
+        },
+        "libavutil/hwcontext_mediacodec.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_mediacodec.h",
+          "sha256": "8c602859ebca906ba6e43ea548ff28821cf2886b4500b2be1deaaf2d552496d4",
+          "size": 1988
+        },
+        "libavutil/tea.h": {
+          "member": "ffmpeg-9.0.2/libavutil/tea.h",
+          "sha256": "3c1e93c566630bb4eeedad3ef3c8719bd6050081ac1c764b1fde81aba4969076",
+          "size": 2035
+        },
+        "libavutil/hwcontext_opencl.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_opencl.h",
+          "sha256": "c6e9ec709d824a24928e1dd9e5f80411b008657402320d6e02d149df83dc6c3c",
+          "size": 3098
+        },
+        "libavutil/hwcontext_vdpau.h": {
+          "member": "ffmpeg-9.0.2/libavutil/hwcontext_vdpau.h",
+          "sha256": "6c96373d9e5deb2c500004f3f55ee1d2cea0f76cdfaeabaf5a3ad3e4938e8252",
+          "size": 1360
+        },
+        "libavutil/tdrdi.h": {
+          "member": "ffmpeg-9.0.2/libavutil/tdrdi.h",
+          "sha256": "9b7ac5326cadef9f3956470e22cdb9ba751c0da90b39f9df4562bffc8e4115a3",
+          "size": 5280
+        },
+        "libavutil/dict.h": {
+          "member": "ffmpeg-9.0.2/libavutil/dict.h",
+          "sha256": "b8b7abebb6e5ab5ffa70b8463df52c96d4e774aa2d5574bebbc02f6031e62ad8",
+          "size": 9521
+        },
+        "libavutil/imgutils.h": {
+          "member": "ffmpeg-9.0.2/libavutil/imgutils.h",
+          "sha256": "8e0055fd86fb10b7c9e435e9375736b6db201cb9930a38fb4ff1e1a1da8e0cff",
+          "size": 16326
+        },
+        "libavutil/csp.h": {
+          "member": "ffmpeg-9.0.2/libavutil/csp.h",
+          "sha256": "2760b91454642f77f88339f39b614da987c806b30ea54b6f6eddb1a7ac3a738e",
+          "size": 7304
+        },
+        "libavutil/spherical.h": {
+          "member": "ffmpeg-9.0.2/libavutil/spherical.h",
+          "sha256": "ab945689e58b593157d8532f315c8fb8674fb4c9f4ac96c1106a5aa62be8889d",
+          "size": 8607
+        },
+        "libavutil/video_enc_params.h": {
+          "member": "ffmpeg-9.0.2/libavutil/video_enc_params.h",
+          "sha256": "f287486c4f828f82e579f93ea98fccb98749129544f660decfa56da6f818fd57",
+          "size": 5991
+        },
+        "libavutil/mathematics.h": {
+          "member": "ffmpeg-9.0.2/libavutil/mathematics.h",
+          "sha256": "e85c71fb77b0fe7823a88db904982e2a9b953e806ced0714fe6cc6b8a0951469",
+          "size": 9565
+        },
+        "libavdevice/avdevice.h": {
+          "member": "ffmpeg-9.0.2/libavdevice/avdevice.h",
+          "sha256": "a4d649615eeab8d4c2cf882a6dd06be4a95f74a1f6cf18d6ea819186c2d60ac3",
+          "size": 13506
+        },
+        "libavdevice/version.h": {
+          "member": "ffmpeg-9.0.2/libavdevice/version.h",
+          "sha256": "cdd65f3a95c73c5f89375684ea09e4233bfac79e14c2e584f5fc3b63f51f7ed9",
+          "size": 1624
+        },
+        "libavdevice/version_major.h": {
+          "member": "ffmpeg-9.0.2/libavdevice/version_major.h",
+          "sha256": "0efd5fa8f843690041e388e98a0acd53a37ae3129bfb0f8a8aa6d4798caa43b8",
+          "size": 1200
+        },
+        "libswresample/version.h": {
+          "member": "ffmpeg-9.0.2/libswresample/version.h",
+          "sha256": "82e6be19053e0007658d30c18bb463fdde69f9f1e957314908cae73ae3e38b68",
+          "size": 1707
+        },
+        "libswresample/version_major.h": {
+          "member": "ffmpeg-9.0.2/libswresample/version_major.h",
+          "sha256": "c730cced7041664f716e82872850329b59fa965f1c93044ce37593bd14a59c40",
+          "size": 1015
+        },
+        "libswresample/swresample.h": {
+          "member": "ffmpeg-9.0.2/libswresample/swresample.h",
+          "sha256": "b23e625ab295d57a3d1ae0142c937b485dc386a36e4ed63f4b99ed886dc905e1",
+          "size": 22361
+        },
+        "libavformat/version.h": {
+          "member": "ffmpeg-9.0.2/libavformat/version.h",
+          "sha256": "6e75a8cd7772f334958ffce859e3e23987963e3b406f12d9ec71650ca437fb92",
+          "size": 1652
+        },
+        "libavformat/avformat.h": {
+          "member": "ffmpeg-9.0.2/libavformat/avformat.h",
+          "sha256": "694da025f30497481f4703e06de106bd417a5718f8fdcdf5e09e34f4b5f21114",
+          "size": 121793
+        },
+        "libavformat/avio.h": {
+          "member": "ffmpeg-9.0.2/libavformat/avio.h",
+          "sha256": "30312971fc299e65bc69cf1beddb76f50394e044d9c71fe32fec3ae9c13bd1af",
+          "size": 31178
+        },
+        "libavformat/version_major.h": {
+          "member": "ffmpeg-9.0.2/libavformat/version_major.h",
+          "sha256": "436db6c1b56db87e83682639fd0285e8b0138acc4fb572868c70a690eda7bb5e",
+          "size": 1876
+        },
+        "COPYING.LGPLv2.1": {
+          "member": "ffmpeg-9.0.2/COPYING.LGPLv2.1",
+          "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30",
+          "size": 26517
+        }
+      },
+      "feature": "ffmpeg",
+      "generated": {
+        "libavutil/avconfig.h": "/* Generated by ffmpeg configure */\n#ifndef AVUTIL_AVCONFIG_H\n#define AVUTIL_AVCONFIG_H\n#define AV_HAVE_BIGENDIAN 0\n#define AV_HAVE_FAST_UNALIGNED 1\n#endif /* AVUTIL_AVCONFIG_H */\n",
+        "libavutil/ffversion.h": "/* Automatically generated by version.sh, do not manually edit! */\n#ifndef AVUTIL_FFVERSION_H\n#define AVUTIL_FFVERSION_H\n#define FFMPEG_VERSION \"9.0.2\"\n#endif /* AVUTIL_FFVERSION_H */\n"
+      }
+    },
+    {
+      "name": "nvenc",
+      "url": "https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/refs/tags/n12.0.16.1",
+      "sha256": "37e31c7ed0c9bf2da74646a3ec426c38a6d29e60b1fb7bff3e03a99b9412e050",
+      "destination": "internal/videoenc/third_party/nvenc",
+      "files": {
+        "nvEncodeAPI.h": {
+          "member": "nv-codec-headers-n12.0.16.1/include/ffnvcodec/nvEncodeAPI.h",
+          "sha256": "808db2a21232839ee8a6057601f1964e90b20385f6dbf080f3cd33f6470c66c4",
+          "size": 278285
+        },
+        "LICENSE": {
+          "member": "nv-codec-headers-n12.0.16.1/include/ffnvcodec/nvEncodeAPI.h",
+          "sha256": "070c4764a9f299ad44b282f98903c2ca5eee7c57a75f3c0b94e270865c33195e",
+          "source_sha256": "808db2a21232839ee8a6057601f1964e90b20385f6dbf080f3cd33f6470c66c4",
+          "size": 278285,
+          "extract": "c-license"
+        }
+      },
+      "platforms": [
+        "windows"
+      ]
+    },
+    {
+      "name": "amf",
+      "destination": "internal/videoenc/third_party/amf",
+      "platforms": [
+        "windows"
+      ],
+      "files": {
+        "components/ColorSpace.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/ColorSpace.h",
+          "sha256": "4ef6392bb4b9c6b05d00b5cd1486b99866e40e61449206a3a515063e4ffd289b",
+          "size": 9453
+        },
+        "components/Component.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/Component.h",
+          "sha256": "f3f18680d55a65fdf5e0351d3fde1dcd9bdd2d6caec268c8c915c4227ffa1edc",
+          "size": 25393
+        },
+        "components/ComponentCaps.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/ComponentCaps.h",
+          "sha256": "2479eb2a6174a1b63552c509abac1b701eddcab5a5eac5a7f4d9f40274d588b4",
+          "size": 8420
+        },
+        "components/PreAnalysis.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/PreAnalysis.h",
+          "sha256": "801a197f578104c4481d21f68c3dd6ea8fbe2f9774424277499c5de70d213662",
+          "size": 7959
+        },
+        "components/VideoEncoderAV1.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/VideoEncoderAV1.h",
+          "sha256": "2c4e18f6d0be4701d9a9d9ad4298ed5d7ed7c1fd7a909995c4e745874d8203a0",
+          "size": 35845
+        },
+        "components/VideoEncoderVCE.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/VideoEncoderVCE.h",
+          "sha256": "8dcddd6df00debd096db29f00fa155e3e179ebc6ea4c6c1edc5027eb857cffd5",
+          "size": 31462
+        },
+        "core/AudioBuffer.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/AudioBuffer.h",
+          "sha256": "74b4bbc22c66520c233f258dba0642c3f4de66ae02d16201c3e224f9238b5d5d",
+          "size": 11816
+        },
+        "core/Buffer.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Buffer.h",
+          "sha256": "3e52733b46e168f1b0118381df1ce17eed17353ca89b39c77394f59e254aef67",
+          "size": 14987
+        },
+        "core/Compute.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Compute.h",
+          "sha256": "dc35befae2cecf5d2b866632a8b16c2f2ec3a543a6b474f941a33fcd7a8d1e0a",
+          "size": 18620
+        },
+        "core/ComputeFactory.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/ComputeFactory.h",
+          "sha256": "50acf69fb670bc6cf093384d1b698bf9e44cda8dd49e02ef24eacfb86ad8ccae",
+          "size": 8147
+        },
+        "core/Context.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Context.h",
+          "sha256": "98313f5df4b87e8bffabebd3064689e5f0046fb821e4c364fabb7376761479fc",
+          "size": 44321
+        },
+        "core/Data.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Data.h",
+          "sha256": "eaac4d80dd3215638c70f8a4ca01791d26d9df77586f665a772bb51907a8035b",
+          "size": 9350
+        },
+        "core/Debug.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Debug.h",
+          "sha256": "56666589bf6ad20c6286a048da751c2d7722f70c73d962ee3c205a6d709b6aff",
+          "size": 3317
+        },
+        "core/Factory.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Factory.h",
+          "sha256": "644814e97dd359f08d66a73748b60262149b106d28423c31b573cecb4be57979",
+          "size": 6139
+        },
+        "core/Interface.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Interface.h",
+          "sha256": "304f6d6077e9b0733859d44a5e43a343ae374c8fe72c7d79741c0aca89c21162",
+          "size": 8345
+        },
+        "core/Plane.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Plane.h",
+          "sha256": "5ad5165e9de2afcfc2da828e8704c838b1f82e8ead7422fbcfc32c758672e1f3",
+          "size": 5260
+        },
+        "core/Platform.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Platform.h",
+          "sha256": "c060dc2466d0d886d1a09e5fea891aa3bc2efd08dc8d5ef59faa4d0a7f42abd4",
+          "size": 16398
+        },
+        "core/PropertyStorage.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/PropertyStorage.h",
+          "sha256": "0059b787e78cd7c4e57212ccaab56ad7e17e9474a31337da0eac5b2d056a5dd8",
+          "size": 12981
+        },
+        "core/PropertyStorageEx.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/PropertyStorageEx.h",
+          "sha256": "871136e46586baa1fc77121935b503aaa16523d006c3e435ce50698605675fad",
+          "size": 10249
+        },
+        "core/Result.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Result.h",
+          "sha256": "a469ff33875484b5762199da757819056ff4a7535bfdcec1f4cf2ffc403b98f2",
+          "size": 5655
+        },
+        "core/Surface.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Surface.h",
+          "sha256": "2f7f899a9f6291e0b02a447af6dd0e2c367a02271e7295c26cfd3b15de7d82a9",
+          "size": 23758
+        },
+        "core/Trace.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Trace.h",
+          "sha256": "ae8c5fee671f02b90d3ccab312cfa6f74424351f070a7dd4ed7aba437fd55c30",
+          "size": 9835
+        },
+        "core/Variant.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Variant.h",
+          "sha256": "5d15e778f3b846fa6eb95737e7222e0726b09615eb6270aac12bd2caa7137234",
+          "size": 92794
+        },
+        "core/Version.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/core/Version.h",
+          "sha256": "739f6559891d627fc373bfd63c4bcc3c8a432766703928d94cc1b92bc7bcfdf3",
+          "size": 2878
+        },
+        "LICENSE.txt": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/LICENSE.txt",
+          "sha256": "eb297397aaa455b5668ab67d216b83828466152dab123fa92384c6ec16b74170",
+          "size": 1747
+        }
+      }
+    },
+    {
+      "name": "vpl",
+      "destination": "internal/videoenc/third_party/vpl",
+      "platforms": [
+        "windows"
+      ],
+      "files": {
+        "mfxcommon.h": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/api/vpl/mfxcommon.h",
+          "sha256": "c290e6ae15f35436097f0b605c02566fa67094cf449d090520d23c7e3fa194a8",
+          "size": 45686
+        },
+        "mfxdefs.h": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/api/vpl/mfxdefs.h",
+          "sha256": "9cdfeca6651e3d994d068389e30c6235c6970e018be98d2bacc89202175775ff",
+          "size": 16386
+        },
+        "mfxmemory.h": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/api/vpl/mfxmemory.h",
+          "sha256": "2d751e9f590d536f0c59452d1d7323fe2a801402a9bd8a7725c89fcf5dcd7cf1",
+          "size": 17441
+        },
+        "mfxsession.h": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/api/vpl/mfxsession.h",
+          "sha256": "e141900442754d11806d199ee29ad065b7e7677044eb9b3f496cb10206c49926",
+          "size": 10780
+        },
+        "mfxstructures.h": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/api/vpl/mfxstructures.h",
+          "sha256": "1a1fd6c0bc3a406cb41ffb1f079cad1304bdbd4c8ed43127a3f9d9be8308c305",
+          "size": 323073
+        },
+        "mfxvideo.h": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/api/vpl/mfxvideo.h",
+          "sha256": "571f6607e1ad16bfacd16733b2188acea40f4837b7df336a7bf85ade059d17d2",
+          "size": 61037
+        },
+        "LICENSE": {
+          "url": "https://raw.githubusercontent.com/intel/libvpl/v2.17.0/LICENSE",
+          "sha256": "bf1cfac2e2792b6e1e995ce103d70796aecaf2ec7e4c5fe5474f7acec7b4a677",
+          "size": 1074
+        }
+      }
+    },
+    {
+      "name": "vulkan",
+      "destination": "internal/gpuconv/third_party",
+      "platforms": [
+        "linux"
+      ],
+      "files": {
+        "vk_video/vulkan_video_codec_h264std.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h264std.h",
+          "sha256": "072ee6eac80e73d93bb4bfe0059f99e581fc8b55b1437236185bb4ff377914b1",
+          "size": 13853
+        },
+        "vk_video/vulkan_video_codec_h264std_decode.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h264std_decode.h",
+          "sha256": "e1708b3996a740eeedb79f51d0f0e379f9bcae13566538375acaf73301023b58",
+          "size": 2722
+        },
+        "vk_video/vulkan_video_codec_h264std_encode.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h264std_encode.h",
+          "sha256": "052a6e357be8d88bf4be0db1b3da5a9cc1a6011cf4b3533759ff588e1e26f9f1",
+          "size": 6878
+        },
+        "vk_video/vulkan_video_codec_h265std.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h265std.h",
+          "sha256": "0cbdfd6c45ee8ca902e9c961cd7e49a4d601d443ea0ef2a60a8496b127ed397c",
+          "size": 23416
+        },
+        "vk_video/vulkan_video_codec_h265std_decode.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h265std_decode.h",
+          "sha256": "800946aa19d83d305d504e2e4141bc938f989e0cf8872cef97480238eefef1ea",
+          "size": 2428
+        },
+        "vk_video/vulkan_video_codec_h265std_encode.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h265std_encode.h",
+          "sha256": "7239f9f4e811546639111e562a8be1ec73ad5bef1c23d5fad80889f35e125e9c",
+          "size": 7462
+        },
+        "vk_video/vulkan_video_codecs_common.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codecs_common.h",
+          "sha256": "78cf3c99d3d57afa7ab1782ec6018b4bcdbe273f2843d76e3375282db875b71e",
+          "size": 660
+        },
+        "vulkan/vk_platform.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vulkan/vk_platform.h",
+          "sha256": "c4cabbcf699c90cde344095ae54da9435d117951aad114ba3a540c5997d7906f",
+          "size": 2828
+        },
+        "vulkan/vulkan_core.h": {
+          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vulkan/vulkan_core.h",
+          "sha256": "f3da6d1730e1914b6fbcb64583ef52fd8bd7423162484a4f40be9ad76bbe24e2",
+          "size": 986858
+        }
+      }
+    },
+    {
+      "name": "drm",
+      "destination": "internal/capture/third_party/drm",
+      "platforms": [
+        "linux"
+      ],
+      "files": {
+        "drm.h": {
+          "url": "https://raw.githubusercontent.com/torvalds/linux/refs/tags/v6.12/include/uapi/drm/drm.h",
+          "sha256": "3ab6ac01bf91067aed96b70d7fa7847a86e7f726d74278151f085143688659cc",
+          "size": 45915,
+          "mirrors": [
+            "https://cdn.jsdelivr.net/gh/torvalds/linux@v6.12/include/uapi/drm/drm.h"
+          ]
+        },
+        "drm_fourcc.h": {
+          "url": "https://raw.githubusercontent.com/torvalds/linux/refs/tags/v6.12/include/uapi/drm/drm_fourcc.h",
+          "sha256": "dd775484fc3d603d20cde445f79b858906531b4a26104b4726a0c8852f7f4415",
+          "size": 70591,
+          "mirrors": [
+            "https://cdn.jsdelivr.net/gh/torvalds/linux@v6.12/include/uapi/drm/drm_fourcc.h"
+          ]
+        },
+        "drm_mode.h": {
+          "url": "https://raw.githubusercontent.com/torvalds/linux/refs/tags/v6.12/include/uapi/drm/drm_mode.h",
+          "sha256": "3a5bad960e64a6374e046450dcb637145f4127950659a6429561d9d8faf4d14b",
+          "size": 41329,
+          "mirrors": [
+            "https://cdn.jsdelivr.net/gh/torvalds/linux@v6.12/include/uapi/drm/drm_mode.h"
+          ]
+        }
+      }
+    },
+    {
+      "name": "hls",
+      "url": "https://registry.npmjs.org/hls.js/-/hls.js-1.7.3.tgz",
+      "sha256": "a7290f1645f7c605baec75638acda6c6f7b08dde8a615c841a19d0e38df88729",
+      "destination": "internal/wsmedia/web/vendor",
+      "files": {
+        "hls-1.7.3.min.js": {
+          "member": "package/dist/hls.min.js",
+          "sha256": "a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e",
+          "size": 619692
+        },
+        "hls-LICENSE": {
+          "member": "package/LICENSE",
+          "sha256": "ca8773cf798c7ed997d4dd7c8e23c348699f8d5b7462636694cc14de6cda12db",
+          "size": 1338
+        }
+      }
+    },
+    {
+      "name": "fastfetch",
+      "url": "https://codeload.github.com/fastfetch-cli/fastfetch/tar.gz/1e0ec1004a8a4c4410163b146db27b8c163bf1f6",
+      "sha256": "b2ef6c544163772af23a19dea5436c9adef197be18da87814b6f9c98d74b61fc",
+      "destination": "internal/gamestream/coverlogos",
+      "files": {
+        "almalinux.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/almalinux.txt",
+          "sha256": "33592c9c80d0fbbc92f8c028ccaf8b3db832c0bbe5fd8256e0d5d82f45461f4a",
+          "size": 731
+        },
+        "alpine.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/alpine.txt",
+          "sha256": "bdeceaabf489d7284e7cc0b05dc91395a1f5f3a957d24e95ab09b2b5637c7354",
+          "size": 769
+        },
+        "android.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/android.txt",
+          "sha256": "fd4f223e220e15777c96ceee2b706e445af63ecd2d5b61e4bcd2141efd3c3a34",
+          "size": 517
+        },
+        "antix.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/antix.txt",
+          "sha256": "f86066c1d3aa7d7ca27ab04bacc7d024df8a3bec75d09f60daa80d6c1a78b73a",
+          "size": 358
+        },
+        "aoscos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/aoscos.txt",
+          "sha256": "febaf20680e196ec2fe4ffcec6fcbbd4b85e652a6b7c8dbf241b5c98b495c80c",
+          "size": 558
+        },
+        "arch.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/arch.txt",
+          "sha256": "f0524c73633cb07263158c1e02b98c70e05e684df93bb8c07d8ae94450025fc8",
+          "size": 570
+        },
+        "archcraft.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/archcraft.txt",
+          "sha256": "e252ff856611c522a9d4f07809738f0f7461163df765747874ed990fe4ccf132",
+          "size": 2581
+        },
+        "archlabs.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/archlabs.txt",
+          "sha256": "b386fddd4f4b607e298cbe36a1fe457acfb27a1003c86e0f3fc764b212e3420e",
+          "size": 782
+        },
+        "arco.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/arco.txt",
+          "sha256": "1cefedb334afd8b3d5105947030c6cd7af11ffba723eff4df79e132dd47a47ed",
+          "size": 652
+        },
+        "armbian.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/armbian.txt",
+          "sha256": "04a89739bcb8aa840daa70d85478b06fc57fe6cfbc8858109bf6d5194ad4e52f",
+          "size": 696
+        },
+        "artix.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/artix.txt",
+          "sha256": "daf342d214780ffd9099c1e2c082ecb2e88cf11b7eb5bd19d1a618eda2ec58a6",
+          "size": 606
+        },
+        "asahi.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/asahi.txt",
+          "sha256": "88875f8666f098fdc8347b254761fa72ff6f8d30fb65305479d0ff2e25b1862e",
+          "size": 713
+        },
+        "aurora.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/a/aurora.txt",
+          "sha256": "95d3f0708f7640520c922fab1da3477491039dd3d3e4687385440f4a93ef7cd6",
+          "size": 1267
+        },
+        "blackarch.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/b/blackarch.txt",
+          "sha256": "f4e927452d1f8d777e6f9c15068587d0377fbb5a3b9b4e05513e0fc52836e878",
+          "size": 713
+        },
+        "bodhi.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/b/bodhi.txt",
+          "sha256": "e0f1ed23e0c3962c138656bd51c99dd836f080d172da8698611f8c24c824b80a",
+          "size": 820
+        },
+        "bunsenlabs.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/b/bunsenlabs.txt",
+          "sha256": "0860928ba1d2615d3487bf2ba5fb56b306419bd7fae629ab2c8c66a4c30fbf26",
+          "size": 318
+        },
+        "cachyos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/c/cachyos.txt",
+          "sha256": "51fb8fcd2a7c1c01a42b40843224647ff0e5c021d2f3e34108da5d5e415e1fca",
+          "size": 1144
+        },
+        "calculate.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/c/calculate.txt",
+          "sha256": "ef0d6c1e4c11ab9dfd79ac97f5c55a1332c870bd6a8d4ad001561b56925bec74",
+          "size": 852
+        },
+        "debian.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/d/debian.txt",
+          "sha256": "c9b47e88f37427415b79ff40f91b05ec84a9b3502cfcb3412859cd558cd82eae",
+          "size": 439
+        },
+        "deepin.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/d/deepin.txt",
+          "sha256": "dfd5ab838afc8329c55aa559d58d16f84f12f27bc7a66b51ced4d93606adee0e",
+          "size": 627
+        },
+        "devuan.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/d/devuan.txt",
+          "sha256": "102db75fd8e15a13a5cbeb0279e383b15b858b99ce8e128b51e3354eccb8f545",
+          "size": 451
+        },
+        "elementary.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/e/elementary.txt",
+          "sha256": "af1f7e5bd7e728dc8d34ad0d4b0e1c85c32ccd0186f120dea07fc8c5c2df345e",
+          "size": 567
+        },
+        "endeavouros.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/e/endeavouros.txt",
+          "sha256": "ad32f7e945a308839c286b7be29af496b9cd35db67fcf3233a9a5d6b88d3bb91",
+          "size": 618
+        },
+        "fedora.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/f/fedora.txt",
+          "sha256": "22e144e8107268d7d5827d699fbaca1fb415948272126806a290803a95daea83",
+          "size": 742
+        },
+        "fedora_kinoite.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/f/fedora_kinoite.txt",
+          "sha256": "a0ad05489850b36513a62d315d5e5dc229d1fd32bc0bafc4840ba59b30b225b2",
+          "size": 567
+        },
+        "fedora_silverblue.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/f/fedora_silverblue.txt",
+          "sha256": "f087e02865ca301742263a2974fceec85ff5edc8c8ce1e6e3688cbe41b61d31c",
+          "size": 772
+        },
+        "freebsd.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/f/freebsd.txt",
+          "sha256": "4a8723cfc2c2c560e921a1637c84875f94e396658bb574d8a9c8bafa6ea1cc96",
+          "size": 514
+        },
+        "garuda.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/g/garuda.txt",
+          "sha256": "df82efe3f73382d155b87d7417b80b4d1847176beaa3fd48088e7126302e46b7",
+          "size": 659
+        },
+        "gentoo.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/g/gentoo.txt",
+          "sha256": "1f05ba1ea2eec80cc5cec93ecfd4dc676c75ccdd70d93360aee756bc7137e892",
+          "size": 606
+        },
+        "guix.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/g/guix.txt",
+          "sha256": "92fa90afc2499caca5fd954b833fe742d9981181299ce9c12da066e63e0c42a7",
+          "size": 272
+        },
+        "hyperbola.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/h/hyperbola.txt",
+          "sha256": "7a99a70f0da8602e52fe57740887bf86e03ed4d0d25a96215a18000ff9262d71",
+          "size": 521
+        },
+        "kali.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/k/kali.txt",
+          "sha256": "dd35eb46ef4cf165ccf5f22d67875e5293a759ca247e4ed32b8d1b275592e1f7",
+          "size": 780
+        },
+        "kdeneon.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/k/kdeneon.txt",
+          "sha256": "13276681a5c3dd1c883fb2275ba120177caa009c1d5318ee99a133d197c30115",
+          "size": 698
+        },
+        "kubuntu.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/k/kubuntu.txt",
+          "sha256": "0489c6f4ce67660278687bc916423929b88752af6e2d2d44ff80111ea01854ff",
+          "size": 860
+        },
+        "kylin.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/k/kylin.txt",
+          "sha256": "761ad1883e53f3f1228b171b37ff626174e7fe4f850a408360a020c36c2ff1e3",
+          "size": 949
+        },
+        "linux.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/l/linux.txt",
+          "sha256": "20c7ba60d125c028cbb6fea481290445b013cb22402b9df5bdcad3fa8b5a2d61",
+          "size": 300
+        },
+        "linuxlite.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/l/linuxlite.txt",
+          "sha256": "7dcc7f4e68f793214387d2fb1e4b56d7425eb92fa3b54bde5969990f3d2bc8de",
+          "size": 395
+        },
+        "linuxmint.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/l/linuxmint.txt",
+          "sha256": "f39364e3c9dc3c121a894a94174d60b4895f327b5e898d81baf9c01a1bdca535",
+          "size": 780
+        },
+        "lmde.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/l/lmde.txt",
+          "sha256": "2b04021f5efcbb6b2fc82847c156ba4195a7e33cdff6bfa2d39fa68189859465",
+          "size": 444
+        },
+        "lubuntu.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/l/lubuntu.txt",
+          "sha256": "c7358c6bd4eb8de4cfe3f2bef445723042ab8a4350c773f1a81b0c94a067152a",
+          "size": 861
+        },
+        "macos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/m/macos.txt",
+          "sha256": "1335abfb114e38afaa6a5e72d21c3c6d891beea6908edcbec089f4b1e0c408c2",
+          "size": 474
+        },
+        "mageia.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/m/mageia.txt",
+          "sha256": "1a89ae33dcff84dc18e9f7217a7e40a5f8f99aa15464f0d3ec73ac9d4bd95de8",
+          "size": 429
+        },
+        "manjaro.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/m/manjaro.txt",
+          "sha256": "b29062ab782482bd74222072bb55cb4836ac59fae311e95c997a1e37ff20e15a",
+          "size": 1077
+        },
+        "mx.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/m/mx.txt",
+          "sha256": "ce3b7fed3b4a11bdfe0cd974d9678d6f10e0145adf2c3166291773601ce7e0b0",
+          "size": 696
+        },
+        "netbsd.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/n/netbsd.txt",
+          "sha256": "47005ad3b10c1bf3f16b35d9e550cc7ff65dc18d06a8d4c7f853bd01558691be",
+          "size": 372
+        },
+        "nixos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/n/nixos.txt",
+          "sha256": "952179c4c01a12cbc77568d64eee5004ba4023b45d48ff62f91d5b82bfc56449",
+          "size": 1553
+        },
+        "nobara.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/n/nobara.txt",
+          "sha256": "d371a45cfe98211ac60c21e92b83b68fbe499bc86e758d0b4de52bb8c1235084",
+          "size": 1854
+        },
+        "nutyx.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/n/nutyx.txt",
+          "sha256": "0ddcfce9066a9359995a143f2bc3771c9a2a777f6f041bae6d29595cb18c7596",
+          "size": 717
+        },
+        "omarchy.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/omarchy.txt",
+          "sha256": "858cc380953da5e389e30bcf8401da43fcf96a7a2d051e6311569cbf87838a2d",
+          "size": 926
+        },
+        "openbsd.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/openbsd.txt",
+          "sha256": "8e1978843fa60d624c1735b691c749f3da5e743e78c1bdeb909374078392bfc2",
+          "size": 734
+        },
+        "openkylin.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/openkylin.txt",
+          "sha256": "51917a2492e299ab71e94e5b45111696e29186919793b3701d7a1538b8b3f275",
+          "size": 524
+        },
+        "openmandriva.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/openmandriva.txt",
+          "sha256": "19ee65fb293e4114c6ec7a419f6a9176eac776c22ab95fdd67c2b270b3d754ad",
+          "size": 819
+        },
+        "opensuse.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/opensuse.txt",
+          "sha256": "47f65288ea5c3ab64a21c902d0f37ac030ff796a22b3fb58986de66f12458b30",
+          "size": 707
+        },
+        "opensuse_leap.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/opensuse_leap.txt",
+          "sha256": "dde47ea73af57a5e7e4c691b77a00bca725ba8cd90a889d965e011c0cee8f366",
+          "size": 368
+        },
+        "opensuse_slowroll.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/opensuse_slowroll.txt",
+          "sha256": "c48f43581ea54cef6fc0576cf529ed66f32d40ed4c6d440f5e402092f854be4a",
+          "size": 773
+        },
+        "opensuse_tumbleweed.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/o/opensuse_tumbleweed.txt",
+          "sha256": "4d767c1e1623b164d5897bd2b1714a3158bd52cba5f2580bdf55f0f1034fa6f5",
+          "size": 732
+        },
+        "parabola.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/parabola.txt",
+          "sha256": "b1d4060a7b3ae985d5672d331244620a965ebfc54e92cbb59e8a926cbc4b352c",
+          "size": 546
+        },
+        "parrot.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/parrot.txt",
+          "sha256": "86ee1d9c9e7f150bb1ca10ffc80158e39f42feb3798d5764cbf3283915ae6ab5",
+          "size": 730
+        },
+        "pclinuxos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/pclinuxos.txt",
+          "sha256": "c47ab1fefc8e169e996a4a6433416dea8e94af0717d3b90213a0592c83febdea",
+          "size": 670
+        },
+        "peppermint.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/peppermint.txt",
+          "sha256": "f566a308b49dbb8487f9de0efeffa1e8e5fe18f29aa4aae25fadafac5bec333a",
+          "size": 1024
+        },
+        "pikaos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/pikaos.txt",
+          "sha256": "22e6470b1f6914201aff0550b1c78a0fd4a4a2c051cfdbee7c1cd21b95255710",
+          "size": 916
+        },
+        "pop.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/pop.txt",
+          "sha256": "aaa105265d19dfbca3c1e81718beb96050650661799fe32f254f76360b4dcffe",
+          "size": 827
+        },
+        "porteus.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/porteus.txt",
+          "sha256": "55816f840136626002251ed1b566a91698fc10a4ae7bd9991c75f3a96d73efe8",
+          "size": 499
+        },
+        "puppy.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/puppy.txt",
+          "sha256": "8b0cbf0f8766da302384de79ab0a833a16e6182cfb1e111f51c6c1e6b0e4eab6",
+          "size": 623
+        },
+        "pureos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/p/pureos.txt",
+          "sha256": "00f96f98874212a1c7b23308d5413911643988a2513b49c68c57b972e6893381",
+          "size": 491
+        },
+        "q4os.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/q/q4os.txt",
+          "sha256": "f69ee2f789e7302f4b6dc4015d9766d76d0a2d149e866dfb810474f6f48b5afc",
+          "size": 640
+        },
+        "raspbian.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/r/raspbian.txt",
+          "sha256": "0cbc62333c416ceeac8aa4abc3b6cf180a14a27a6f324806b6dc0d5b778a0d71",
+          "size": 751
+        },
+        "rebornos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/r/rebornos.txt",
+          "sha256": "54ae25bbfd7ffacde4cb5c9fdd67e021092c119be50c9143ec3a8ab71a47dd1c",
+          "size": 1079
+        },
+        "redcore.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/r/redcore.txt",
+          "sha256": "24b3c5cd145f66f406ffc96953653a2207f7b07fad345e29a4fb598b835dc033",
+          "size": 557
+        },
+        "rocky.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/r/rocky.txt",
+          "sha256": "ef4b5645623239539dd0a545297bf5ae8d8076a2505768a4e20a29f59b1e42e6",
+          "size": 616
+        },
+        "rosa.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/r/rosa.txt",
+          "sha256": "f59db3ae6b7de94f318226e77c5c2db8f87fe4d2823100a9a759c9ea9acaa84b",
+          "size": 1009
+        },
+        "salix.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/s/salix.txt",
+          "sha256": "d682ac494339d477c2e0abccdc87af48177f8265430abd9967eda8ab17a45fdc",
+          "size": 679
+        },
+        "slackware.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/s/slackware.txt",
+          "sha256": "3c9067471521a273a9ed6a5953891ad88451bb96f3cb9750a978e868d5e50431",
+          "size": 917
+        },
+        "slitaz.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/s/slitaz.txt",
+          "sha256": "2acd474580f09d4aa62c0321e7e97377a877aa12c9e4ee4595f5f0ca4b92e205",
+          "size": 635
+        },
+        "solus.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/s/solus.txt",
+          "sha256": "de31f191caa7ea33b7456370656b2206ae3c16b5e7c18b2925e8acf7bf446fcf",
+          "size": 703
+        },
+        "sparky.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/s/sparky.txt",
+          "sha256": "74ea71926425a61a20a148aec39fc93d95a64ec203e2dc32bb163020a97d51fc",
+          "size": 722
+        },
+        "steamos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/s/steamos.txt",
+          "sha256": "aa4114cac266218dbf62eaeb90e1b4245d6c05ad650eefbdb88cbd8924fb8169",
+          "size": 590
+        },
+        "tails.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/t/tails.txt",
+          "sha256": "2fc197f377afd51dbc15af32410b64c6dc04501d94221da06633c58114195edd",
+          "size": 469
+        },
+        "tuxedo_os.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/t/tuxedo_os.txt",
+          "sha256": "a526a7f341764878b64f11df451064632f1e9a08a5f42795644e57f8318e6a49",
+          "size": 467
+        },
+        "ubuntu.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu.txt",
+          "sha256": "581b7891bbf0e6d8428ab5637db34aac3dec8540f5ed026a111c747ba093324c",
+          "size": 883
+        },
+        "ubuntu_budgie.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu_budgie.txt",
+          "sha256": "e2cfd60854f04d5067d8302bcb06e451fe6235af73421d3e2e4fe62f7b5f971e",
+          "size": 755
+        },
+        "ubuntu_cinnamon.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu_cinnamon.txt",
+          "sha256": "58e2d083d69dfea677883f4d5f27f05383ad5b88f07cb328b7134d80259188a9",
+          "size": 863
+        },
+        "ubuntu_kylin.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu_kylin.txt",
+          "sha256": "f02ac7eee6461440b6d6f9ae1f143e26b5427e53c647c8dc9ecbf1e1542a9093",
+          "size": 891
+        },
+        "ubuntu_mate.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu_mate.txt",
+          "sha256": "ce1b80451050734079d84c937f70542e6d2faa8d1c6a19b8a11fe69a8ef12f8d",
+          "size": 939
+        },
+        "ubuntu_studio.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu_studio.txt",
+          "sha256": "3e87d831ff4bc14387e9b2a1459aa1b8e8c7421c667caeb2fb85af5e50e99e10",
+          "size": 886
+        },
+        "ubuntu_unity.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ubuntu_unity.txt",
+          "sha256": "5e0fe4be78613f21eb51cb7840495961368ace6b8c9ee471b714a396f9b27a7d",
+          "size": 1336
+        },
+        "ultramarine.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/ultramarine.txt",
+          "sha256": "da2861c3ea291bc62f25e1c32f43180839766a8a8de5c0db8f4a004a2c2d3cc7",
+          "size": 793
+        },
+        "uos.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/u/uos.txt",
+          "sha256": "12b2e7610c3b7285ce060c0fe5dcfb89f5bf417cded9f4e4c6ac101da2a3f019",
+          "size": 886
+        },
+        "vanilla.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/v/vanilla.txt",
+          "sha256": "275a18671b0afbb7c8399ade2b2fa3460173f8ff211cb759b21ca921562f750f",
+          "size": 621
+        },
+        "void.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/v/void.txt",
+          "sha256": "6df8d0cd364969c390b07cc2c2a224c1cae78a0cb5f27720a7bcfa507003b37f",
+          "size": 723
+        },
+        "windows_11.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/w/windows_11.txt",
+          "sha256": "56e413cdb05a6da110866d89055872e896ba94295419a710b1a88d52287d9e15",
+          "size": 656
+        },
+        "xubuntu.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/x/xubuntu.txt",
+          "sha256": "4018adf3bdb3b1b3354e992c96cf74f15317a05abc28fec96364fabaf19f798b",
+          "size": 889
+        },
+        "zorin.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/src/logo/ascii/z/zorin.txt",
+          "sha256": "16d1dbf06da1e4021c6c60f8a50512a67de0d88743728fe863e2adc9921f6c47",
+          "size": 488
+        },
+        "LICENSE-fastfetch.txt": {
+          "member": "fastfetch-1e0ec1004a8a4c4410163b146db27b8c163bf1f6/LICENSE",
+          "sha256": "f30fab2451411172d78522346e91eae63ef1ea11c3487bc9acd0a68acd8c9571",
+          "size": 1112
+        }
+      }
+    },
+    {
+      "name": "bazzite",
+      "destination": "internal/gamestream/coverlogos",
+      "files": {
+        "bazzite.txt": {
+          "url": "https://raw.githubusercontent.com/ublue-os/bazzite/42d7f7d3fb6ef1d3d2ad03b125571a4fea4e18b4/system_files/desktop/shared/usr/share/ublue-os/bazzite/logo.txt",
+          "sha256": "6269e3ae1b36a348a565db6575e6811292da6aceb72e8cafaf2d751da999697c",
+          "size": 966
+        },
+        "LICENSE-bazzite.txt": {
+          "url": "https://raw.githubusercontent.com/ublue-os/bazzite/42d7f7d3fb6ef1d3d2ad03b125571a4fea4e18b4/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "size": 11357
+        }
+      }
+    },
+    {
+      "name": "tamzen",
+      "url": "https://codeload.github.com/sunaku/tamzen-font/tar.gz/refs/tags/Tamzen-1.11.6",
+      "sha256": "f35173177f9407bb78e48a93169f1981ae5c945d51fef6e4eeae85c1c9192577",
+      "destination": "internal/gamestream/coverfonts",
+      "files": {
+        "Tamzen10x20b.bdf": {
+          "member": "tamzen-font-Tamzen-1.11.6/bdf/Tamzen10x20b.bdf",
+          "sha256": "aefee2aeac3941400b6ad55ba34c14b196d27c444e1ef930c8e233d8f23af8bf",
+          "size": 35838
+        },
+        "Tamzen5x9b.bdf": {
+          "member": "tamzen-font-Tamzen-1.11.6/bdf/Tamzen5x9b.bdf",
+          "sha256": "98d59de7c4399e70ec9c1d61ce4e784acf950f00334241aae1325a3ef1f9b53e",
+          "size": 21283
+        },
+        "Tamzen6x12b.bdf": {
+          "member": "tamzen-font-Tamzen-1.11.6/bdf/Tamzen6x12b.bdf",
+          "sha256": "17a4146cbd423562dc2fbefde6d515df41e1ed115cba1c207aed61fabeaa4bf8",
+          "size": 23296
+        },
+        "Tamzen8x16b.bdf": {
+          "member": "tamzen-font-Tamzen-1.11.6/bdf/Tamzen8x16b.bdf",
+          "sha256": "194d775903fad5ca5c358ad775fdfa4718f75548c25959c6645e9ee690a727a3",
+          "size": 25626
+        },
+        "LICENSE-tamzen.txt": {
+          "member": "tamzen-font-Tamzen-1.11.6/LICENSE",
+          "sha256": "a968208958611502ff494de85aa5cf1b1dd6c8b5bc9561a6f793dc4a36d2619e",
+          "size": 1576
+        }
+      }
+    }
+  ]
+}

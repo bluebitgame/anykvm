@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1280" viewBox="0 0 1600 1280" role="img" aria-labelledby="title desc">
+<title id="title">Pico 1 and Pico 2 single-port PIO USB keyboard and mouse wiring</title>
+<desc id="desc">The AnyKVM server powers the Pico through its built-in Micro-USB port and sends CDC serial commands. GPIO12, physical pin 16, connects through 27 ohms to USB-B pin 3 D plus. GPIO13, physical pin 17, connects through 27 ohms to USB-B pin 2 D minus. A 1.5 kiloohm resistor connects USB D plus, after the series resistor, to Pico 3V3 OUT physical pin 36. Pico GND physical pin 18 connects to USB-B pin 4. USB-B VBUS pin 1 is not connected. The target computer connects to the USB-B breakout using a standard USB-A to USB-B cable. Fixed-pull-up bench circuit: target USB power must remain present; no VBUS sensing or power-off isolation is shown.</desc>
+<rect width="1600" height="1280" fill="#ffffff"/>
+<g font-family="Arial, Helvetica, sans-serif" stroke-linecap="round" stroke-linejoin="round">
+<text x="45" y="58" font-size="36" fill="#172b3a" font-weight="700" text-anchor="start">Pico 1 / Pico 2 — single-port PIO USB HID</text>
+<text x="45" y="96" font-size="21" fill="#172b3a" font-weight="400" text-anchor="start">Native USB to the AnyKVM server · GPIO USB to the target · keyboard + mouse on one cable</text>
+<rect x="45" y="121" width="1510" height="48" rx="6" fill="#fff7e6" stroke="#b68320" stroke-width="2"/>
+<text x="63" y="152" font-size="19" fill="#69480d" font-weight="700" text-anchor="start">FIXED PULL-UP / POWERED-TARGET BENCH CIRCUIT — no VBUS sensing or power-off isolation</text>
+<rect x="45" y="220" width="280" height="245" rx="8" fill="#f3f6f8" stroke="#536573" stroke-width="2"/>
+<text x="185" y="261" font-size="26" fill="#172b3a" font-weight="700" text-anchor="middle">AnyKVM server</text>
+<text x="185" y="294" font-size="20" fill="#172b3a" font-weight="400" text-anchor="middle">USB host port</text>
+<text x="185" y="391" font-size="19" fill="#172b3a" font-weight="400" text-anchor="middle">Sends CDC commands</text>
+<text x="185" y="420" font-size="19" fill="#172b3a" font-weight="400" text-anchor="middle">Supplies Pico power</text>
+<path d="M325 335H450" fill="none" stroke="#475569" stroke-width="8"/>
+<text x="382" y="276" font-size="18" fill="#172b3a" font-weight="400" text-anchor="middle">USB data</text>
+<text x="382" y="300" font-size="18" fill="#172b3a" font-weight="400" text-anchor="middle">cable</text>
+<text x="382" y="375" font-size="15" fill="#172b3a" font-weight="400" text-anchor="middle">+5 V / data</text>
+<rect x="430" y="200" width="370" height="575" rx="8" fill="#f1f8f4" stroke="#36654c" stroke-width="2"/>
+<text x="615" y="239" font-size="27" fill="#244b36" font-weight="700" text-anchor="middle">Pico 1 / Pico 2</text>
+<rect x="450" y="278" width="158" height="72" rx="8" fill="#e8edf0" stroke="#536573" stroke-width="2"/>
+<text x="529" y="307" font-size="18" fill="#172b3a" font-weight="700" text-anchor="middle">J1 · built-in</text>
+<text x="529" y="332" font-size="19" fill="#172b3a" font-weight="400" text-anchor="middle">Micro-USB</text>
+<path d="M325 335H450" fill="none" stroke="#475569" stroke-width="8"/>
+<text x="452" y="383" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">J1 +5 V → on-board regulator</text>
+<text x="452" y="408" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">No external supply required</text>
+<text x="452" y="499" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">GPIO labels are not</text>
+<text x="452" y="522" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">physical pin numbers.</text>
+<text x="452" y="611" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">One PIO USB device:</text>
+<text x="452" y="635" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">keyboard + mouse</text>
+<text x="452" y="715" font-size="16" fill="#172b3a" font-weight="400" text-anchor="start">GP0 / GP1 UART is unused here.</text>
+<text x="452" y="745" font-size="15" fill="#52695c" font-weight="400" text-anchor="start">Logical symbol; header inset below.</text>
+<text x="782" y="318" font-size="21" fill="#ab4a25" font-weight="700" text-anchor="end">36 · 3V3 OUT</text>
+<circle cx="800" cy="330" r="5" fill="#ab4a25"/>
+<text x="782" y="428" font-size="21" fill="#245e91" font-weight="700" text-anchor="end">16 · GP12</text>
+<circle cx="800" cy="440" r="5" fill="#245e91"/>
+<text x="782" y="548" font-size="21" fill="#245e91" font-weight="700" text-anchor="end">17 · GP13</text>
+<circle cx="800" cy="560" r="5" fill="#245e91"/>
+<text x="782" y="668" font-size="21" fill="#475569" font-weight="700" text-anchor="end">18 · GND</text>
+<circle cx="800" cy="680" r="5" fill="#475569"/>
+<rect x="1160" y="235" width="210" height="505" rx="8" fill="#f3f6f8" stroke="#536573" stroke-width="2"/>
+<text x="1265" y="268" font-size="22" fill="#172b3a" font-weight="700" text-anchor="middle">J2 · USB 2.0</text>
+<text x="1265" y="298" font-size="20" fill="#172b3a" font-weight="400" text-anchor="middle">Type-B breakout</text>
+<circle cx="1160" cy="350" r="5" fill="#475569"/>
+<text x="1180" y="357" font-size="21" fill="#172b3a" font-weight="700" text-anchor="start">1  VBUS +5 V</text>
+<circle cx="1160" cy="440" r="5" fill="#475569"/>
+<text x="1180" y="447" font-size="21" fill="#172b3a" font-weight="700" text-anchor="start">3  D+</text>
+<circle cx="1160" cy="560" r="5" fill="#475569"/>
+<text x="1180" y="567" font-size="21" fill="#172b3a" font-weight="700" text-anchor="start">2  D−</text>
+<circle cx="1160" cy="680" r="5" fill="#475569"/>
+<text x="1180" y="687" font-size="21" fill="#172b3a" font-weight="700" text-anchor="start">4  GND</text>
+<text x="1265" y="713" font-size="15" fill="#172b3a" font-weight="400" text-anchor="middle">Logical pin labels</text>
+<rect x="1425" y="380" width="130" height="230" rx="8" fill="#f3f6f8" stroke="#536573" stroke-width="2"/>
+<text x="1490" y="418" font-size="25" fill="#172b3a" font-weight="700" text-anchor="middle">Target</text>
+<text x="1490" y="449" font-size="19" fill="#172b3a" font-weight="400" text-anchor="middle">computer</text>
+<text x="1490" y="543" font-size="17" fill="#172b3a" font-weight="400" text-anchor="middle">USB host</text>
+<text x="1490" y="570" font-size="17" fill="#172b3a" font-weight="400" text-anchor="middle">port</text>
+<path d="M1370 500H1425" fill="none" stroke="#475569" stroke-width="8"/>
+<text x="1460" y="316" font-size="18" fill="#172b3a" font-weight="400" text-anchor="middle">Standard USB cable</text>
+<text x="1460" y="343" font-size="18" fill="#172b3a" font-weight="400" text-anchor="middle">USB-A ↔ USB-B</text>
+<path d="M800 440H858" fill="none" stroke="#245e91" stroke-width="3"/>
+<rect x="858" y="429" width="70" height="22" rx="0" fill="#ffffff" stroke="#245e91" stroke-width="2"/>
+<path d="M928 440H1160" fill="none" stroke="#245e91" stroke-width="3"/>
+<text x="893" y="411" font-size="20" fill="#172b3a" font-weight="700" text-anchor="middle">R1 · 27 Ω</text>
+<text x="1065" y="470" font-size="20" fill="#245e91" font-weight="700" text-anchor="middle">D+</text>
+<path d="M800 560H858" fill="none" stroke="#245e91" stroke-width="3"/>
+<rect x="858" y="549" width="70" height="22" rx="0" fill="#ffffff" stroke="#245e91" stroke-width="2"/>
+<path d="M928 560H1160" fill="none" stroke="#245e91" stroke-width="3"/>
+<text x="893" y="531" font-size="20" fill="#172b3a" font-weight="700" text-anchor="middle">R2 · 27 Ω</text>
+<text x="1065" y="590" font-size="20" fill="#245e91" font-weight="700" text-anchor="middle">D−</text>
+<path d="M800 330H1000" fill="none" stroke="#ab4a25" stroke-width="3"/>
+<path d="M1000 330L1000 355" fill="none" stroke="#ab4a25" stroke-width="3"/>
+<rect x="989" y="355" width="22" height="55" rx="0" fill="#ffffff" stroke="#ab4a25" stroke-width="2"/>
+<path d="M1000 410L1000 440" fill="none" stroke="#ab4a25" stroke-width="3"/>
+<circle cx="1000" cy="440" r="5" fill="#ab4a25"/>
+<text x="1023" y="378" font-size="18" fill="#ab4a25" font-weight="700" text-anchor="start">R3</text>
+<text x="1023" y="402" font-size="19" fill="#ab4a25" font-weight="700" text-anchor="start">1.5 kΩ</text>
+<text x="914" y="304" font-size="18" fill="#ab4a25" font-weight="400" text-anchor="middle">Regulated 3.3 V</text>
+<path d="M1105 350H1160" fill="none" stroke="#ab4a25" stroke-width="3"/>
+<path d="M1098 343L1112 357" fill="none" stroke="#ab4a25" stroke-width="2"/>
+<path d="M1098 357L1112 343" fill="none" stroke="#ab4a25" stroke-width="2"/>
+<text x="1110" y="205" font-size="20" fill="#ab4a25" font-weight="700" text-anchor="middle">Target VBUS: NC</text>
+<text x="1110" y="226" font-size="15" fill="#ab4a25" font-weight="400" text-anchor="middle">No connection to Pico VBUS / VSYS / 3V3</text>
+<path d="M800 680H1160" fill="none" stroke="#475569" stroke-width="3"/>
+<circle cx="1050" cy="680" r="5" fill="#475569"/>
+<path d="M1050 680L1050 714" fill="none" stroke="#475569" stroke-width="3"/>
+<path d="M1030.0 714H1070.0" fill="none" stroke="#475569" stroke-width="2"/>
+<path d="M1037.0 723H1063.0" fill="none" stroke="#475569" stroke-width="2"/>
+<path d="M1044.0 732H1056.0" fill="none" stroke="#475569" stroke-width="2"/>
+<text x="995" y="760" font-size="19" fill="#475569" font-weight="400" text-anchor="middle">Common signal ground</text>
+<path d="M45 805H1555" fill="none" stroke="#d5dde3" stroke-width="1"/>
+<text x="45" y="846" font-size="23" fill="#172b3a" font-weight="700" text-anchor="start">Physical header reference</text>
+<text x="45" y="873" font-size="17" fill="#172b3a" font-weight="400" text-anchor="start">Top view · components visible · USB at top</text>
+<rect x="210" y="906" width="140" height="301" rx="8" fill="#f1f8f4" stroke="#36654c" stroke-width="2"/>
+<rect x="253" y="895" width="54" height="32" rx="3" fill="#e8edf0" stroke="#536573" stroke-width="2"/>
+<text x="280" y="989" font-size="21" fill="#244b36" font-weight="700" text-anchor="middle">Pico</text>
+<text x="280" y="1015" font-size="18" fill="#244b36" font-weight="400" text-anchor="middle">1 / 2</text>
+<circle cx="210" cy="940.0" r="4" fill="#bccac1"/>
+<circle cx="350" cy="940.0" r="4" fill="#bccac1"/>
+<text x="197" y="944.0" font-size="12" fill="#52695c" font-weight="400" text-anchor="end">1</text>
+<text x="363" y="944.0" font-size="13" fill="#52695c" font-weight="400" text-anchor="start">40 · VBUS (J1 +5 V)</text>
+<circle cx="210" cy="952.8" r="4" fill="#bccac1"/>
+<circle cx="350" cy="952.8" r="4" fill="#bccac1"/>
+<circle cx="210" cy="965.6" r="4" fill="#bccac1"/>
+<circle cx="350" cy="965.6" r="4" fill="#bccac1"/>
+<circle cx="210" cy="978.4" r="4" fill="#bccac1"/>
+<circle cx="350" cy="978.4" r="4" fill="#bccac1"/>
+<circle cx="210" cy="991.2" r="4" fill="#bccac1"/>
+<circle cx="350" cy="991.2" r="4" fill="#ab4a25"/>
+<text x="363" y="995.2" font-size="13" fill="#ab4a25" font-weight="700" text-anchor="start">36 · 3V3 OUT</text>
+<circle cx="210" cy="1004.0" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1004.0" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1016.8" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1016.8" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1029.6" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1029.6" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1042.4" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1042.4" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1055.2" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1055.2" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1068.0" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1068.0" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1080.8" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1080.8" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1093.6" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1093.6" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1106.4" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1106.4" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1119.2" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1119.2" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1132.0" r="4" fill="#245e91"/>
+<circle cx="350" cy="1132.0" r="4" fill="#bccac1"/>
+<text x="197" y="1136.0" font-size="12" fill="#245e91" font-weight="700" text-anchor="end">16 · GP12</text>
+<circle cx="210" cy="1144.8" r="4" fill="#245e91"/>
+<circle cx="350" cy="1144.8" r="4" fill="#bccac1"/>
+<text x="197" y="1148.8" font-size="12" fill="#245e91" font-weight="700" text-anchor="end">17 · GP13</text>
+<circle cx="210" cy="1157.6" r="4" fill="#475569"/>
+<circle cx="350" cy="1157.6" r="4" fill="#bccac1"/>
+<text x="197" y="1161.6" font-size="12" fill="#475569" font-weight="700" text-anchor="end">18 · GND</text>
+<circle cx="210" cy="1170.4" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1170.4" r="4" fill="#bccac1"/>
+<circle cx="210" cy="1183.2" r="4" fill="#bccac1"/>
+<circle cx="350" cy="1183.2" r="4" fill="#bccac1"/>
+<text x="197" y="1187.2" font-size="12" fill="#52695c" font-weight="400" text-anchor="end">20</text>
+<text x="363" y="1187.2" font-size="13" fill="#52695c" font-weight="400" text-anchor="start">21</text>
+<text x="625" y="850" font-size="23" fill="#172b3a" font-weight="700" text-anchor="start">Connection and power notes</text>
+<text x="625" y="890" font-size="20" fill="#172b3a" font-weight="700" text-anchor="start">1. Native USB is separate from GPIO USB.</text>
+<text x="625" y="917" font-size="18" fill="#475569" font-weight="400" text-anchor="start">The server cable goes into J1 on the Pico. Its native D+/D− are already wired</text>
+<text x="625" y="942" font-size="18" fill="#475569" font-weight="400" text-anchor="start">on the board; do not connect them to GP12 / GP13. Use a data-capable cable.</text>
+<text x="625" y="984" font-size="20" fill="#172b3a" font-weight="700" text-anchor="start">2. Target USB VBUS stays separate.</text>
+<text x="625" y="1011" font-size="18" fill="#475569" font-weight="400" text-anchor="start">Pico is powered from the server. Target +5 V is not a second Pico supply.</text>
+<text x="625" y="1036" font-size="18" fill="#475569" font-weight="400" text-anchor="start">The shared connection between the computers here is signal GND, not +5 V.</text>
+<text x="625" y="1078" font-size="20" fill="#172b3a" font-weight="700" text-anchor="start">3. This drawing uses the current fixed pull-up circuit.</text>
+<text x="625" y="1105" font-size="18" fill="#475569" font-weight="400" text-anchor="start">Keep the target USB port powered while R3 is tied to Pico 3.3 V.</text>
+<text x="625" y="1130" font-size="18" fill="#475569" font-weight="400" text-anchor="start">Automatic VBUS-dependent pull-up gating and data-line isolation are not shown.</text>
+<text x="625" y="1172" font-size="20" fill="#172b3a" font-weight="700" text-anchor="start">4. Use a device-side connector.</text>
+<text x="625" y="1199" font-size="18" fill="#475569" font-weight="400" text-anchor="start">J2 is a USB-B device breakout, connected to a normal USB-A host port.</text>
+<text x="625" y="1224" font-size="18" fill="#475569" font-weight="400" text-anchor="start">Numbers on J2 are electrical pin IDs, not a mating-face orientation drawing.</text>
+<text x="45" y="1255" font-size="16" fill="#52616d" font-weight="400" text-anchor="start">Pin reference: Raspberry Pi Pico 1 / Pico 2 official pinout · Firmware: pico-pio-usb / pico2-pio-usb</text>
+</g></svg>

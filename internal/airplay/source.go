@@ -1,0 +1,34 @@
+package airplay
+
+import (
+	"log"
+
+	"anykvm/internal/capture"
+)
+
+// ValidateSource checks the source selector and protocol-specific settings.
+func ValidateSource(device string, options Options) error {
+	if !IsDevice(device) {
+		return nil
+	}
+	if _, err := ReceiverName(device); err != nil {
+		return err
+	}
+	if err := options.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// NewCapture selects this protocol and preserves setup errors in a failed source.
+func NewCapture(device string, options Options) (capture.Device, bool) {
+	if !IsDevice(device) {
+		return nil, false
+	}
+	dev, err := NewDevice(device, options)
+	if err != nil {
+		return capture.Failed(err), true
+	}
+	log.Printf("AnyKVM: native AirPlay video/audio capture configured (experimental)")
+	return dev, true
+}

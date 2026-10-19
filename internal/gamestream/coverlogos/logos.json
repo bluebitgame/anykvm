@@ -1,0 +1,698 @@
+{
+  "android": {
+    "file": "android.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "darwin": {
+    "file": "macos.txt",
+    "colors": [
+      "32",
+      "33",
+      "91",
+      "31",
+      "35",
+      "34"
+    ]
+  },
+  "freebsd": {
+    "file": "freebsd.txt",
+    "colors": [
+      "37",
+      "31"
+    ]
+  },
+  "ios": {
+    "file": "macos.txt",
+    "colors": [
+      "32",
+      "33",
+      "91",
+      "31",
+      "35",
+      "34"
+    ]
+  },
+  "linux": {
+    "file": "linux.txt",
+    "colors": [
+      "37",
+      "90",
+      "33"
+    ]
+  },
+  "linux-almalinux": {
+    "file": "almalinux.txt",
+    "colors": [
+      "31",
+      "93",
+      "34",
+      "92",
+      "36"
+    ]
+  },
+  "linux-alpine": {
+    "file": "alpine.txt",
+    "colors": [
+      "34"
+    ]
+  },
+  "linux-antix": {
+    "file": "antix.txt",
+    "colors": [
+      "31"
+    ]
+  },
+  "linux-aosc": {
+    "file": "aoscos.txt",
+    "colors": [
+      "34",
+      "30",
+      "31",
+      "33"
+    ]
+  },
+  "linux-arch": {
+    "file": "arch.txt",
+    "colors": [
+      "36",
+      "36"
+    ]
+  },
+  "linux-archcraft": {
+    "file": "archcraft.txt",
+    "colors": [
+      "36"
+    ]
+  },
+  "linux-archlabs": {
+    "file": "archlabs.txt",
+    "colors": [
+      "36",
+      "31"
+    ]
+  },
+  "linux-arcolinux": {
+    "file": "arco.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-armbian": {
+    "file": "armbian.txt",
+    "colors": [
+      "37",
+      "31"
+    ]
+  },
+  "linux-artix": {
+    "file": "artix.txt",
+    "colors": [
+      "36"
+    ]
+  },
+  "linux-asahi": {
+    "file": "asahi.txt",
+    "colors": [
+      "33",
+      "32",
+      "31",
+      "90",
+      "37",
+      "36",
+      "34"
+    ]
+  },
+  "linux-aurora": {
+    "file": "aurora.txt",
+    "colors": [
+      "34",
+      "35",
+      "31",
+      "37"
+    ]
+  },
+  "linux-bazzite": {
+    "file": "bazzite.txt",
+    "colors": [
+      "94",
+      "47",
+      "95",
+      "0",
+      "8",
+      "55"
+    ]
+  },
+  "linux-blackarch": {
+    "file": "blackarch.txt",
+    "colors": [
+      "31",
+      "91",
+      "30"
+    ]
+  },
+  "linux-bodhi": {
+    "file": "bodhi.txt",
+    "colors": [
+      "37",
+      "93",
+      "32"
+    ]
+  },
+  "linux-bunsenlabs": {
+    "file": "bunsenlabs.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-cachyos": {
+    "file": "cachyos.txt",
+    "colors": [
+      "32",
+      "36",
+      "30"
+    ]
+  },
+  "linux-calculate": {
+    "file": "calculate.txt",
+    "colors": [
+      "37",
+      "33"
+    ]
+  },
+  "linux-debian": {
+    "file": "debian.txt",
+    "colors": [
+      "31",
+      "37"
+    ]
+  },
+  "linux-deepin": {
+    "file": "deepin.txt",
+    "colors": [
+      "34"
+    ]
+  },
+  "linux-devuan": {
+    "file": "devuan.txt",
+    "colors": [
+      "35"
+    ]
+  },
+  "linux-elementary": {
+    "file": "elementary.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-endeavouros": {
+    "file": "endeavouros.txt",
+    "colors": [
+      "35",
+      "31",
+      "34"
+    ]
+  },
+  "linux-fedora": {
+    "file": "fedora.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-fedora-asahi-remix": {
+    "file": "asahi.txt",
+    "colors": [
+      "33",
+      "32",
+      "31",
+      "90",
+      "37",
+      "36",
+      "34"
+    ]
+  },
+  "linux-fedora-kinoite": {
+    "file": "fedora_kinoite.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-fedora-silverblue": {
+    "file": "fedora_silverblue.txt",
+    "colors": [
+      "34",
+      "37",
+      "36"
+    ]
+  },
+  "linux-garuda": {
+    "file": "garuda.txt",
+    "colors": [
+      "31"
+    ]
+  },
+  "linux-gentoo": {
+    "file": "gentoo.txt",
+    "colors": [
+      "35",
+      "37"
+    ]
+  },
+  "linux-guix": {
+    "file": "guix.txt",
+    "colors": [
+      "33"
+    ]
+  },
+  "linux-hyperbola": {
+    "file": "hyperbola.txt",
+    "colors": [
+      "90"
+    ]
+  },
+  "linux-kali": {
+    "file": "kali.txt",
+    "colors": [
+      "34",
+      "90"
+    ]
+  },
+  "linux-kubuntu": {
+    "file": "kubuntu.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-kylin": {
+    "file": "kylin.txt",
+    "colors": [
+      "34",
+      "36",
+      "37",
+      "90"
+    ]
+  },
+  "linux-linuxlite": {
+    "file": "linuxlite.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-linuxmint": {
+    "file": "linuxmint.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-lmde": {
+    "file": "lmde.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-lubuntu": {
+    "file": "lubuntu.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-mageia": {
+    "file": "mageia.txt",
+    "colors": [
+      "36",
+      "37"
+    ]
+  },
+  "linux-manjaro": {
+    "file": "manjaro.txt",
+    "colors": [
+      "32"
+    ]
+  },
+  "linux-mx": {
+    "file": "mx.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-neon": {
+    "file": "kdeneon.txt",
+    "colors": [
+      "32",
+      "39"
+    ]
+  },
+  "linux-nixos": {
+    "file": "nixos.txt",
+    "colors": [
+      "34",
+      "36",
+      "34",
+      "36",
+      "34",
+      "36"
+    ]
+  },
+  "linux-nobara": {
+    "file": "nobara.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-nutyx": {
+    "file": "nutyx.txt",
+    "colors": [
+      "34",
+      "31"
+    ]
+  },
+  "linux-omarchy": {
+    "file": "omarchy.txt",
+    "colors": [
+      "38;5;149"
+    ]
+  },
+  "linux-openkylin": {
+    "file": "openkylin.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-openmandriva": {
+    "file": "openmandriva.txt",
+    "colors": [
+      "34"
+    ]
+  },
+  "linux-opensuse": {
+    "file": "opensuse.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-opensuse-leap": {
+    "file": "opensuse_leap.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-opensuse-slowroll": {
+    "file": "opensuse_slowroll.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-opensuse-tumbleweed": {
+    "file": "opensuse_tumbleweed.txt",
+    "colors": [
+      "39"
+    ]
+  },
+  "linux-parabola": {
+    "file": "parabola.txt",
+    "colors": [
+      "35"
+    ]
+  },
+  "linux-parrot": {
+    "file": "parrot.txt",
+    "colors": [
+      "36",
+      "37"
+    ]
+  },
+  "linux-pclinuxos": {
+    "file": "pclinuxos.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-peppermint": {
+    "file": "peppermint.txt",
+    "colors": [
+      "31",
+      "37"
+    ]
+  },
+  "linux-pikaos": {
+    "file": "pikaos.txt",
+    "colors": [
+      "33"
+    ]
+  },
+  "linux-pop": {
+    "file": "pop.txt",
+    "colors": [
+      "36",
+      "37"
+    ]
+  },
+  "linux-porteus": {
+    "file": "porteus.txt",
+    "colors": [
+      "36",
+      "37"
+    ]
+  },
+  "linux-puppy": {
+    "file": "puppy.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-pureos": {
+    "file": "pureos.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-q4os": {
+    "file": "q4os.txt",
+    "colors": [
+      "34",
+      "31"
+    ]
+  },
+  "linux-raspbian": {
+    "file": "raspbian.txt",
+    "colors": [
+      "31",
+      "32"
+    ]
+  },
+  "linux-rebornos": {
+    "file": "rebornos.txt",
+    "colors": [
+      "30",
+      "34",
+      "36"
+    ]
+  },
+  "linux-redcore": {
+    "file": "redcore.txt",
+    "colors": [
+      "31",
+      "37"
+    ]
+  },
+  "linux-rocky": {
+    "file": "rocky.txt",
+    "colors": [
+      "32"
+    ]
+  },
+  "linux-rosa": {
+    "file": "rosa.txt",
+    "colors": [
+      "38;2;250;250;250",
+      "38;2;100;165;225"
+    ]
+  },
+  "linux-salix": {
+    "file": "salix.txt",
+    "colors": [
+      "32",
+      "32"
+    ]
+  },
+  "linux-slackware": {
+    "file": "slackware.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-slitaz": {
+    "file": "slitaz.txt",
+    "colors": [
+      "33",
+      "33"
+    ]
+  },
+  "linux-solus": {
+    "file": "solus.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-sparky": {
+    "file": "sparky.txt",
+    "colors": [
+      "31",
+      "37"
+    ]
+  },
+  "linux-steamos": {
+    "file": "steamos.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-tails": {
+    "file": "tails.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-tuxedo": {
+    "file": "tuxedo_os.txt",
+    "colors": [
+      "37",
+      "31"
+    ]
+  },
+  "linux-ubuntu": {
+    "file": "ubuntu.txt",
+    "colors": [
+      "31",
+      "31"
+    ]
+  },
+  "linux-ubuntu-budgie": {
+    "file": "ubuntu_budgie.txt",
+    "colors": [
+      "34",
+      "37",
+      "31"
+    ]
+  },
+  "linux-ubuntu-cinnamon": {
+    "file": "ubuntu_cinnamon.txt",
+    "colors": [
+      "31",
+      "37"
+    ]
+  },
+  "linux-ubuntu-kylin": {
+    "file": "ubuntu_kylin.txt",
+    "colors": [
+      "31",
+      "37",
+      "33"
+    ]
+  },
+  "linux-ubuntu-mate": {
+    "file": "ubuntu_mate.txt",
+    "colors": [
+      "32",
+      "37"
+    ]
+  },
+  "linux-ubuntu-studio": {
+    "file": "ubuntu_studio.txt",
+    "colors": [
+      "36",
+      "37"
+    ]
+  },
+  "linux-ubuntu-unity": {
+    "file": "ubuntu_unity.txt",
+    "colors": [
+      "35",
+      "37"
+    ]
+  },
+  "linux-ultramarine": {
+    "file": "ultramarine.txt",
+    "colors": [
+      "34",
+      "37"
+    ]
+  },
+  "linux-uos": {
+    "file": "uos.txt",
+    "colors": [
+      "34"
+    ]
+  },
+  "linux-vanilla": {
+    "file": "vanilla.txt",
+    "colors": [
+      "33"
+    ]
+  },
+  "linux-void": {
+    "file": "void.txt",
+    "colors": [
+      "32",
+      "90"
+    ]
+  },
+  "linux-xubuntu": {
+    "file": "xubuntu.txt",
+    "colors": [
+      "38;5;25",
+      "39"
+    ]
+  },
+  "linux-zorin": {
+    "file": "zorin.txt",
+    "colors": [
+      "34"
+    ]
+  },
+  "netbsd": {
+    "file": "netbsd.txt",
+    "colors": [
+      "31",
+      "37"
+    ]
+  },
+  "openbsd": {
+    "file": "openbsd.txt",
+    "colors": [
+      "33",
+      "37",
+      "36",
+      "31",
+      "90"
+    ]
+  },
+  "windows": {
+    "file": "windows_11.txt",
+    "colors": [
+      "34",
+      "34",
+      "34",
+      "34"
+    ]
+  }
+}

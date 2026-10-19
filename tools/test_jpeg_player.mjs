@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const source = await readFile(new URL('../internal/wsmedia/web/jpeg.js', import.meta.url), 'utf8');
+const { JPEGPlayer } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const work = [], drawn = [], closed = [];
+const player = new JPEGPlayer((bmp) => drawn.push(bmp.id), (id) => new Promise((resolve, reject) => work.push({ id, resolve, reject })));
+const finish = async (id) => {
+  const next = work.shift();
+  assert.equal(next.id, id);
+  next.resolve({ id, close: () => closed.push(id) });
+  await new Promise(setImmediate);
+};
+player.push(1); player.push(2); player.push(3);
+assert.equal(work.length, 1);
+await finish(1);
+assert.equal(work[0].id, 3);
+player.reset(); player.push(4);
+await finish(3);
+await finish(4);
+assert.deepEqual(drawn, [1, 4]);
+assert.deepEqual(closed, [1, 3, 4]);
+player.push(5); player.push(6);
+work.shift().reject(new Error('corrupt JPEG'));
+await new Promise(setImmediate);
+await finish(6);
+assert.deepEqual(drawn, [1, 4, 6]);
+assert.equal(player.busy, false);
+console.log('JPEG player: bounded decoding, latest frame, reset and error recovery passed');

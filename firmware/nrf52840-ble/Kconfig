@@ -1,0 +1,18 @@
+# AnyKVM application-specific Kconfig options.
+# Sourced automatically by the Zephyr build for this application.
+
+menu "AnyKVM BLE HID"
+
+config APP_PROFILE_COUNT
+	int "Number of switchable device profiles (BLE identities/bond slots)"
+	default 4
+	range 1 4
+	help
+	  Each profile is an independent BLE identity with its own bond, so
+	  different hosts (iPhone, iPad, ...) can each pair once and be switched
+	  between with the 0x20 serial command. Must be <= BT_ID_MAX and
+	  BT_MAX_PAIRED.
+
+endmenu
+
+source "Kconfig.zephyr"
