@@ -88,6 +88,24 @@ static void encoded(void *opaque, void *source, OSStatus status, VTEncodeInfoFla
     }
 }
 
+int bk_encoder_supports_hevc(void) {
+    CFArrayRef encoders = NULL;
+    if (VTCopyVideoEncoderList(NULL, &encoders) != noErr || !encoders)
+        return 0;
+    int supported = 0;
+    for (CFIndex i = 0; i < CFArrayGetCount(encoders); i++) {
+        CFDictionaryRef entry = CFArrayGetValueAtIndex(encoders, i);
+        CFNumberRef value = CFDictionaryGetValue(entry, kVTVideoEncoderList_CodecType);
+        CFBooleanRef hardware = CFDictionaryGetValue(entry, kVTVideoEncoderList_IsHardwareAccelerated);
+        int32_t codec = 0;
+        if (value && CFNumberGetValue(value, kCFNumberSInt32Type, &codec) && codec == kCMVideoCodecType_HEVC &&
+            hardware == kCFBooleanTrue)
+            supported = 1;
+    }
+    CFRelease(encoders);
+    return supported;
+}
+
 bk_encoder *bk_encoder_open(const char *backend, const char *device, int w, int h, int fps_num,
                             int fps_den, int bitrate, int hevc, int disable_low_latency,
                             int h264_profile, char *error, size_t error_size) {

@@ -45,6 +45,9 @@ func openMediaFoundation(o Options, hardware bool) (Encoder, error) {
 	if ptr == nil {
 		return nil, fmt.Errorf("Media Foundation: %s", C.GoString(&msg[0]))
 	}
+	if o.Codec != "h264" {
+		return &mediaFoundationEncoder{ptr: ptr, options: o, name: C.GoString(C.bk_mf_name(ptr)), first: true}, nil
+	}
 	var size, headerSize C.size_t
 	probe := C.bk_mf_probe(ptr, &size)
 	header := C.bk_mf_header(ptr, &headerSize)
@@ -59,15 +62,8 @@ func openMediaFoundation(o Options, hardware bool) (Encoder, error) {
 	e := &mediaFoundationEncoder{ptr: ptr, options: o, name: C.GoString(C.bk_mf_name(ptr)), first: true}
 	// Some drivers put parameter sets only in the first output sample and never
 	// expose MF_MT_MPEG_SEQUENCE_HEADER. Keep those sets before discarding the probe.
-	if o.Codec == "h264" {
-		units, _ := mediaFoundationUnits(packet, 4)
-		for _, unit := range units {
-			if tag := unit[0] & 31; tag == 7 || tag == 8 {
-				e.header = append(e.header, mfStartCode...)
-				e.header = append(e.header, unit...)
-			}
-		}
-	}
+	e.header = mediaFoundationParameterSets(packet, o.Codec)
+
 	return e, nil
 }
 
@@ -122,6 +118,9 @@ func (e *mediaFoundationEncoder) packet(output *C.uint8_t, size C.size_t, force 
 	if err != nil {
 		e.failed = err
 		return nil, err
+	}
+	if header := mediaFoundationParameterSets(data, e.options.Codec); len(header) > 0 {
+		e.header = header
 	}
 	e.first = false
 	return data, nil

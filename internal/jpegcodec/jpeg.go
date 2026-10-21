@@ -1,7 +1,8 @@
 // Package jpegcodec converts tightly packed BGRA frames to and from JPEG.
-// macOS uses ImageIO. Linux/Windows optionally load libjpeg-turbo, with Go's
-// JPEG implementation as a fallback when the library or CGO is unavailable.
-// Windows desktop textures can also use a D3D11 Compute JPEG pipeline, independently of the BGRA byte-slice API.
+// anyjpeg uses AVX2/SSE2 on x86 and NEON on ARM64. macOS ARM64 defaults to
+// ImageIO. Go JPEG handles unsupported CPUs, non-CGO builds and unusual scans.
+// Windows/Linux also provide compute JPEG encoding and baseline JPEG decoding
+// to BT.709 NV12.
 package jpegcodec
 
 import (

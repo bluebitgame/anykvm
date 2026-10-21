@@ -47,13 +47,14 @@ func (c *client) sendProgressiveRefinement(e *progressiveEncoder, started time.T
 		if err != nil {
 			return
 		}
-		update := graphicsProgressive(encoded)
-		if len(batch)+len(update) > 256<<10 {
+		if len(batch)+graphicsProgressiveHeaderSize+len(encoded) > 256<<10 {
 			if err = send(); err != nil {
 				return
 			}
 		}
-		batch = append(batch, update...)
+		packing := time.Now()
+		batch = appendGraphicsProgressive(batch, encoded)
+		encodeTime += time.Since(packing)
 		tiles += end - i
 		i = end
 		if encodeTime >= 2*time.Millisecond || len(c.frames) != 0 || c.reset.Load() {

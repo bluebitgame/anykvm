@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 typedef struct bk_encoder bk_encoder;
+int bk_encoder_supports_hevc(void);
 bk_encoder *bk_encoder_open(const char *backend, const char *device, int width, int height, int fps_num, int fps_den, int bitrate, int hevc, int disable_low_latency, int h264_profile, char *error, size_t error_size);
 int bk_encoder_submit(bk_encoder *, const uint8_t *data, int w, int h, int format, uint64_t id, int force_idr, char *error, size_t error_size);
 int bk_encoder_submit_pixel(bk_encoder *, void *pixel, uint64_t id, int force_idr, char *error, size_t error_size);

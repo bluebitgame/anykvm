@@ -11,7 +11,7 @@ import (
 func TestUSBAudioQueueAlignmentOverflowAndShutdown(t *testing.T) {
 	executable := filepath.Join(t.TempDir(), "usb-audio")
 	args := []string{"clang", "-fblocks", "-Werror=implicit-function-declaration", "-o", executable, "capture_darwin.m", "testdata/native_usb_audio.m"}
-	for _, framework := range []string{"AVFoundation", "CoreMedia", "CoreMediaIO", "CoreGraphics", "CoreVideo", "Cocoa", "ImageIO", "CoreServices", "CoreImage"} {
+	for _, framework := range []string{"AVFoundation", "CoreMedia", "CoreMediaIO", "CoreGraphics", "CoreVideo", "Cocoa", "CoreServices", "CoreImage"} {
 		args = append(args, "-framework", framework)
 	}
 	if out, err := exec.Command("xcrun", args...).CombinedOutput(); err != nil {

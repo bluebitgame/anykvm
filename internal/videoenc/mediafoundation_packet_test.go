@@ -62,6 +62,41 @@ func TestMediaFoundationHEVCRecoveryHeaders(t *testing.T) {
 	}
 }
 
+func TestMediaFoundationHEVCRejectsIncompleteRecovery(t *testing.T) {
+	for _, missing := range []byte{32, 33, 34} {
+		var header []byte
+		for _, tag := range []byte{32, 33, 34} {
+			if tag != missing {
+				header = append(header, 0, 0, 0, 1, tag<<1, 1, 0x80)
+			}
+		}
+		if _, err := mediaFoundationPacket([]byte{0, 0, 1, 38, 1, 0x80}, header, "hevc"); err == nil {
+			t.Fatalf("accepted HEVC recovery picture without parameter set %d", missing)
+		}
+	}
+	// Predicted pictures can continue using the decoder's existing parameter sets.
+	if _, err := mediaFoundationPacket([]byte{0, 0, 1, 2, 1, 0x80}, nil, "hevc"); err != nil {
+		t.Fatalf("rejected predicted HEVC picture: %v", err)
+	}
+}
+
+func TestNativeHeadersComeFromFirstRealHEVCFrame(t *testing.T) {
+	var first []byte
+	for _, tag := range []byte{32, 33, 34, 19} {
+		first = append(first, 0, 0, 0, 1, tag<<1, 1, 0x80)
+	}
+	header := mediaFoundationParameterSets(first, "hevc")
+	later, err := mediaFoundationPacket([]byte{0, 0, 1, 38, 1, 0x80}, header, "hevc")
+	if err != nil || !bytes.Equal(first, later) {
+		t.Fatalf("first real parameter sets lost: %x %v", later, err)
+	}
+	for _, frame := range [][]byte{{0, 0, 1, 2, 1, 0x80}, {0, 0, 1, 64, 1, 0x80}} {
+		if len(mediaFoundationParameterSets(frame, "hevc")) != 0 {
+			t.Fatal("predicted or partial headers replaced the complete cached sets")
+		}
+	}
+}
+
 func TestMediaFoundationMalformedPackets(t *testing.T) {
 	for _, data := range [][]byte{{}, {0, 0}, {0, 0, 0, 0}, {0, 0, 0, 8, 0x65}, {0, 0, 1}, {0, 0, 1, 0, 0, 1, 0x65}} {
 		if _, err := mediaFoundationPacket(data, nil, "h264"); err == nil {

@@ -2,6 +2,7 @@ package capture
 
 import (
 	"anykvm/internal/framebuf"
+	"anykvm/internal/gpuconv"
 	"anykvm/internal/videoenc"
 	"anykvm/internal/videotiming"
 	"errors"
@@ -19,12 +20,13 @@ var ErrStreamStopped = errors.New("capture stream stopped")
 type VideoFormat uint8
 
 const (
-	FormatRaw  VideoFormat = iota // BGRA pixels (Width*Height*4)
-	FormatJPEG                    // MJPEG/JPEG bytes
-	FormatH264                    // one H.264 Annex-B access unit
-	FormatHEVC                    // one HEVC Annex-B access unit
-	FormatYUV                     // packed/planar YUV bytes; PixFmt names the exact layout
-	FormatAV1                     // one AV1 low-overhead temporal unit
+	FormatRaw     VideoFormat = iota // BGRA pixels (Width*Height*4)
+	FormatJPEG                       // MJPEG/JPEG bytes
+	FormatH264                       // one H.264 Annex-B access unit
+	FormatHEVC                       // one HEVC Annex-B access unit
+	FormatYUV                        // packed/planar YUV bytes; PixFmt names the exact layout
+	FormatAV1                        // one AV1 low-overhead temporal unit
+	FormatSurface                    // immutable GPU snapshot, owned by Buffer; Data is empty
 )
 
 // String returns a short label for logging.
@@ -42,6 +44,8 @@ func (f VideoFormat) String() string {
 		return "av1"
 	case FormatYUV:
 		return "yuv"
+	case FormatSurface:
+		return "gpu"
 	default:
 		return "unknown"
 	}
@@ -51,7 +55,8 @@ func (f VideoFormat) String() string {
 type Frame struct {
 	Timing *videotiming.Trace
 	// Buffer owns immutable Data when non-nil. Frame copies borrow this reference.
-	Buffer *framebuf.Buffer
+	Buffer  *framebuf.Buffer
+	Surface *gpuconv.Surface
 	// Used only within the native capture -> encoder call. It never escapes to
 	// frame servers; the pipe releases its lease after native submission.
 	nativeBuffer nativeFrameBuffer
@@ -99,6 +104,29 @@ type OutputSizeConfigurer interface {
 	SetOutputSize(width, height int)
 }
 
+// OutputSizePolicyConfigurer restricts output overrides without changing the
+// device's selected input mode. Apply before opening; false restores defaults.
+type OutputSizePolicyConfigurer interface {
+	SetOutputDownscaleOnly(bool)
+}
+
+// OutputSizeLimitConfigurer supplies the configured Target ceiling separately
+// from a client's changing output request. Zero clears the limit before open.
+type OutputSizeLimitConfigurer interface {
+	SetOutputSizeLimit(width, height int)
+}
+
+// FrameNotifier signals new video output or a terminal capture error. Consumers
+// still call Capture to take ownership. The channel must not be closed.
+type FrameNotifier interface {
+	CaptureReady() <-chan struct{}
+}
+
+// GPUSurfaceConfigurer enables immutable GPU capture snapshots for a consumer
+// that accepts FormatSurface. Apply before opening, independently of raw codec
+// selection; other protocols continue to receive their usual pixel/byte frames.
+type GPUSurfaceConfigurer interface{ SetGPUSurface(bool) }
+
 // RDPAVC420Configurer selects full-range BT.709 for the native RDP H.264
 // path. Apply before opening; other protocols retain the backend's defaults.
 type RDPAVC420Configurer interface {
@@ -136,5 +164,6 @@ func (f *Frame) Release() {
 		f.Buffer.Release()
 		f.Buffer = nil
 		f.Data = nil
+		f.Surface = nil
 	}
 }

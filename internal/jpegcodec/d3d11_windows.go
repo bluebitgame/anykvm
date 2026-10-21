@@ -17,7 +17,10 @@ import (
 
 // D3D11Encoder synchronously produces a complete JPEG on the capture GPU.
 // Calls, including Close, must be serialized by the capture owner.
-type D3D11Encoder struct{ ptr *C.bk_jpeg_gpu }
+type D3D11Encoder struct {
+	ptr        *C.bk_jpeg_gpu
+	parameters jpegFrameParameters
+}
 
 func NewD3D11Encoder(adapterLUID uint64) (*D3D11Encoder, error) {
 	var message [1024]C.char
@@ -39,15 +42,15 @@ func (e *D3D11Encoder) EncodeTexture(handle uintptr, rotation, width, height, qu
 		(rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) {
 		return nil, fmt.Errorf("D3D11 JPEG: invalid texture geometry")
 	}
-	quantization, huffman, header, err := gpuJPEGFrame(width, height, quality)
-	if err != nil {
+	if err := e.parameters.prepare(width, height, quality); err != nil {
 		return nil, err
 	}
+	header := e.parameters.header
 	var jpeg *C.uint8_t
 	var jpegBytes C.size_t
 	var message [1024]C.char
 	ok := C.bk_jpeg_gpu_encode(e.ptr, C.uintptr_t(handle), C.int(rotation), C.int(width), C.int(height),
-		(*C.uint32_t)(unsafe.Pointer(&quantization[0])), (*C.uint32_t)(unsafe.Pointer(&huffman[0])),
+		(*C.uint32_t)(unsafe.Pointer(&e.parameters.quantization[0])), (*C.uint32_t)(unsafe.Pointer(&jpegPackedEntropyCodes[0])),
 		(*C.uint8_t)(unsafe.Pointer(&header[0])), C.size_t(len(header)), &jpeg, &jpegBytes, &message[0], C.size_t(len(message)))
 	defer C.free(unsafe.Pointer(jpeg))
 	runtime.KeepAlive(e)

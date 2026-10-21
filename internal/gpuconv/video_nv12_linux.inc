@@ -2,7 +2,7 @@
 // Included after video_image helpers; all imported objects are frame-local.
 static int video_nv12_import(bk_vk_encoder *e,const bk_vk_source *f,video_image *i,char *error,size_t capacity){
  bk_vk *v=e->v;int fd=-1;
- if(f->fourcc!=0x3231564e || f->width!=e->width || f->height!=e->height || f->planes!=2 || f->modifier ||
+ if(f->fourcc!=0x3231564e || f->width!=e->width || f->height!=e->height || f->planes!=2 || f->modifier || f->flip_y ||
     f->pitches[0]!=f->pitch || f->pitches[1]!=f->pitch || f->pitch<f->width || !f->size)goto failed;
  VkPhysicalDeviceExternalImageFormatInfo external={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,.pNext=&e->profiles,.handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
  VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifier={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,.pNext=&external,.drmFormatModifier=0,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};

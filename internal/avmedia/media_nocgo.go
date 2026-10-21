@@ -9,6 +9,8 @@ import (
 
 type Session struct{}
 
+func HasEncoder(string) bool { return false }
+
 func NewEncoder(VideoOptions) (*Session, error)                  { return nil, Available() }
 func NewAudioEncoder(int, int) (*Session, error)                 { return nil, Available() }
 func NewDecoder(string) (*Session, error)                        { return nil, Available() }

@@ -10,8 +10,8 @@ import (
 )
 
 func TestCompressedCaptureBypassesEncoderAndRateLimit(t *testing.T) {
-	for _, codec := range []string{"h264", "hevc"} {
-		d := &ffmpegDevice{streamOptions: &VideoStreamOptions{Codec: codec, Width: 1280, Height: 720, FPS: 30, Bitrate: 1000}, encodePacer: framePacer{next: time.Now().Add(time.Second)}}
+	for _, codec := range []string{"h264", "hevc", "av1"} {
+		d := &ffmpegDevice{outputDownscaleOnly: true, targetW: 1280, targetH: 720, streamOptions: &VideoStreamOptions{Codec: codec, Width: 1280, Height: 720, FPS: 30, Bitrate: 1000}, encodePacer: framePacer{next: time.Now().Add(time.Second)}}
 		input := &avmedia.Frame{Data: []byte{0, 0, 0, 1, 0x65, 1, 2}, Width: 1920, Height: 1080, Codec: codec}
 		f := mediaCaptureFrame(input)
 		for i := 0; i < 3; i++ {

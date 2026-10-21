@@ -8,14 +8,13 @@ import (
 	"testing"
 )
 
-// Opt in on an AV1-capable GPU host. Linux also needs FFmpeg libraries; Windows
-// uses native vendor APIs without the ffmpeg tag and libavcodec with it.
-// Media Foundation remains a native fallback in both builds.
+// Opt in on an AV1-capable GPU host. Without the ffmpeg tag, Linux uses Vulkan
+// Video and Windows uses vendor APIs or Media Foundation.
 func TestAV1HardwareRecovery(t *testing.T) {
 	if os.Getenv("ANYKVM_TEST_AV1") == "" {
 		t.Skip("set ANYKVM_TEST_AV1=1 on an AV1 GPU host")
 	}
-	o := Options{Width: 1280, Height: 720, FPS: 30, Bitrate: 4000, Codec: "av1"}
+	o := Options{Width: 1280, Height: 768, FPS: 30, Bitrate: 4000, Codec: "av1"}
 	e, err := New(o)
 	if err != nil {
 		t.Fatal(err)

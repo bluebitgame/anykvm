@@ -5,7 +5,7 @@ import "log"
 func selectLinuxEncoder(o Options, nvidia bool, devices []string,
 	openNative func(Options) (Encoder, error),
 	openLibrary func(Options, string, string) (Encoder, error)) (Encoder, error) {
-	if o.Codec != "h264" && o.Codec != "av1" {
+	if o.Codec != "h264" && o.Codec != "hevc" && o.Codec != "av1" {
 		return nil, ErrUnavailable
 	}
 	if nvidia {

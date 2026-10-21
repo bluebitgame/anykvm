@@ -108,7 +108,7 @@ static void exercise(int profile, BOOL screen, const char *prefix) {
         BOOL key = frame == 0 || frame == 48;
         CMTime pts = CMTimeMake(frame, 60);
         if (screen)
-            dispatch_sync(s->queue, ^{
+            dispatch_sync(s->encodeQueue, ^{
               if (key)
                   s->forceIDR = YES;
               [s encodePixel:pixel atTime:pts repeat:NO];

@@ -1,8 +1,9 @@
-//go:build windows && cgo && !ffmpeg
+//go:build windows && cgo
 
 #define BK_VENDOR_IMPLEMENTATION
 #include "third_party/amf/components/VideoEncoderAV1.h"
 #include "third_party/amf/components/VideoEncoderVCE.h"
+#include "third_party/amf/components/VideoEncoderHEVC.h"
 #include "third_party/amf/core/Factory.h"
 #include "third_party/amf/core/Version.h"
 #include "vendor_windows.h"
@@ -68,13 +69,7 @@ static void bk_amf_close(void *opaque) {
     free(e);
 }
 
-static void *bk_amf_open(const bk_vendor_options *o, char *error, size_t capacity) {
-    bk_amf *e = calloc(1, sizeof(*e));
-    if (!e) {
-        snprintf(error, capacity, "out of memory");
-        return NULL;
-    }
-    e->options = *o;
+static int bk_amf_component(bk_amf *e, const bk_vendor_options *o, char *error, size_t capacity) {
     e->module = bk_vendor_library(L"amfrt64.dll");
     AMFInit_Fn init = e->module ? (void *)GetProcAddress(e->module, AMF_INIT_FUNCTION_NAME) : NULL;
     if (!init) {
@@ -98,31 +93,79 @@ static void *bk_amf_open(const bk_vendor_options *o, char *error, size_t capacit
     const AMFGuid context1_iid = IID_AMFContext1();
     e->context->pVtbl->QueryInterface(e->context, &context1_iid, (void **)&e->context1);
     AMF_TRY(factory->pVtbl->CreateComponent(factory, e->context,
-                                            o->codec == 2 ? AMFVideoEncoder_AV1 : AMFVideoEncoderVCE_AVC, &e->encoder));
+                                            o->codec == 2   ? AMFVideoEncoder_AV1
+                                            : o->codec == 1 ? AMFVideoEncoder_HEVC
+                                                            : AMFVideoEncoderVCE_AVC,
+                                            &e->encoder));
+    return 0;
+failed:
+    return -1;
+}
+
+int bk_amf_supports(int codec) {
+    bk_vendor_options options = {.codec = codec};
+    bk_amf *e = calloc(1, sizeof(*e));
+    if (!e)
+        return 0;
+    AMFCaps *caps = NULL;
+    AMFIOCaps *input = NULL;
+    int supported = 0;
+    char error[512];
+    if (bk_amf_component(e, &options, error, sizeof(error)) < 0)
+        goto done;
+    if (e->encoder->pVtbl->GetCaps(e->encoder, &caps) != AMF_OK || !caps ||
+        caps->pVtbl->GetAccelerationType(caps) != AMF_ACCEL_GPU || caps->pVtbl->GetInputCaps(caps, &input) != AMF_OK ||
+        !input)
+        goto done;
+    amf_int32 count = input->pVtbl->GetNumOfFormats(input);
+    for (amf_int32 i = 0; i < count; i++) {
+        AMF_SURFACE_FORMAT format;
+        amf_bool native;
+        if (input->pVtbl->GetFormatAt(input, i, &format, &native) == AMF_OK && format == AMF_SURFACE_NV12)
+            supported = 1;
+    }
+done:
+    if (input)
+        input->pVtbl->Release(input);
+    if (caps)
+        caps->pVtbl->Release(caps);
+    bk_amf_close(e);
+    return supported;
+}
+
+static void *bk_amf_open(const bk_vendor_options *o, char *error, size_t capacity) {
+    bk_amf *e = calloc(1, sizeof(*e));
+    if (!e) {
+        snprintf(error, capacity, "out of memory");
+        return NULL;
+    }
+    e->options = *o;
+    if (bk_amf_component(e, o, error, capacity) < 0) goto failed;
     int av1 = o->codec == 2;
+    int hevc = o->codec == 1;
     AMF_PROP(
-        av1 ? AMF_VIDEO_ENCODER_AV1_USAGE : AMF_VIDEO_ENCODER_USAGE,
-        bk_amf_int(av1 ? AMF_VIDEO_ENCODER_AV1_USAGE_ULTRA_LOW_LATENCY : AMF_VIDEO_ENCODER_USAGE_ULTRA_LOW_LATENCY));
-    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET : AMF_VIDEO_ENCODER_QUALITY_PRESET,
-             bk_amf_int(av1 ? AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_SPEED : AMF_VIDEO_ENCODER_QUALITY_PRESET_SPEED));
+        av1 ? AMF_VIDEO_ENCODER_AV1_USAGE : hevc ? AMF_VIDEO_ENCODER_HEVC_USAGE : AMF_VIDEO_ENCODER_USAGE,
+        bk_amf_int(av1 ? AMF_VIDEO_ENCODER_AV1_USAGE_ULTRA_LOW_LATENCY : hevc ? AMF_VIDEO_ENCODER_HEVC_USAGE_ULTRA_LOW_LATENCY : AMF_VIDEO_ENCODER_USAGE_ULTRA_LOW_LATENCY));
+    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET : hevc ? AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET : AMF_VIDEO_ENCODER_QUALITY_PRESET,
+             bk_amf_int(av1 ? AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_SPEED : hevc ? AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET_SPEED : AMF_VIDEO_ENCODER_QUALITY_PRESET_SPEED));
     AMFVariantStruct dimensions = {0};
     dimensions.type = AMF_VARIANT_SIZE;
     dimensions.sizeValue.width = o->width;
     dimensions.sizeValue.height = o->height;
-    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_FRAMESIZE : AMF_VIDEO_ENCODER_FRAMESIZE, dimensions);
+    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_FRAMESIZE : hevc ? AMF_VIDEO_ENCODER_HEVC_FRAMESIZE : AMF_VIDEO_ENCODER_FRAMESIZE, dimensions);
     AMFVariantStruct rate = {0};
     rate.type = AMF_VARIANT_RATE;
     rate.rateValue.num = o->num;
     rate.rateValue.den = o->den;
-    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_FRAMERATE : AMF_VIDEO_ENCODER_FRAMERATE, rate);
+    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_FRAMERATE : hevc ? AMF_VIDEO_ENCODER_HEVC_FRAMERATE : AMF_VIDEO_ENCODER_FRAMERATE, rate);
     AMF_PROP(
-        av1 ? AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD : AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD,
-        bk_amf_int(av1 ? AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR : AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR));
-    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE : AMF_VIDEO_ENCODER_TARGET_BITRATE,
+        av1 ? AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD : hevc ? AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD : AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD,
+        bk_amf_int(av1 ? AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR : hevc ? AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CBR : AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR));
+    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE : hevc ? AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE : AMF_VIDEO_ENCODER_TARGET_BITRATE,
              bk_amf_int((amf_int64)o->bitrate * 1000));
-    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE : AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE,
+    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE : hevc ? AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE : AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE,
              bk_amf_int(((amf_int64)o->bitrate * 1000 * o->den + o->num - 1) / o->num));
-    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_GOP_SIZE : AMF_VIDEO_ENCODER_IDR_PERIOD,
+    AMF_PROP(av1 ? AMF_VIDEO_ENCODER_AV1_GOP_SIZE : hevc ? AMF_VIDEO_ENCODER_HEVC_GOP_SIZE : AMF_VIDEO_ENCODER_IDR_PERIOD,
              bk_amf_int(((amf_int64)o->num * 2 + o->den - 1) / o->den));
     if (av1) {
         AMF_PROP(AMF_VIDEO_ENCODER_AV1_HEADER_INSERTION_MODE,
@@ -131,6 +174,10 @@ static void *bk_amf_open(const bk_vendor_options *o, char *error, size_t capacit
         if (e->encoder->pVtbl->HasProperty(e->encoder, AMF_VIDEO_ENCODER_AV1_B_PIC_PATTERN)) {
             AMF_PROP(AMF_VIDEO_ENCODER_AV1_B_PIC_PATTERN, bk_amf_int(0));
         }
+    } else if (hevc) {
+        AMF_PROP(AMF_VIDEO_ENCODER_HEVC_PROFILE, bk_amf_int(AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN));
+        AMF_PROP(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE,
+                 bk_amf_int(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED));
     } else {
         AMF_PROP(AMF_VIDEO_ENCODER_PROFILE, bk_amf_int(AMF_VIDEO_ENCODER_PROFILE_BASELINE));
         AMF_PROP(AMF_VIDEO_ENCODER_B_PIC_PATTERN, bk_amf_int(0));
@@ -160,6 +207,10 @@ static int bk_amf_submit(bk_amf *e, AMFSurface *surface, int force, uint8_t **ou
                                                 bk_amf_int(AMF_VIDEO_ENCODER_AV1_FORCE_FRAME_TYPE_KEY)));
             AMF_TRY(surface->pVtbl->SetProperty(surface, AMF_VIDEO_ENCODER_AV1_FORCE_INSERT_SEQUENCE_HEADER,
                                                 bk_amf_bool(1)));
+        } else if (e->options.codec == 1) {
+            AMF_TRY(surface->pVtbl->SetProperty(surface, AMF_VIDEO_ENCODER_HEVC_FORCE_PICTURE_TYPE,
+                                                bk_amf_int(AMF_VIDEO_ENCODER_HEVC_PICTURE_TYPE_IDR)));
+            AMF_TRY(surface->pVtbl->SetProperty(surface, AMF_VIDEO_ENCODER_HEVC_INSERT_HEADER, bk_amf_bool(1)));
         } else {
             AMF_TRY(surface->pVtbl->SetProperty(surface, AMF_VIDEO_ENCODER_FORCE_PICTURE_TYPE,
                                                 bk_amf_int(AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR)));

@@ -55,12 +55,15 @@ and the Web listener. Other AnyKVM services may remain enabled.
 
 H.264 is always available in negotiation. HEVC/AV1 are independently disabled
 by default; enable the corresponding `gamestream.codecs` entry and restart.
-Advertisement still requires source/encoder support. Video is SDR 4:2:0;
-HDR/Main10, surround audio and gamepads are unsupported.
+They require a compatible encoded source or hardware encoder; see
+[codec backends](build.md#native-and-optional-codecs). Raw/JPEG inputs use hardware
+encoding for HEVC/AV1, with no software fallback.
 
-Available HEVC/AV1 encoders depend on platform, hardware and build tags; see
-[codec backends](build.md#native-and-optional-codecs). Browser `web.codecs.av1`
-is a separate setting.
+Codec availability is checked during negotiation. If encoding fails, the session
+does not switch codecs automatically; disable the failing codec and reconnect.
+Browser codec settings are independent.
+
+Video is SDR 4:2:0; HDR/Main10, surround audio and gamepads are unsupported.
 
 For native macOS H.264, `profile` accepts constrained_baseline (default),
 baseline, main or high. `lowdelay` defaults to true and controls low-latency rate
@@ -130,7 +133,9 @@ ANYKVM_FFMPEG_LIBDIR=/path/to/ffmpeg9/lib ANYKVM_TEST_AVMEDIA=1 \
   go test -tags ffmpeg -race ./internal/avmedia ./internal/gamestream
 ```
 
-Optional `ANYKVM_TEST_FFMPEG` supplies a test-only independent decoder. Tests
+On Windows, `ANYKVM_TEST_WINDOWS_VENDOR=nvenc,amf,qsv` (installed GPUs only)
+and `ANYKVM_TEST_VENDOR_HEVC=1` enable `TestWindowsVendorNative` to test HEVC
+without FFmpeg libraries. Optional `ANYKVM_TEST_FFMPEG` supplies a test-only independent decoder. Tests
 cover pairing, encrypted RTSP/control, FEC, input release, takeover and synthetic
 media. Maintainer real-client testing is complete across desktop, Android and
 iOS for pairing, target listing, H.264/HEVC playback, audio, target switching

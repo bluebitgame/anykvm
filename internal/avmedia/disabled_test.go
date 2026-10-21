@@ -14,6 +14,9 @@ func TestDisabledBackendNeverLoadsLibraries(t *testing.T) {
 	if Enabled {
 		t.Fatal("FFmpeg backend included without both its build tag and CGO")
 	}
+	if HasEncoder("hevc_nvenc") || HasEncoder("av1_nvenc") {
+		t.Fatal("disabled FFmpeg backend advertised library encoders")
+	}
 	for name, open := range map[string]func() error{
 		"availability":     Available,
 		"URL availability": URLMediaAvailable,

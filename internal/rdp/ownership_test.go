@@ -72,8 +72,8 @@ func TestBitmapReplacementReleasesHeldFrame(t *testing.T) {
 	data := []byte{1}
 	first := bridge.Frame{Width: 64, Height: 64, Data: data, Buffer: framebuf.New(data, func() { freed.Add(1) })}
 	c.frames <- bridge.Frame{Width: 64, Height: 64, Data: []byte{2}}
-	f, ok := c.waitBitmapCapture(first, 64, 64, time.Now().Add(time.Millisecond))
-	if !ok || f.Data[0] != 2 || freed.Load() != 1 {
+	f, dropped := c.latestCapture(first)
+	if dropped != 1 || f.Data[0] != 2 || freed.Load() != 1 {
 		t.Fatal("presentation replacement leaked")
 	}
 	f.Release()

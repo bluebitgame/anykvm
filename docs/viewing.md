@@ -39,6 +39,16 @@ latency. Quiet sender intervals alone do not trigger decoder recovery.
 Enable `vnc.addr`, for example `:5901`, for VNC access. `vnc.tls: true` enables
 VeNCrypt TLS with the shared certificate. Set `vnc.password` for authentication.
 
+For raw sources, JPEG output sends only changed regions; initial frames, resize
+and full-refresh requests send the whole picture. `vnc.pixel_tolerance: 0`
+(default) uses exact pixel comparisons.
+
+`vnc.jpeg_quality: 0` (Auto) forwards encoded MJPEG unchanged and uses the
+viewer-negotiated quality for raw sources. A nonzero value forces that quality,
+including decoding and re-encoding MJPEG. Reconnect after changing it.
+Tight JPEG requires viewer JPEG support. Web UI quality levels differ from the
+numeric YAML encoder quality.
+
 Audio requires a viewer with QEMU Audio support.
 
 For using a remote VNC desktop as a capture source, see

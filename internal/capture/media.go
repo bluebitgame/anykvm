@@ -4,6 +4,7 @@ import (
 	"anykvm/internal/avmedia"
 	"anykvm/internal/framebuf"
 	"anykvm/internal/framerate"
+	"anykvm/internal/gpuconv"
 	"anykvm/internal/jpegcodec"
 	"anykvm/internal/videoenc"
 	"fmt"
@@ -45,6 +46,39 @@ func fitCaptureSize(w, h, tw, th int) (int, int) {
 	}
 	return max(2, (w*th/h)&^1), max(2, th&^1)
 }
+
+// BoundedOutputSize permits a smaller canvas, but uses the actual source size
+// when either requested edge exceeds the device. It never enlarges the image.
+func BoundedOutputSize(w, h, tw, th int) (int, int) {
+	if tw <= 0 || th <= 0 || tw > w || th > h {
+		return w, h
+	}
+	return tw, th
+}
+
+// LimitedOutputSize intersects the source and configured ceiling before
+// applying the request. Neither axis may exceed either limit.
+func LimitedOutputSize(w, h, tw, th, maxW, maxH int) (int, int) {
+	if maxW > 0 {
+		w = min(w, maxW)
+	}
+	if maxH > 0 {
+		h = min(h, maxH)
+	}
+	return BoundedOutputSize(w, h, tw, th)
+}
+
+func (d *ffmpegDevice) fitOutputSize(w, h int) (int, int) {
+	tw, th := d.targetW, d.targetH
+	if d.outputDownscaleOnly {
+		tw, th = LimitedOutputSize(w, h, tw, th, d.outputMaxW, d.outputMaxH)
+	}
+	return fitCaptureSize(w, h, tw, th)
+}
+
+func (d *ffmpegDevice) SetOutputSize(w, h int)        { d.targetW, d.targetH = w, h }
+func (d *ffmpegDevice) SetOutputDownscaleOnly(v bool) { d.outputDownscaleOnly = v }
+func (d *ffmpegDevice) SetOutputSizeLimit(w, h int)   { d.outputMaxW, d.outputMaxH = w, h }
 func (d *ffmpegDevice) RequestKeyframe() error {
 	if d.passthrough.Load() {
 		log.Printf("capture: passthrough waiting for source IDR (device keyframe control unavailable)")
@@ -59,6 +93,8 @@ func mediaCaptureFrame(f *avmedia.Frame) *Frame {
 		format = FormatH264
 	} else if f.Codec == "hevc" {
 		format = FormatHEVC
+	} else if f.Codec == "av1" {
+		format = FormatAV1
 	}
 	if f.Buffer == nil {
 		f.Buffer = framebuf.New(f.Data, nil)
@@ -101,6 +137,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 	// Never rate-limit, resize or re-encode an already compressed source here.
 	// Dropping reference pictures would corrupt subsequent predicted pictures.
 	if f.Format == FormatH264 || f.Format == FormatHEVC || f.Format == FormatAV1 {
+		d.outputLog.start(f.Format.String(), "passthrough")
 		return f, nil
 	}
 	codec := d.videoCodec
@@ -111,7 +148,10 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		}
 	}
 	if codec == "h264" || codec == "hevc" || codec == "av1" {
-		w, h := fitCaptureSize(f.Width, f.Height, d.targetW, d.targetH)
+		if d.outputDownscaleOnly && (d.outputMaxW > 0 && d.outputMaxW < 2 || d.outputMaxH > 0 && d.outputMaxH < 2) {
+			return nil, fmt.Errorf("Target resolution limit is too small for video encoding")
+		}
+		w, h := d.fitOutputSize(f.Width, f.Height)
 		w &= ^1
 		h &= ^1
 		o := videoenc.Options{Width: w, Height: h, FPS: max(1, d.reqFPS), Rate: d.requestedRate, Bitrate: defaultH264BitrateKbps, Codec: codec}
@@ -140,6 +180,16 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		if preserve {
 			o.Width, o.Height = f.Width, f.Height
 		}
+		// Keep the device's capture mode and frame cadence, while allowing RDP
+		// to encode fewer pixels. Already-compressed input returned above.
+		if d.outputDownscaleOnly {
+			// Native texture conversion fits/letterboxes into this canvas, as
+			// SCK does. Keep the requested canvas so RDP's capture-resize gate
+			// also works when source and client have different aspect ratios.
+			o.Width, o.Height = LimitedOutputSize(f.Width, f.Height, d.targetW, d.targetH,
+				d.outputMaxW&^1, d.outputMaxH&^1)
+			o.Width, o.Height = (o.Width+1)&^1, (o.Height+1)&^1
+		}
 		// USB mirroring can deliver 30 fps while DAL reports a nominal 60 fps.
 		// Keep arrival-time pacing for it; counting every second sample would
 		// halve the actual rate. Fixed-rate capture cards retain decimation.
@@ -167,7 +217,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 			d.encodedFrames = nil
 			d.encodePacer = framePacer{}
 			d.forceIDR.Store(true)
-			log.Printf("capture: in-process %s %dx%d@%d", e.Name(), o.Width, o.Height, o.FPS)
+			d.outputLog.start(codec, e.Name())
 		}
 		if decimate {
 			skip := d.sourceFrame%uint64(divisor) != 0
@@ -199,7 +249,9 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 			if handled {
 				d.encodePacer.accepted(capturedAt, o.Rate.Interval())
 				format := FormatH264
-				if codec == "av1" {
+				if codec == "hevc" {
+					format = FormatHEVC
+				} else if codec == "av1" {
 					format = FormatAV1
 				}
 				buffer := framebuf.New(data, nil)
@@ -210,11 +262,25 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 			}
 		}
 		if f.nativeBuffer != nil {
-			if err := f.nativeBuffer.Materialize(f); err != nil {
+			var err error
+			if native, ok := f.nativeBuffer.(interface{ MaterializeVideo(*Frame) error }); ok {
+				err = native.MaterializeVideo(f)
+			} else {
+				err = f.nativeBuffer.Materialize(f)
+			}
+			if err != nil {
 				return nil, err
 			}
 		}
-		buffer, err := videoenc.EncodePixelsOwned(d.encoder, o, f.Data, f.Width, f.Height, pipePixFmt(f), d.forceIDR.Swap(false))
+		pixels, pw, ph, pf := f.Data, f.Width, f.Height, pipePixFmt(f)
+		if f.Format == FormatJPEG {
+			decoded, err := d.jpegDecoder.Decode(f.Data, f.Width, f.Height, o.Width, o.Height)
+			if err != nil {
+				return nil, err
+			}
+			pixels, pw, ph, pf = decoded.Data, decoded.Width, decoded.Height, decoded.Format
+		}
+		buffer, err := videoenc.EncodePixelsOwned(d.encoder, o, pixels, pw, ph, pf, d.forceIDR.Swap(false))
 		if err != nil {
 			return nil, err
 		}
@@ -232,11 +298,41 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 	}
 	// Native desktop JPEG can consume the texture before Materialize reads the
 	// entire frame into CPU memory. Device-compressed MJPEG keeps its passthrough.
+	if d.gpuSurface && codec == "rawvideo" && f.nativeBuffer != nil {
+		if source, ok := f.nativeBuffer.(interface {
+			SnapshotSurface() (*gpuconv.Surface, *framebuf.Buffer, bool, error)
+		}); ok {
+			surface, owner, handled, err := source.SnapshotSurface()
+			if err != nil {
+				owner.Release()
+				return nil, err
+			}
+			if handled {
+				if surface == nil {
+					owner.Release()
+					return nil, nil
+				} // Bounded snapshot pool is full.
+				if owner == nil {
+					return nil, fmt.Errorf("GPU snapshot has no lifetime owner")
+				}
+				if err := surface.Validate(); err != nil {
+					owner.Release()
+					return nil, err
+				}
+				f.Buffer.Release()
+				f.Surface, f.Buffer, f.Data, f.Format, f.nativeBuffer = surface, owner, nil, FormatSurface, nil
+				d.outputLog.start("gpu", "passthrough (GPU surface)")
+				return f, nil
+			}
+			owner.Release()
+		}
+	}
 	if f.nativeBuffer != nil && !d.shouldDecode() && (codec == "" || codec == "mjpeg") {
 		if gpu, ok := f.nativeBuffer.(interface {
 			EncodeJPEG(int, int, int) (*framebuf.Buffer, bool, error)
+			JPEGEncoderName() string
 		}); ok {
-			w, h := fitCaptureSize(f.Width, f.Height, d.targetW, d.targetH)
+			w, h := d.fitOutputSize(f.Width, f.Height)
 			if d.PreserveCaptureMode() {
 				w, h = f.Width, f.Height
 			}
@@ -245,6 +341,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 				return nil, err
 			}
 			if handled {
+				d.outputLog.start("jpeg", gpu.JPEGEncoderName())
 				return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: w, Height: h,
 					SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
 			}
@@ -271,6 +368,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 			d.jpegMedia = encoder
 			d.jpegW = f.Width
 			d.jpegH = f.Height
+			d.outputLog.start("jpeg", "FFmpeg mjpeg")
 		}
 		buffer, err := d.jpegMedia.EncodeOwned(f.Data, f.Width, f.Height, pipePixFmt(f), false)
 		if err != nil || buffer == nil {
@@ -278,7 +376,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		}
 		return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: f.Width &^ 1, Height: f.Height &^ 1, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
 	}
-	w, h := fitCaptureSize(f.Width, f.Height, d.targetW, d.targetH)
+	w, h := d.fitOutputSize(f.Width, f.Height)
 	if d.PreserveCaptureMode() {
 		w, h = f.Width, f.Height
 	}
@@ -293,12 +391,14 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		f = &Frame{Data: data, Width: w, Height: h, Format: FormatRaw, CapturedAt: f.CapturedAt}
 	}
 	if codec == "rawvideo" || codec == "uyvy" || d.shouldDecode() {
+		d.outputLog.start(f.Format.String(), "none (pixels)")
 		return f, nil
 	}
 	jpeg, err := jpegcodec.EncodeBGRAOwned(f.Data, f.Width, f.Height, d.jpegQuality())
 	if err != nil {
 		return nil, err
 	}
+	d.outputLog.start("jpeg", jpegcodec.Backend())
 	return &Frame{Buffer: jpeg, Data: jpeg.Bytes(), Width: f.Width, Height: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
 }
 

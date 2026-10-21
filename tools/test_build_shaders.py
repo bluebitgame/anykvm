@@ -116,5 +116,29 @@ class ShaderPreparationTests(unittest.TestCase):
                     self.assertTrue(build_shaders.current(source, entry))
 
 
+    def test_all_progressive_stages_are_built_and_cached(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "progressive.hlsl"
+            source.write_text("shared Progressive source")
+
+            def compile_shader(command, **kwargs):
+                entry = command[command.index("-e") + 1]
+                Path(command[command.index("-o") + 1]).write_bytes(entry.encode())
+
+            with patch.object(build_shaders, "SOURCES", (source,)), \
+                    patch.object(build_shaders, "PROGRESSIVE_SOURCE", source), \
+                    patch.object(build_shaders.shutil, "which", return_value="glslang"), \
+                    patch.object(build_shaders.subprocess, "run", side_effect=compile_shader) as compile:
+                build_shaders.prepare()
+                self.assertEqual(compile.call_count, 4)
+                build_shaders.prepare()
+                self.assertEqual(compile.call_count, 4)
+                build_shaders.shader_output(source, "encodeTiles").unlink()
+                build_shaders.prepare()
+                self.assertEqual(compile.call_count, 5)
+                for entry in ("main", "encodeTiles", "indexSegments", "packSegments"):
+                    self.assertTrue(build_shaders.current(source, entry))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,14 +16,14 @@ type vulkanEncoder struct {
 }
 
 func openLinuxVulkan(o Options) (Encoder, error) {
-	if o.Codec != "h264" {
-		return nil, fmt.Errorf("native Vulkan Video currently implements H.264; %s is unavailable", o.Codec)
+	if o.Codec != "h264" && o.Codec != "hevc" && o.Codec != "av1" {
+		return nil, fmt.Errorf("unsupported native Vulkan Video codec %s", o.Codec)
 	}
 	bitrate := o.Bitrate
 	if bitrate == 0 {
 		bitrate = 12000
 	}
-	e, err := gpuconv.NewVideoEncoder(o.DRMDeviceMajor, o.DRMDeviceMinor, o.Width, o.Height, o.Rate.Num, o.Rate.Den, bitrate)
+	e, err := gpuconv.NewVideoEncoderCodec(o.DRMDeviceMajor, o.DRMDeviceMinor, o.Width, o.Height, o.Rate.Num, o.Rate.Den, bitrate, o.Codec)
 	if err != nil {
 		return nil, err
 	}
@@ -47,4 +47,4 @@ func (e *vulkanEncoder) EncodeDMABUF(f dmabuf.Frame, force bool) ([]byte, bool, 
 	return data, true, err
 }
 func (e *vulkanEncoder) Close()       { e.encoder.Close() }
-func (e *vulkanEncoder) Name() string { return "h264_vulkan_native" }
+func (e *vulkanEncoder) Name() string { return e.options.Codec + "_vulkan_native" }

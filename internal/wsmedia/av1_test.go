@@ -50,6 +50,32 @@ func TestHEVCBrowserOptIn(t *testing.T) {
 		}
 	}
 }
+
+func TestOptionalCodecSettingsMaskBrowserRequests(t *testing.T) {
+	var gotHEVC, gotAV1 bool
+	s := NewServer(Config{DisableHEVC: true, OnVideoCodecsChanged: func(h264, hevc, av1 bool) {
+		if !h264 {
+			t.Fatal("H.264 fallback lost")
+		}
+		gotHEVC, gotAV1 = hevc, av1
+	}})
+	for _, hevc := range []bool{false, true} {
+		for _, av1 := range []bool{false, true} {
+			s.UpdateVideoCodecs(true, hevc, av1)
+			if !s.handleHello([]byte(`{"h264":true,"hevc":true,"av1":true}`)) {
+				t.Fatal("browser capability message rejected")
+			}
+			if gotHEVC != hevc || gotAV1 != av1 {
+				t.Fatalf("settings hevc=%v av1=%v leaked browser wants %v %v", hevc, av1, gotHEVC, gotAV1)
+			}
+		}
+	}
+	s.UpdateVideoCodecs(true, false, false)
+	s.handleHello([]byte(`{"h264":true,"hevc":true,"av1":true}`))
+	if gotHEVC || gotAV1 {
+		t.Fatal("disabled codec settings retained stale browser wants")
+	}
+}
 func TestAV1WebMessagePreservesOBUs(t *testing.T) {
 	data, err := os.ReadFile("../testdata/stream.ivf")
 	if err != nil {

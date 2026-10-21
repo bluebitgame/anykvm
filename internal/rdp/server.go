@@ -16,6 +16,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/clipboard"
+	"anykvm/internal/netstats"
 )
 
 // ErrHEVCUnavailable prevents accepting an HEVC option without a compatible
@@ -123,7 +124,8 @@ type client struct {
 	logonSessionID                        uint32
 	longCredentials, logonNotified        bool
 	// Initialized before videoLoop starts, then owned by that goroutine.
-	surfaceW, surfaceH int
+	graphics      graphicsLayout
+	scaledMapping bool // negotiated before the frame loop starts
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -257,7 +259,7 @@ func (s *Server) Start() error {
 	}
 	s.wg.Add(1)
 	go s.accept(l)
-	log.Printf("rdp: TLS/RDPGFX server listening on %s (codec=%s)", l.Addr(), s.runtimeConfig().Codec)
+	log.Printf("rdp: TLS/RDPGFX server listening on %s", l.Addr())
 	return nil
 }
 
@@ -277,8 +279,9 @@ func (s *Server) accept(l net.Listener) {
 		if err != nil {
 			return
 		}
-		c := &client{s: s, raw: conn, done: make(chan struct{}), frames: make(chan bridge.Frame, 2), ack: make(chan struct{}, 1)}
-		c.conn = tls.Server(conn, nlaTLSConfig(s.cfg.TLSConfig, &c.tlsCertificate))
+		c := &client{s: s, raw: conn, done: make(chan struct{}), frames: make(chan bridge.Frame, 1), ack: make(chan struct{}, 1)}
+		c.raw = netstats.WrapConn(conn)
+		c.conn = tls.Server(c.raw, nlaTLSConfig(s.cfg.TLSConfig, &c.tlsCertificate))
 		s.mu.Lock()
 		if s.closed || len(s.clients) >= 8 {
 			s.mu.Unlock()
@@ -349,7 +352,7 @@ func (s *Server) PushFrameWithStop(f bridge.Frame, stop <-chan struct{}) {
 	s.mu.Lock()
 	c := s.active
 	s.mu.Unlock()
-	if c == nil || len(f.Data) > 64<<20 {
+	if c == nil || len(f.Data) > 64<<20 || (f.Surface != nil && (f.Buffer == nil || c.codec != codecProgressive)) {
 		return
 	}
 	select {
@@ -743,7 +746,7 @@ func (c *client) handleShare(p []byte) error {
 			}
 			c.cursorAlpha, c.longCredentials = caps.alphaPointer, caps.longCredentials
 			macShortcuts, swapLeftModifiers := c.input.configureShortcuts(caps.osMajor, !c.s.cfg.DisableAutoShortcutMapping)
-			log.Printf("rdp: client OS=%d/%d build=%d mac_shortcuts=%t swap_left_win_alt=%t", caps.osMajor, caps.osMinor, c.data.clientBuild, macShortcuts, swapLeftModifiers)
+			log.Printf("rdp: client OS=%s build=%d mac_shortcuts=%t swap_left_win_alt=%t", clientOSName(caps.osMajor, caps.osMinor), c.data.clientBuild, macShortcuts, swapLeftModifiers)
 			c.cursorLimit = maxPointerSize
 			if caps.largePointer {
 				c.cursorLimit = maxLargePointerSize
@@ -862,7 +865,7 @@ func (c *client) activate() error {
 		return err
 	}
 	c.startAudioLoop()
-	log.Printf("rdp: %s: authenticated RDPGFX session (codec=%s)", c.conn.RemoteAddr(), c.codec)
+	log.Printf("rdp: %s: authenticated RDPGFX session", c.conn.RemoteAddr())
 	c.s.wg.Add(1)
 	go func() {
 		defer c.s.wg.Done()

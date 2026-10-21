@@ -133,9 +133,15 @@ func TestRetinaCursorFollowsOutputGeometry(t *testing.T) {
 			if fixture.nativeCalls != 1 || fixture.calls != 0 {
 				t.Fatal("RDP did not request native pixels")
 			}
-			// Stale content geometry must not override a resize. A new scale
-			// updates an unchanged captured shape.
+			// A pending layout must not resize the cursor before the pixels.
 			c.outputSize.Store(uint64(960)<<32 | 540)
+			pending, err := c.capturePointer()
+			if err != nil || !bytes.Equal(p, pending) {
+				t.Fatalf("pending layout overrode actual frame geometry: %v", err)
+			}
+			// Apply geometry when the resized frame arrives. An unchanged
+			// captured shape must then receive the new scale.
+			c.input.w, c.input.h, c.input.contentRect = 960, 540, image.Rectangle{}
 			p2, err := c.capturePointer()
 			if err != nil || le.Uint16(p2[30:]) != 12 || le.Uint16(p2[32:]) != 16 ||
 				(tc.wantW != 12 && bytes.Equal(p, p2)) {

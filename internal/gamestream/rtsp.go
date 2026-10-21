@@ -1,6 +1,7 @@
 package gamestream
 
 import (
+	"anykvm/internal/netstats"
 	"bufio"
 	"bytes"
 	"encoding/binary"
@@ -143,6 +144,7 @@ func (s *Server) rtspLoop() {
 		if err != nil {
 			return
 		}
+		conn = netstats.WrapConn(conn)
 		select {
 		case limit <- struct{}{}:
 		default:

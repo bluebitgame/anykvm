@@ -3,9 +3,9 @@ package capture
 import (
 	"anykvm/internal/avmedia"
 	"anykvm/internal/framerate"
+	"anykvm/internal/jpegcodec"
 	"anykvm/internal/videoenc"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,32 +54,38 @@ func (r *ringBuffer) String() string {
 // ffmpegDevice captures video through in-process libavdevice/libavcodec.
 // Works on Windows (DirectShow), macOS (AVFoundation), Linux (V4L2).
 type ffmpegDevice struct {
-	device              string
-	jpegMedia           *avmedia.Session
-	jpegW, jpegH        int
-	media               *avmedia.Session
-	encoder             videoenc.Encoder
-	encodeOptions       videoenc.Options
-	encodedFrames       map[uint64]*Frame
-	nextEncodedID       uint64
-	pendingFrame        *Frame
-	forceIDR            atomic.Bool
-	passthrough         atomic.Bool
-	scalableInput       bool
-	variableInputRate   bool // USB mirroring's nominal device rate may differ from sample delivery.
-	inputFPS            framerate.Rate
-	requestedRate       framerate.Rate
-	videoBitrate        int
-	sourceFrame         uint64
-	skippedEncodeInputs uint64 // unencoded inputs explicitly rejected by pacing/decimation
-	targetW, targetH    int
-	quality             int
-	encodePacer         framePacer
-	stderr              *ringBuffer // captures ffmpeg's stderr for diagnostics
-	mu                  sync.Mutex
-	width               int
-	height              int
-	reqFPS              int // frame rate requested at Open (>0 = explicit; 0 = device default)
+	device                 string
+	jpegMedia              *avmedia.Session
+	jpegW, jpegH           int
+	media                  *avmedia.Session
+	jpegDecoder            jpegcodec.VideoDecoder
+	encoder                videoenc.Encoder
+	encodeOptions          videoenc.Options
+	outputLog              encodingLog
+	encodedFrames          map[uint64]*Frame
+	nextEncodedID          uint64
+	pendingFrame           *Frame
+	forceIDR               atomic.Bool
+	passthrough            atomic.Bool
+	scalableInput          bool
+	outputDownscaleOnly    bool
+	outputMaxW, outputMaxH int
+	variableInputRate      bool // USB mirroring's nominal device rate may differ from sample delivery.
+	inputFPS               framerate.Rate
+	requestedRate          framerate.Rate
+	videoBitrate           int
+	sourceFrame            uint64
+	skippedEncodeInputs    uint64 // unencoded inputs explicitly rejected by pacing/decimation
+	targetW, targetH       int
+	gpuSurface             bool
+	gpuSurfaceLeases       atomic.Int32
+	quality                int
+	encodePacer            framePacer
+	stderr                 *ringBuffer // captures ffmpeg's stderr for diagnostics
+	mu                     sync.Mutex
+	width                  int
+	height                 int
+	reqFPS                 int // frame rate requested at Open (>0 = explicit; 0 = device default)
 
 	streamOptions    *VideoStreamOptions
 	sourceW, sourceH int
@@ -247,8 +253,10 @@ func (d *ffmpegDevice) openArgs(_ string, args []string, width, height int) erro
 	}
 	d.media = source
 	d.inputFPS = source.FrameRate()
-	d.targetW = width
-	d.targetH = height
+	if !d.outputDownscaleOnly {
+		d.targetW = width
+		d.targetH = height
+	}
 	d.closed.Store(false)
 	frame, err := source.ReadOwned()
 	if err != nil {
@@ -262,15 +270,13 @@ func (d *ffmpegDevice) openArgs(_ string, args []string, width, height int) erro
 	d.pendingFrame = mediaCaptureFrame(frame)
 	d.passthrough.Store(frame.Codec != "")
 	if frame.Codec != "" {
-		log.Printf("capture: %s passthrough %dx%d; preserving source rate and bitrate", frame.Codec, frame.Width, frame.Height)
-	} else if codec == "h264" || codec == "hevc" || codec == "av1" {
-		log.Printf("capture: no matching compressed source; encoding %s from pixels", codec)
+		d.outputLog.start(frame.Codec, "passthrough")
 	}
 	d.sourceW = frame.Width
 	d.sourceH = frame.Height
 	d.width, d.height = frame.Width, frame.Height
 	if !d.PreserveCaptureMode() {
-		d.width, d.height = fitCaptureSize(frame.Width, frame.Height, width, height)
+		d.width, d.height = d.fitOutputSize(frame.Width, frame.Height)
 	}
 	return nil
 }
@@ -383,11 +389,13 @@ func (d *ffmpegDevice) Close() error {
 		d.jpegMedia.Close()
 		d.jpegMedia = nil
 	}
+	d.jpegDecoder.Close()
 	if d.encoder != nil {
 		d.encoder.Close()
 		d.encoder = nil
 	}
 	d.encodedFrames = nil
+	d.outputLog = encodingLog{}
 	return nil
 }
 

@@ -39,6 +39,9 @@ func TestLinuxEncoderFallbacks(t *testing.T) {
 			if codec == "h264" {
 				want = []string{"h264_nvenc", "h264_vaapi", "pi", "libx264"}
 			}
+			if codec == "hevc" {
+				want = []string{"hevc_nvenc", "hevc_vaapi"}
+			}
 			if codec == "av1" {
 				want = []string{"av1_nvenc", "av1_vaapi"}
 			}

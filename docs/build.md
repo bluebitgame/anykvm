@@ -19,6 +19,10 @@ Full media builds require CGO. The optional `viewer` tag also requires SDL2.
   viewer builds also need CMake, and Ninja when built on Windows. The separate
   PowerShell builder expects a MinGW-compatible compiler already on PATH.
 
+The optional Linux `spice` tag requires spice-client-glib, EGL, GBM and libdrm
+development packages. See [SPICE upstream](spice-source.md) for build and runtime
+requirements; these extra system libraries are not bundled by the build script.
+
 ## Desktop build script
 
 Run from the repository root:
@@ -72,6 +76,35 @@ For native Windows amd64 builds, this alternative can also stage FFmpeg DLLs:
 It writes `build/windows/anykvm.exe`; `-Compiler` and `-Output` are optional.
 `FFmpegBin` requires `-Tags ffmpeg`. Neither builder starts a service.
 
+## GitHub Actions and Releases
+
+GitHub Actions builds Linux, Windows and macOS for amd64 and arm64. Pushes to
+`main`, pull requests and manual runs produce downloadable build artifacts.
+
+Push a `v*` tag to publish a Release after all six builds succeed:
+
+```sh
+git tag -a v0.1.0-beta.1 -m "AnyKVM v0.1.0-beta.1"
+git push origin main refs/tags/v0.1.0-beta.1
+```
+
+Tags containing `-` are marked as prereleases. Packages include the executable,
+runtime files, licenses and documentation: ZIP for Windows, tar.gz for Linux
+and macOS, plus `SHA256SUMS` for verification.
+
+Release builds use native media support without `ffmpeg`, `viewer` or `spice`.
+Linux requires V4L2/ALSA runtime libraries and glibc 2.35+ (amd64) or 2.36+
+(arm64). Windows includes Opus but needs its matching Visual C++ runtime.
+macOS packages are not notarized.
+
+To package a local build:
+
+```sh
+python3 tools/package_release.py --target linux/arm64
+```
+
+Archives are written to `build/dist/`.
+
 ## Direct Go builds
 
 Before invoking Go directly, restore sources for the target platform:
@@ -104,40 +137,27 @@ transmuxer worker.
 
 ## Native and optional codecs
 
-Default builds exclude the FFmpeg bridge and loader. Native capabilities depend
-on OS, hardware and drivers:
+Default builds provide native hardware video encoding without FFmpeg:
 
-- **macOS:** ScreenCaptureKit/AVFoundation capture, VideoToolbox H.264/HEVC,
-  ImageIO JPEG and AudioToolbox audio/Opus.
-- **Linux:** V4L2/ALSA capture, DRM/KMS with Vulkan conversion and native Vulkan
-  H.264, or Raspberry Pi V4L2 H.264. Tagged builds use libavcodec NVENC/VAAPI
-  and software x264 where supported. Native Vulkan HEVC/AV1 is absent.
-- **Windows:** DXGI desktop and Media Foundation device capture. Native builds
-  use vendor NVENC/AMF/QSV APIs, then Media Foundation; H.264 and available
-  hardware AV1 are supported. Tagged builds replace vendor bridges with
-  libavcodec and retain native Media Foundation. Windows HEVC encoding is absent.
+- **macOS:** H.264/HEVC through VideoToolbox; system JPEG and audio codecs.
+- **Windows:** H.264/HEVC/AV1 through NVIDIA NVENC, AMD AMF, Intel QSV or
+  Media Foundation.
+- **Linux:** H.264/HEVC/AV1 through Vulkan Video; Raspberry Pi also has V4L2 H.264.
 
-GPU candidates are probed before use. A successful build does not establish
-hardware/driver support. See [capture setup and hardware checks](capture.md).
+Codec availability depends on the GPU and driver; HEVC/AV1 require hardware
+encoding. Windows vendor runtimes must match the executable architecture.
+See [capture setup](capture.md) and [GameStream codec settings](gamestream.md#ports-and-codecs).
 
-Native Windows builds compile the pinned NVIDIA Video Codec SDK 12.0 interface,
-AMD AMF and Intel VPL headers. AMF requests the stable 1.4.28 base interfaces.
-AMF is pinned to upstream commit `a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5`
-to include the C-interface `AMFContext2` GUID fix.
-VPL calls the installed runtime through `MFXInitialize`, with `MFXInitEx` for
-H.264-only Media SDK drivers; no VPL dispatcher is linked. Vendor DLLs must
-match the process architecture. Windows arm64 uses vendor APIs only when a
-compatible native driver runtime exists, otherwise it tries Media Foundation.
+`-tags ffmpeg` plus CGO adds FFmpeg decoding/conversion and media paths. It uses
+libavcodec NVENC/AMF/QSV for Windows encoding and adds
+NVENC/VAAPI on Linux. Software H.264 encoding uses x264 where available.
+Installing libraries cannot enable these in an untagged binary. Encoded
+passthrough does not require a decoder; [ARD HEVC](ard-client.md) and
+[CoreDevice pixel/JPEG output](iphone-coredevice.md) do.
 
-`-tags ffmpeg` plus CGO enables software decoding/conversion, library encoders
-and other FFmpeg media paths. Installing libraries cannot enable them in an
-untagged binary. Encoded passthrough does not require a decoder; [ARD HEVC](ard-client.md)
-and [CoreDevice pixel/JPEG output](iphone-coredevice.md) do.
-
-Linux/Windows JPEG optionally loads TurboJPEG 2 from the executable's `lib/`,
-`ANYKVM_JPEG_LIBDIR` or system paths (`libturbojpeg.so.0` / `turbojpeg.dll`).
-Without it or CGO, JPEG uses Go. This is independent of FFmpeg, and quality
-numbers need not produce identical files across JPEG backends.
+JPEG uses built-in anyjpeg (AVX2/SSE2 or ARM64 NEON) with Go JPEG fallback;
+macOS ARM64 retains ImageIO pending NEON benchmarks. No external JPEG library
+is required. FFmpeg media paths remain independent.
 
 Native Windows GameStream audio loads `opus.dll` from `ANYKVM_OPUS_LIBDIR`,
 then executable `lib/` and the executable directory. Build scripts package the
@@ -227,16 +247,6 @@ For configuration changes, run the focused first-run and writing-policy checks:
 
 ```sh
 go test ./internal/app -run 'TestFirstRunConfig|TestConfigWritingPolicy' -count=1
-```
-
-Platform-specific codec benchmarks and media regression tools are documented in
-the [codec benchmark guide](../tools/codec-bench/README.md). Current tools cover
-macOS VideoToolbox; the guide describes the files, build commands and output paths.
-
-The production VideoToolbox encoder also has an opt-in latency test:
-
-```sh
-ANYKVM_TEST_VT_LATENCY=1 go test ./internal/videoenc -run '^TestVideoToolboxLatency$' -count=2 -v
 ```
 
 ## References

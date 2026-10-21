@@ -979,6 +979,7 @@
         }
       },
       "platforms": [
+        "linux",
         "windows"
       ]
     },
@@ -1013,6 +1014,11 @@
           "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/VideoEncoderAV1.h",
           "sha256": "2c4e18f6d0be4701d9a9d9ad4298ed5d7ed7c1fd7a909995c4e745874d8203a0",
           "size": 35845
+        },
+        "components/VideoEncoderHEVC.h": {
+          "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/VideoEncoderHEVC.h",
+          "sha256": "138ad005e4b7131582fc1f82dad8851c1362f0d156bf62f10a64e462c8a037c0",
+          "size": 29453
         },
         "components/VideoEncoderVCE.h": {
           "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/AMF/a4c8f39ae1959c9ca9d56ade35d6a23c52fc77c5/amf/public/include/components/VideoEncoderVCE.h",
@@ -1168,49 +1174,64 @@
       ],
       "files": {
         "vk_video/vulkan_video_codec_h264std.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h264std.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_h264std.h",
           "sha256": "072ee6eac80e73d93bb4bfe0059f99e581fc8b55b1437236185bb4ff377914b1",
           "size": 13853
         },
         "vk_video/vulkan_video_codec_h264std_decode.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h264std_decode.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_h264std_decode.h",
           "sha256": "e1708b3996a740eeedb79f51d0f0e379f9bcae13566538375acaf73301023b58",
           "size": 2722
         },
         "vk_video/vulkan_video_codec_h264std_encode.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h264std_encode.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_h264std_encode.h",
           "sha256": "052a6e357be8d88bf4be0db1b3da5a9cc1a6011cf4b3533759ff588e1e26f9f1",
           "size": 6878
         },
         "vk_video/vulkan_video_codec_h265std.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h265std.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_h265std.h",
           "sha256": "0cbdfd6c45ee8ca902e9c961cd7e49a4d601d443ea0ef2a60a8496b127ed397c",
           "size": 23416
         },
         "vk_video/vulkan_video_codec_h265std_decode.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h265std_decode.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_h265std_decode.h",
           "sha256": "800946aa19d83d305d504e2e4141bc938f989e0cf8872cef97480238eefef1ea",
           "size": 2428
         },
         "vk_video/vulkan_video_codec_h265std_encode.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codec_h265std_encode.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_h265std_encode.h",
           "sha256": "7239f9f4e811546639111e562a8be1ec73ad5bef1c23d5fad80889f35e125e9c",
           "size": 7462
         },
         "vk_video/vulkan_video_codecs_common.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vk_video/vulkan_video_codecs_common.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codecs_common.h",
           "sha256": "78cf3c99d3d57afa7ab1782ec6018b4bcdbe273f2843d76e3375282db875b71e",
           "size": 660
         },
         "vulkan/vk_platform.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vulkan/vk_platform.h",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vulkan/vk_platform.h",
           "sha256": "c4cabbcf699c90cde344095ae54da9435d117951aad114ba3a540c5997d7906f",
           "size": 2828
         },
         "vulkan/vulkan_core.h": {
-          "url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.10/src/video/khronos/vulkan/vulkan_core.h",
-          "sha256": "f3da6d1730e1914b6fbcb64583ef52fd8bd7423162484a4f40be9ad76bbe24e2",
-          "size": 986858
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vulkan/vulkan_core.h",
+          "sha256": "c274cdac1e77755ad2c9e12a1d4d24a91e1f72dad138bfcd8b4a54279b9c2e71",
+          "size": 1060766
+        },
+        "vk_video/vulkan_video_codec_av1std_encode.h": {
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_av1std_encode.h",
+          "sha256": "27d12241ff1659f764a075f738905fcc00f0fff7291b7492e9f9c9dec503ca99",
+          "size": 5979
+        },
+        "vk_video/vulkan_video_codec_av1std.h": {
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_av1std.h",
+          "sha256": "2cb85e3e1e12b79d67986202031f903be99af372831c29cf83386d329f47c78d",
+          "size": 16670
+        },
+        "vk_video/vulkan_video_codec_av1std_decode.h": {
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.3.302/include/vk_video/vulkan_video_codec_av1std_decode.h",
+          "sha256": "96f923dc01cd3e266c081d88fa020525a20d63ffe4ce09a4c807a04ef3aaf97e",
+          "size": 4250
         }
       }
     },

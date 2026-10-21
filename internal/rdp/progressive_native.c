@@ -79,8 +79,8 @@ typedef struct {
     int32_t planes[3][4096];
     int32_t vertical[4096], bands[4096], coeffs[4096];
     uint8_t *output;
-    size_t length, capacity;
-    uint8_t pending;
+    size_t length, capacity, output_limit;
+    uint64_t pending;
     unsigned used, quantization;
     int failed, simd;
 } rfx_encoder;
@@ -95,16 +95,22 @@ static inline int32_t shift(int32_t value, unsigned bits) {
 #endif
 }
 
-static inline void byte(rfx_encoder *e, uint8_t value) {
-    if (e->length == e->capacity) {
-        if (e->capacity == MAX_OUTPUT) { e->failed = 1; return; }
+static int reserve_output(rfx_encoder *e, size_t bytes) {
+    size_t limit = e->output_limit ? e->output_limit : MAX_OUTPUT;
+    if (e->length > limit || bytes > limit - e->length) { e->failed = 1; return 0; }
+    if (bytes > e->capacity - e->length) {
         size_t capacity = e->capacity * 2;
-        if (capacity > MAX_OUTPUT) capacity = MAX_OUTPUT;
+        if (capacity < e->length + bytes) capacity = e->length + bytes;
+        if (capacity > limit) capacity = limit;
         uint8_t *output = realloc(e->output, capacity);
-        if (!output) { e->failed = 1; return; }
+        if (!output) { e->failed = 1; return 0; }
         e->output = output;
         e->capacity = capacity;
     }
+    return 1;
+}
+static inline void byte(rfx_encoder *e, uint8_t value) {
+    if (!reserve_output(e, 1)) return;
     e->output[e->length++] = value;
 }
 static inline void word(rfx_encoder *e, uint16_t value) {
@@ -125,30 +131,72 @@ static inline void block(rfx_encoder *e, uint16_t kind, uint32_t length) {
     word(e, kind); dword(e, length);
 }
 
-// MSB-first writes consume whole bytes instead of iterating once per bit.
+// Keep bits right-aligned until a complete MSB-first word is ready.
+// Callers append at most 32 bits; each append can flush at most one word.
 static inline void bits(rfx_encoder *e, uint32_t value, unsigned count) {
-    if (e->used && count) {
-        unsigned take = 8 - e->used;
-        if (take > count) take = count;
-        count -= take;
-        e->pending |= (uint8_t)(((value >> count) & ((1u << take) - 1)) << (8 - e->used - take));
-        e->used += take;
-        if (e->used == 8) { byte(e, e->pending); e->pending = 0; e->used = 0; }
+    if (!count) return;
+    uint64_t incoming = value & ((UINT64_C(1) << count) - 1);
+    unsigned total = e->used + count;
+    if (total < 64) {
+        e->pending = (e->pending << count) | incoming;
+        e->used = total;
+        return;
     }
-    while (count >= 8) {
-        count -= 8;
-        byte(e, (uint8_t)(value >> count));
+    unsigned remaining = total - 64;
+    uint64_t word = (e->pending << (64 - e->used)) | (incoming >> remaining);
+    e->pending = incoming;
+    e->used = remaining;
+    if (!reserve_output(e, 8)) return;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    memcpy(e->output + e->length, &word, sizeof(word));
+#else
+    uint64_t ordered = __builtin_bswap64(word);
+    memcpy(e->output + e->length, &ordered, sizeof(ordered));
+#endif
+    e->length += 8;
+}
+static void finish_bits(rfx_encoder *e) {
+    unsigned padding = (8 - (e->used & 7)) & 7;
+    e->pending <<= padding;
+    e->used += padding;
+    while (e->used) {
+        e->used -= 8;
+        byte(e, (uint8_t)(e->pending >> e->used));
     }
-    if (count) {
-        e->pending = (uint8_t)(value << (8 - count));
-        e->used = count;
-    }
+    e->pending = 0;
 }
 static inline void ones(rfx_encoder *e, unsigned count) {
     while (count >= 32) { bits(e, UINT32_MAX, 32); count -= 32; }
     if (count) bits(e, UINT32_MAX, count);
 }
 static inline unsigned clamp80(unsigned value) { return value < 80 ? value : 80; }
+
+// Scan coefficients without changing the adaptive entropy state. The first
+// scalar probe avoids entering a SIMD kernel for a run of length zero.
+static size_t zero_run(rfx_encoder *e, size_t start, size_t end) {
+    size_t i = start;
+    if (i == end || e->coeffs[i] != 0) return 0;
+#if defined(ANYKVM_RFX_AVX2)
+    if (e->simd == ANYKVM_RFX_SIMD_AVX2)
+        return bk_rfx_zero_run_avx2(e->coeffs + i, end - i);
+#endif
+#if defined(RFX_SSE2) || defined(RFX_NEON)
+    if (e->simd) for (; i + 4 <= end; i += 4) {
+#if defined(RFX_SSE2)
+        __m128i equal = _mm_cmpeq_epi32(vload(e->coeffs + i), _mm_setzero_si128());
+        unsigned mask = (unsigned)_mm_movemask_ps(_mm_castsi128_ps(equal));
+        if (mask != 15) return i - start + (unsigned)__builtin_ctz((~mask) & 15);
+#else
+        uint32x4_t equal = vceqq_s32(vload(e->coeffs + i), vdupq_n_s32(0));
+        uint32x4_t positions = {0, 1, 2, 3};
+        unsigned first = vminvq_u32(vbslq_u32(equal, vdupq_n_u32(4), positions));
+        if (first != 4) return i - start + first;
+#endif
+    }
+#endif
+    while (i < end && e->coeffs[i] == 0) i++;
+    return i - start;
+}
 static inline void rice(rfx_encoder *e, uint32_t value, unsigned *krp) {
     unsigned kr = *krp >> 3;
     unsigned quotient = value >> kr;
@@ -173,8 +221,8 @@ static void rlgr(rfx_encoder *e) {
     for (size_t i = 0; i < 4096 && !e->failed; ++i) {
         unsigned k = kp >> 3;
         if (k) {
-            unsigned run = 0;
-            while (i < 4096 && e->coeffs[i] == 0) { ++run; ++i; }
+            unsigned run = (unsigned)zero_run(e, i, 4096);
+            i += run;
             while (run >= (1u << k)) {
                 bits(e, 0, 1);
                 run -= 1u << k;
@@ -197,8 +245,7 @@ static void rlgr(rfx_encoder *e) {
             else kp = kp > 3 ? kp - 3 : 0;
         }
     }
-    if (e->used) byte(e, e->pending);
-    e->pending = 0; e->used = 0;
+    finish_bits(e);
 }
 
 static void dwt_line(const int32_t *restrict input, int32_t *restrict low, int32_t *restrict high, unsigned size, int simd) {
@@ -560,8 +607,8 @@ static void srl(rfx_encoder *e, size_t count, unsigned extra_bits) {
     unsigned kp = 8, maximum = (1u << extra_bits) - 1;
     e->pending = 0; e->used = 0;
     for (size_t i = 0; i < count && !e->failed;) {
-        unsigned run = 0;
-        while (i < count && e->coeffs[i] == 0) { ++run; ++i; }
+        unsigned run = (unsigned)zero_run(e, i, count);
+        i += run;
         unsigned k = kp >> 3;
         while (run >= (1u << k)) {
             bits(e, 0, 1); run -= 1u << k;
@@ -575,9 +622,8 @@ static void srl(rfx_encoder *e, size_t count, unsigned extra_bits) {
         bits(e, 0, magnitude - 1);
         if (magnitude < maximum) bits(e, 1, 1);
     }
-    if (e->used) byte(e, e->pending);
+    finish_bits(e);
     byte(e, 0); // Required lookahead byte, including an empty SRL stream.
-    e->pending = 0; e->used = 0;
 }
 
 static void upgrade_component(rfx_encoder *e, const int32_t *base, unsigned extra_bits,
@@ -598,16 +644,15 @@ static void upgrade_component(rfx_encoder *e, const int32_t *base, unsigned extr
         unsigned magnitude = (unsigned)(v < 0 ? -v : v);
         if (magnitude > mask) bits(e, magnitude & mask, extra_bits);
     }
-    if (e->used) byte(e, e->pending);
-    e->pending = 0; e->used = 0;
+    finish_bits(e);
     patch_word(e, length_offset + 2, (uint16_t)(e->length - start));
 }
 
-int bk_rfx_run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
+static int run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
                uint32_t width, uint32_t height, const anykvm_rfx_rect *rects,
                size_t count, uint32_t frame, int first, int pass, unsigned extra_bits,
                int32_t *cache, size_t cache_count, const uint8_t **output,
-               size_t *output_bytes, char *message, size_t capacity) {
+               size_t *output_bytes, char *message, size_t capacity, int tiles_only, int append_output) {
     rfx_encoder *e = context;
     if (!e || (pass != ANYKVM_RFX_UPGRADE && !pixels) || !rects || !output || !output_bytes || count == 0 || count > ANYKVM_RFX_MAX_TILES ||
         width == 0 || height == 0 || width > 8192 || height > 8192 ||
@@ -636,28 +681,32 @@ int bk_rfx_run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
     if (tile_count > ANYKVM_RFX_MAX_TILES) {
         snprintf(message, capacity, "batch exceeds eight tiles"); return 0;
     }
-    e->length = 0; e->failed = 0;
-    if (first) {
-        block(e, 0xccc0, 12); dword(e, 0xcaccacca); word(e, 0x100);
-        block(e, 0xccc3, 10); byte(e, 0); word(e, 64); byte(e, pass != ANYKVM_RFX_SIMPLE);
-    }
-    // One WIRETOSURFACE_2 payload has one frame and region. A decoder may
-    // reject concatenated frames or retain only the last clipping list.
-    block(e, 0xccc1, 12); dword(e, frame); word(e, 1);
-    size_t region = e->length;
-    block(e, 0xccc4, 0);
-    byte(e, 64); word(e, (uint16_t)count); byte(e, 1); byte(e, pass == ANYKVM_RFX_FIRST); byte(e, pass != ANYKVM_RFX_SIMPLE);
-    word(e, tile_count); dword(e, 0);
-    for (size_t i = 0; i < count; ++i) {
-        const anykvm_rfx_rect *r = &rects[i];
-        word(e, r->x); word(e, r->y); word(e, r->width); word(e, r->height);
-    }
-    for (unsigned q = 0; q < 5; ++q) byte(e, (uint8_t)(e->quantization | (e->quantization << 4)));
-    if (pass == ANYKVM_RFX_FIRST) {
-        byte(e, 50);
-        // Keep LL3 (first low nibble of each component table) at full precision.
-        for (unsigned q = 0; q < 15; ++q)
-            byte(e, (uint8_t)((extra_bits << 4) | (q % 5 ? extra_bits : 0)));
+    if (!append_output) { e->length = 0; e->failed = 0; }
+    size_t packet_start = e->length;
+    size_t region = 0;
+    if (!tiles_only) {
+        if (first) {
+            block(e, 0xccc0, 12); dword(e, 0xcaccacca); word(e, 0x100);
+            block(e, 0xccc3, 10); byte(e, 0); word(e, 64); byte(e, pass != ANYKVM_RFX_SIMPLE);
+        }
+        // One WIRETOSURFACE_2 payload has one frame and region. A decoder may
+        // reject concatenated frames or retain only the last clipping list.
+        block(e, 0xccc1, 12); dword(e, frame); word(e, 1);
+        region = e->length;
+        block(e, 0xccc4, 0);
+        byte(e, 64); word(e, (uint16_t)count); byte(e, 1); byte(e, pass == ANYKVM_RFX_FIRST); byte(e, pass != ANYKVM_RFX_SIMPLE);
+        word(e, tile_count); dword(e, 0);
+        for (size_t i = 0; i < count; ++i) {
+            const anykvm_rfx_rect *r = &rects[i];
+            word(e, r->x); word(e, r->y); word(e, r->width); word(e, r->height);
+        }
+        for (unsigned q = 0; q < 5; ++q) byte(e, (uint8_t)(e->quantization | (e->quantization << 4)));
+        if (pass == ANYKVM_RFX_FIRST) {
+            byte(e, 50);
+            // Keep LL3 (first low nibble of each component table) at full precision.
+            for (unsigned q = 0; q < 15; ++q)
+                byte(e, (uint8_t)((extra_bits << 4) | (q % 5 ? extra_bits : 0)));
+        }
     }
     size_t tiles = e->length;
     for (size_t i = 0; i < count && !e->failed; ++i) {
@@ -707,16 +756,69 @@ int bk_rfx_run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
             }
         }
     }
-    if (!e->failed) {
+    if (!e->failed && !tiles_only) {
         patch_dword(e, region + 2, (uint32_t)(e->length - region));
         patch_dword(e, region + 14, (uint32_t)(e->length - tiles));
         block(e, 0xccc2, 6);
     }
-    if (e->failed) {
+    if (e->failed || e->length - packet_start > MAX_OUTPUT) {
         snprintf(message, capacity, "allocation failed or batch exceeds 256 KiB"); return 0;
     }
-    *output = e->output; *output_bytes = e->length;
+    *output = e->output + packet_start; *output_bytes = e->length - packet_start;
     return 1;
+}
+
+int bk_rfx_run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
+               uint32_t width, uint32_t height, const anykvm_rfx_rect *rects,
+               size_t count, uint32_t frame, int first, int pass, unsigned extra_bits,
+               int32_t *cache, size_t cache_count, const uint8_t **output,
+               size_t *output_bytes, char *message, size_t capacity) {
+    return run_pass(context, pixels, pixel_bytes, format, width, height, rects, count,
+        frame, first, pass, extra_bits, cache, cache_count, output, output_bytes, message, capacity, 0, 0);
+}
+
+int bk_rfx_run_tiles(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
+               uint32_t width, uint32_t height, const anykvm_rfx_rect *rects,
+               size_t count, int pass, unsigned extra_bits, int32_t *cache, size_t cache_count,
+               const uint8_t **output, size_t *output_bytes, char *message, size_t capacity) {
+    return run_pass(context, pixels, pixel_bytes, format, width, height, rects, count,
+        0, 0, pass, extra_bits, cache, cache_count, output, output_bytes, message, capacity, 1, 0);
+}
+
+/* Keep a worker in native code across consecutive packets. Packet lengths let
+ * Go copy the contiguous result once and retain each original wire boundary. */
+int bk_rfx_run_packets(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
+               uint32_t width, uint32_t height, const anykvm_rfx_rect *rects, size_t count,
+               const size_t *ends, size_t packet_count, uint32_t frame, int first, int pass,
+               unsigned extra_bits, int32_t *cache, size_t cache_count,
+               const uint8_t **output, size_t *output_bytes, size_t *lengths,
+               char *message, size_t capacity) {
+    rfx_encoder *e = context;
+    if (!e || !rects || !ends || !lengths || !output || !output_bytes ||
+        packet_count == 0 || packet_count > ANYKVM_RFX_MAX_PACKETS) {
+        snprintf(message, capacity, "invalid packet group"); return 0;
+    }
+    size_t start = 0;
+    for (size_t i = 0; i < packet_count; ++i) {
+        if (ends[i] <= start || ends[i] - start > ANYKVM_RFX_MAX_TILES || ends[i] > count) {
+            snprintf(message, capacity, "invalid packet boundary"); return 0;
+        }
+        start = ends[i];
+    }
+    if (start != count) { snprintf(message, capacity, "incomplete packet group"); return 0; }
+    e->length = 0; e->failed = 0;
+    e->output_limit = packet_count * MAX_OUTPUT;
+    start = 0;
+    int ok = 1;
+    for (size_t i = 0; i < packet_count && ok; ++i) {
+        ok = run_pass(e, pixels, pixel_bytes, format, width, height, rects + start,
+            ends[i] - start, frame, first && i == 0, pass, extra_bits, cache,
+            cache_count, output, &lengths[i], message, capacity, 0, 1);
+        start = ends[i];
+    }
+    e->output_limit = 0;
+    if (ok) { *output = e->output; *output_bytes = e->length; }
+    return ok;
 }
 
 int bk_rfx_run_format(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 typedef struct bk_mf_encoder bk_mf_encoder;
+int bk_mf_supports(int codec);
 bk_mf_encoder *bk_mf_open(int width, int height, int rate_num, int rate_den,
                          int bitrate, int codec, int hardware, char *error, size_t capacity);
 int bk_mf_encode(bk_mf_encoder *encoder, const uint8_t *nv12, size_t size,

@@ -10,6 +10,7 @@ typedef struct {
 } anykvm_rfx_rect;
 
 #define ANYKVM_RFX_MAX_TILES 8
+#define ANYKVM_RFX_MAX_PACKETS 16
 
 enum { ANYKVM_RFX_BGRA = 0, ANYKVM_RFX_NV12 = 1 };
 
@@ -45,5 +46,20 @@ int bk_rfx_run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
                size_t count, uint32_t frame, int first, int pass, unsigned extra_bits,
                int32_t *cache, size_t cache_count, const uint8_t **output,
                size_t *output_bytes, char *message, size_t capacity);
+
+/* Tile blocks only; the caller builds one region after ordered collection. */
+int bk_rfx_run_tiles(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
+               uint32_t width, uint32_t height, const anykvm_rfx_rect *rects,
+               size_t count, int pass, unsigned extra_bits, int32_t *cache, size_t cache_count,
+               const uint8_t **output, size_t *output_bytes, char *message, size_t capacity);
+
+/* Consecutive independently framed packets, at most eight tiles each. ends[]
+ * contains cumulative rectangle counts; lengths[] receives packet byte sizes. */
+int bk_rfx_run_packets(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
+               uint32_t width, uint32_t height, const anykvm_rfx_rect *rects, size_t count,
+               const size_t *ends, size_t packet_count, uint32_t frame, int first, int pass,
+               unsigned extra_bits, int32_t *cache, size_t cache_count,
+               const uint8_t **output, size_t *output_bytes, size_t *lengths,
+               char *message, size_t capacity);
 
 #endif

@@ -4,8 +4,10 @@ package capture
 
 import (
 	"bytes"
+	"fmt"
 	"image/jpeg"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -13,7 +15,8 @@ import (
 )
 
 func TestLinuxKMSVulkanJPEG(t *testing.T) {
-	if os.Getenv("ANYKVM_TEST_KMS_JPEG") == "" {
+	pi := os.Getenv("ANYKVM_TEST_KMS_RPI") != ""
+	if os.Getenv("ANYKVM_TEST_KMS_JPEG") == "" && !pi {
 		t.Skip("set ANYKVM_TEST_KMS_JPEG=1 on a Linux KMS/Vulkan host")
 	}
 	t.Setenv("ANYKVM_LINUX_GPU_JPEG", "1")
@@ -25,17 +28,39 @@ func TestLinuxKMSVulkanJPEG(t *testing.T) {
 	d.SetDecodeImage(false)
 	d.SetVideoCodec("mjpeg")
 	d.SetJPEGQuality(85)
-	for range 2 {
-		if err := d.OpenWithFormat(638, 478, 30); err != nil {
+	for _, size := range [][2]int{{638, 478}, {1280, 720}} {
+		if err := d.OpenWithFormat(size[0], size[1], 30); err != nil {
 			t.Fatal(err)
 		}
 		defer d.Close()
-		frame := captureOne(t, d, 10*time.Second)
-		image, err := jpeg.Decode(bytes.NewReader(frame.Data))
-		valid := err == nil && image.Bounds().Dx() == frame.Width && image.Bounds().Dy() == frame.Height
-		frame.Release()
-		if !valid || frame.Format != FormatJPEG || d.jpegEncoder == nil || d.jpegDisabled || d.gpuFrames == 0 || d.readbacks != 0 {
-			t.Fatalf("Vulkan JPEG path: decode=%v GPU=%d pixel readbacks=%d disabled=%v", err, d.gpuFrames, d.readbacks, d.jpegDisabled)
+		for index := 0; index < 6; index++ {
+			before := d.gpuFrames
+			frame := captureOne(t, d, 10*time.Second)
+			image, err := jpeg.Decode(bytes.NewReader(frame.Data))
+			valid := err == nil && image.Bounds().Dx() == frame.Width && image.Bounds().Dy() == frame.Height
+			frame.Release()
+			if !valid || frame.Format != FormatJPEG || d.jpegEncoder == nil || d.jpegDisabled || d.gpuFrames != before+1 || d.readbacks != 0 || d.converter != nil {
+				t.Fatalf("Vulkan JPEG path: decode=%v GPU=%d pixel readbacks=%d disabled=%v", err, d.gpuFrames, d.readbacks, d.jpegDisabled)
+			}
+		}
+		if pi {
+			major, minor := d.jpegEncoder.DRMDevice()
+			for _, device := range []struct {
+				major, minor uint32
+				driver       string
+			}{
+				{uint32(d.output.device_major), uint32(d.output.device_minor), "vc4-drm"},
+				{major, minor, "v3d"},
+			} {
+				path := fmt.Sprintf("/sys/dev/char/%d:%d/device/driver", device.major, device.minor)
+				driver, err := os.Readlink(path)
+				if err != nil || filepath.Base(driver) != device.driver {
+					t.Fatalf("Pi DRM device %s: driver=%q want=%q err=%v", path, driver, device.driver, err)
+				}
+			}
+			if major == uint32(d.output.device_major) && minor == uint32(d.output.device_minor) {
+				t.Fatal("Pi test did not exercise separate display/render DRM devices")
+			}
 		}
 		if err := d.Close(); err != nil {
 			t.Fatal(err)

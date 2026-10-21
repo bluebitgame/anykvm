@@ -14,6 +14,7 @@ import (
 	"anykvm/internal/rdp"
 	"anykvm/internal/rtsp"
 	"anykvm/internal/scrcpy"
+	"anykvm/internal/spice"
 	"anykvm/internal/vnc"
 )
 
@@ -116,6 +117,9 @@ func buildMachines(cfg Config) []*bridge.MachineSession {
 }
 
 func newCaptureSession(mc TargetConfig) (capture.Device, *scrcpy.Session) {
+	if dev, ok := spice.NewCapture(mc.Video.Source, mc.SPICE); ok {
+		return dev, nil
+	}
 	if dev, ok := rtsp.NewCapture(mc.Video.Source, mc.RTSP); ok {
 		return dev, nil
 	}

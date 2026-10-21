@@ -4,7 +4,8 @@ AnyKVM is a Go application for capturing and remotely controlling computers and
 devices on macOS, Windows and Linux, configured through one YAML file.
 
 - **Capture:** desktop screens, cameras/capture cards, VNC/RTSP/RDP/ARD,
-  Android (scrcpy), and iPhone/iPad (USB, CoreDevice and AirPlay).
+  Linux local SPICE GL (experimental), Android (scrcpy), and iPhone/iPad
+  (USB, CoreDevice and AirPlay).
 - **View and control:** browser, VNC, RDP, GameStream/Moonlight, or an optional
   SDL2 local viewer, with multiple targets and viewer takeover.
 - **Input and audio:** local or serial/BLE/USB HID backends, source audio and
@@ -14,6 +15,10 @@ Available backends depend on OS, drivers and hardware. The guides below describe
 experimental protocol/device support and its limits.
 
 ## Quick start
+
+Download a prebuilt archive from [GitHub Releases](https://github.com/bluebitgame/anykvm/releases),
+or build from source below. See [automated builds and releases](docs/build.md#github-actions-and-releases)
+for supported packages and runtime dependencies.
 
 Install the [build prerequisites](docs/build.md#requirements), then build for the
 current host:
@@ -48,7 +53,8 @@ default. Platform capture/input permissions are covered in the setup guides.
 - [Local capture, audio and input](docs/capture.md).
 - [Android capture, audio and control](docs/android.md).
 - Remote sources: [VNC/RTSP/RDP and Wake-on-LAN](docs/network-sources.md),
-  [Apple Screen Sharing / ARD](docs/ard-client.md).
+  [Apple Screen Sharing / ARD](docs/ard-client.md),
+  [Linux SPICE GL / DMA-BUF](docs/spice-source.md).
 - iPhone/iPad: [USB and CoreDevice](docs/iphone-coredevice.md),
   [AirPlay](docs/iphone-airplay.md).
 - Viewer access: [Web, VNC and local viewer](docs/viewing.md),

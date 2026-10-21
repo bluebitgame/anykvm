@@ -12,6 +12,7 @@ func TestLinearNV12Planes(t *testing.T) {
 		"truncated": func(x *Frame) { x.Size-- }, "overlap": func(x *Frame) { x.PlaneOffsets[1]-- },
 		"odd size": func(x *Frame) { x.Height-- }, "modifier": func(x *Frame) { x.Modifier = 1 },
 		"short stride": func(x *Frame) { x.Pitch = 100 }, "chroma stride": func(x *Frame) { x.PlanePitches[1] = 1024 },
+		"flipped":    func(x *Frame) { x.FlipY = true },
 		"invalid fd": func(x *Frame) { x.FD = -1 }, "crop": func(x *Frame) { x.X = 2 },
 	} {
 		t.Run(name, func(t *testing.T) {

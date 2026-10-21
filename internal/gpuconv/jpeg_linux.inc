@@ -13,6 +13,29 @@ enum jpeg_buffer_index {
     JPEG_BUFFER_COUNT
 };
 
+struct jpeg_buffers {
+    buffer items[JPEG_BUFFER_COUNT];
+};
+
+static void jpeg_buffers_free(bk_vk *v) {
+    if (!v->jpeg_buffers) return;
+    for (unsigned i = 0; i < JPEG_BUFFER_COUNT; i++) {
+        buffer_free(v, &v->jpeg_buffers->items[i]);
+    }
+    free(v->jpeg_buffers);
+    v->jpeg_buffers = NULL;
+}
+
+static int jpeg_buffer_reserve(bk_vk *v, buffer *b, VkDeviceSize size, VkBufferUsageFlags usage,
+                               int host, char *error, size_t capacity) {
+    if (b->buffer && b->size >= size) return 0;
+    buffer replacement = {0};
+    if (buffer_new(v, &replacement, size, usage, host, error, capacity) < 0) return -1;
+    buffer_free(v, b);
+    *b = replacement;
+    return 0;
+}
+
 static int jpeg_create_pipeline(bk_vk *v, const void *spirv, size_t size, const char *entry,
                           VkPipeline *pipeline, char *error, size_t capacity) {
     VkShaderModule shader = VK_NULL_HANDLE;
@@ -103,16 +126,18 @@ static void jpeg_bind_resources(bk_vk *v, const source *input, buffer buffers[JP
     v->UpdateDescriptorSets(v->device, 8, writes, 0, NULL);
 }
 
-static int jpeg_read_output(bk_vk *v, buffer buffers[JPEG_BUFFER_COUNT], size_t header_bytes,
+static int jpeg_read_output(bk_vk *v, buffer buffers[JPEG_BUFFER_COUNT], size_t header_bytes, VkDeviceSize output_capacity,
                             uint8_t **jpeg, size_t *jpeg_bytes, char *error, size_t capacity) {
     uint32_t bytes;
     memcpy(&bytes, buffers[JPEG_LENGTH].mapped, sizeof(bytes));
-    if (bytes < header_bytes + 2 || bytes > buffers[JPEG_OUTPUT].size) {
+    if (bytes < header_bytes + 2 || bytes > output_capacity) {
         snprintf(error, capacity, "GPU JPEG segment overflow or invalid output size");
         return -1;
     }
     VkDeviceSize copy_bytes = ((VkDeviceSize)bytes + 3) & ~(VkDeviceSize)3;
-    if (buffer_new(v, &buffers[JPEG_READBACK], copy_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1, error, capacity) < 0 ||
+    // Leave headroom so small changes in compressed size do not allocate each frame.
+    VkDeviceSize readback_capacity = (copy_bytes + 65535) & ~(VkDeviceSize)65535;
+    if (jpeg_buffer_reserve(v, &buffers[JPEG_READBACK], readback_capacity, VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1, error, capacity) < 0 ||
         begin(v, error, capacity) < 0) return -1;
     VkMemoryBarrier host_ready = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
@@ -134,7 +159,7 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
                       const uint8_t *header, size_t header_bytes, uint8_t **jpeg, size_t *jpeg_bytes,
                       char *error, size_t capacity) {
     source input = {0};
-    buffer buffers[JPEG_BUFFER_COUNT] = {0};
+    buffer *buffers = NULL;
     int result = -1;
     *jpeg = NULL;
     *jpeg_bytes = 0;
@@ -143,6 +168,11 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
     uint32_t columns = (width + 15) / 16, rows = (height + 15) / 16;
     uint32_t count = columns * rows;
     if (count > BK_JPEG_STORAGE_LIMIT / BK_JPEG_SEGMENT_CAPACITY) goto failed;
+    if (!v->jpeg_buffers) {
+        v->jpeg_buffers = calloc(1, sizeof(*v->jpeg_buffers));
+        if (!v->jpeg_buffers) goto failed;
+    }
+    buffers = v->jpeg_buffers->items;
     VkDeviceSize output_capacity = (header_bytes + (VkDeviceSize)count * BK_JPEG_SEGMENT_CAPACITY + 2 + 3) & ~(VkDeviceSize)3;
 
     struct dma_buf_export_sync_file sync = {.flags = DMA_BUF_SYNC_READ, .fd = -1};
@@ -155,7 +185,7 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
     if (waited < 0) { snprintf(error, capacity, "DMA-BUF producer fence timed out"); goto failed; }
     if (source_import(v, f, &input, error, capacity) < 0) goto failed;
     VkDeviceSize sizes[JPEG_BUFFER_COUNT] = {
-        [JPEG_COEFFICIENTS] = (VkDeviceSize)count * BK_JPEG_COEFFICIENTS_PER_MCU * sizeof(int32_t),
+        [JPEG_COEFFICIENTS] = (VkDeviceSize)count * BK_JPEG_COEFFICIENTS_PER_MCU * sizeof(int16_t),
         [JPEG_SEGMENTS] = (VkDeviceSize)count * BK_JPEG_SEGMENT_CAPACITY,
         [JPEG_SEGMENT_INFO] = (count * 2 + 1) * sizeof(uint32_t),
         [JPEG_OUTPUT] = output_capacity,
@@ -171,7 +201,7 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
         if (i == JPEG_ARGUMENTS) usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
         if (i == JPEG_LENGTH) usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         int host_visible = i == JPEG_HEADER || i == JPEG_PARAMETERS || i == JPEG_LENGTH;
-        if (buffer_new(v, &buffers[i], sizes[i], usage, host_visible, error, capacity) < 0) goto failed;
+        if (jpeg_buffer_reserve(v, &buffers[i], sizes[i], usage, host_visible, error, capacity) < 0) goto failed;
     }
     bk_jpeg_parameters parameters = {
         .source_width = f->width, .source_height = f->height,
@@ -179,7 +209,7 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
         .rotation_degrees = f->rotation, .mcu_columns = columns, .mcu_count = count,
         .header_bytes = (uint32_t)header_bytes, .crop_origin = {f->x, f->y}, .crop_size = {f->crop_width, f->crop_height}
     };
-    memcpy(parameters.quantization, quantization, sizeof(parameters.quantization));
+    bk_jpeg_prepare_quantization(&parameters, quantization);
     memcpy(parameters.huffman, huffman, sizeof(parameters.huffman));
     memcpy(buffers[JPEG_PARAMETERS].mapped, &parameters, sizeof(parameters));
     memset(buffers[JPEG_HEADER].mapped, 0, sizes[JPEG_HEADER]);
@@ -198,7 +228,7 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
                           0, 0, NULL, 0, NULL, 1, &acquire);
     v->CmdBindDescriptorSets(v->command, VK_PIPELINE_BIND_POINT_COMPUTE, v->layout, 0, 1, &v->descriptor, 0, NULL);
     v->CmdBindPipeline(v->command, VK_PIPELINE_BIND_POINT_COMPUTE, v->pipeline);
-    v->CmdDispatch(v->command, columns, rows, 6);
+    v->CmdDispatch(v->command, columns, rows, 5);
     jpeg_compute_barrier(v);
     v->CmdBindPipeline(v->command, VK_PIPELINE_BIND_POINT_COMPUTE, v->jpeg_entropy);
     v->CmdDispatch(v->command, (count + 63) / 64, 1, 1);
@@ -233,11 +263,10 @@ int bk_vk_jpeg_encode(bk_vk *v, const bk_vk_source *f, int width, int height,
     v->CmdPipelineBarrier(v->command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
                           0, 1, &host_ready, 0, NULL, 0, NULL);
     if (submit(v, f->fd, error, capacity) < 0 || invalidate_buffer(v, &buffers[JPEG_LENGTH], error, capacity) < 0) goto failed;
-    if (jpeg_read_output(v, buffers, header_bytes, jpeg, jpeg_bytes, error, capacity) < 0) goto failed;
+    if (jpeg_read_output(v, buffers, header_bytes, output_capacity, jpeg, jpeg_bytes, error, capacity) < 0) goto failed;
     result = 0;
 failed:
     if (result < 0 && !error[0]) snprintf(error, capacity, "Vulkan JPEG encoding failed");
     source_free(v, &input);
-    for (unsigned i = 0; i < JPEG_BUFFER_COUNT; i++) buffer_free(v, &buffers[i]);
     return result;
 }

@@ -3,7 +3,6 @@
 package videoenc
 
 /*
-#cgo windows LDFLAGS: -ld3d11 -ldxgi -ldxguid -ladvapi32 -lcfgmgr32
 #include "vendor_windows.h"
 #include <stdlib.h>
 */
@@ -32,7 +31,7 @@ type vendorEncoder struct {
 // Vendor SDK headers are compiled in; their driver runtimes are loaded lazily.
 // No libavcodec initialization takes place on any of these paths.
 func openWindowsVendor(o Options, name string) (Encoder, error) {
-	if o.Codec != "h264" && o.Codec != "av1" {
+	if o.Codec != "h264" && o.Codec != "hevc" && o.Codec != "av1" {
 		return nil, ErrUnavailable
 	}
 	vendor := C.int(-1)
@@ -46,7 +45,9 @@ func openWindowsVendor(o Options, name string) (Encoder, error) {
 		return nil, fmt.Errorf("unknown native Windows encoder %q", name)
 	}
 	codec := C.int(0)
-	if o.Codec == "av1" {
+	if o.Codec == "hevc" {
+		codec = 1
+	} else if o.Codec == "av1" {
 		codec = 2
 	}
 	rate := o.Rate.Or(o.FPS)
@@ -64,6 +65,9 @@ func openWindowsVendor(o Options, name string) (Encoder, error) {
 	if ptr == nil {
 		return nil, fmt.Errorf("%s native: %s", name, C.GoString(&msg[0]))
 	}
+	if o.Codec != "h264" {
+		return &vendorEncoder{ptr: ptr, options: o, name: name + "_native", first: true}, nil
+	}
 	var size C.size_t
 	probe := C.bk_vendor_probe(ptr, &size)
 	packet, err := mediaFoundationPacket(C.GoBytes(unsafe.Pointer(probe), C.int(size)), nil, o.Codec)
@@ -75,15 +79,8 @@ func openWindowsVendor(o Options, name string) (Encoder, error) {
 		return nil, fmt.Errorf("%s native probe: %w", name, err)
 	}
 	e := &vendorEncoder{ptr: ptr, options: o, name: name + "_native", first: true}
-	if o.Codec == "h264" {
-		units, _ := mediaFoundationUnits(packet, 4)
-		for _, unit := range units {
-			if tag := unit[0] & 31; tag == 7 || tag == 8 {
-				e.header = append(e.header, mfStartCode...)
-				e.header = append(e.header, unit...)
-			}
-		}
-	}
+	e.header = mediaFoundationParameterSets(packet, o.Codec)
+
 	return e, nil
 }
 
@@ -183,6 +180,9 @@ func (e *vendorEncoder) packet(output *C.uint8_t, size C.size_t, force bool) ([]
 	if err != nil {
 		e.failed = err
 		return nil, err
+	}
+	if header := mediaFoundationParameterSets(data, e.options.Codec); len(header) > 0 {
+		e.header = header
 	}
 	e.first = false
 	return data, nil

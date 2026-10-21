@@ -8,6 +8,7 @@ typedef struct {
     int64_t conversion_start, conversion_end, encode_submit, encode_complete;
 } bk_vendor_timing;
 void bk_vendor_last_timing(bk_vendor_encoder *, bk_vendor_timing *);
+int bk_vendor_supports(int vendor, int codec);
 bk_vendor_encoder *bk_vendor_open(int vendor, int width, int height, int num, int den,
                                  int bitrate, int codec, int adapter_set, uint64_t luid, int timing, char *error, size_t capacity);
 int bk_vendor_encode(bk_vendor_encoder *, const uint8_t *, size_t, int,
@@ -48,6 +49,9 @@ typedef struct {
     int (*encode_texture)(void *, uintptr_t, int, int, uint8_t **, size_t *, char *, size_t);
 } bk_vendor_api;
 extern const bk_vendor_api bk_nvenc_api, bk_amf_api, bk_qsv_api;
+int bk_nvenc_supports(int);
+int bk_amf_supports(int);
+int bk_qsv_supports(int);
 
 // Load driver libraries only from the system directory. No PATH/CWD search.
 HMODULE bk_vendor_library(const wchar_t *name);

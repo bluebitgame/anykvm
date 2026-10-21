@@ -1,7 +1,7 @@
 // Package videoenc provides in-process hardware video encoding. It does not
 // execute FFmpeg. Windows calls NVENC, AMF and Intel VPL directly in native-only
 // builds and through libavcodec with the ffmpeg tag; Media Foundation stays
-// native. Linux native builds use Vulkan Video H.264; Raspberry Pi uses V4L2.
+// native. Linux native builds use Vulkan Video H.264/HEVC/AV1; Raspberry Pi uses V4L2.
 // Optional libavcodec also supplies Linux GPU backends and x264 fallbacks. Each Encode returns an Annex-B access unit or
 // low-overhead AV1 temporal unit.
 package videoenc

@@ -5,6 +5,28 @@ import (
 	"time"
 )
 
+func TestTextureProcessingSpansPartitionCallbackToSubmit(t *testing.T) {
+	now := time.Now()
+	trace := &Trace{Path: "texture-stages", Acquired: now,
+		TextureReadyStart: now.Add(2 * time.Millisecond), TextureReadyEnd: now.Add(3 * time.Millisecond),
+		TextureImported: now.Add(4 * time.Millisecond), EncodeSubmit: now.Add(6 * time.Millisecond)}
+	trace.Capture()
+	stats.Lock()
+	defer stats.Unlock()
+	w := stats.windows["capture/texture-stages"]
+	defer delete(stats.windows, "capture/texture-stages")
+	var sum time.Duration
+	for _, name := range []string{"capture_encode_queue", "texture_ready_wait", "texture_import_cpu", "encode_submit_prepare"} {
+		if w == nil || len(w.values[name]) != 1 {
+			t.Fatalf("missing stage %s", name)
+		}
+		sum += w.values[name][0]
+	}
+	if sum != 6*time.Millisecond || sum != w.values["capture_to_encode_submit"][0] {
+		t.Fatal("overlapping or missing processing spans")
+	}
+}
+
 func TestQPCMappingPreservesOldPresentationAndLongUptime(t *testing.T) {
 	anchor := time.Now()
 	const frequency int64 = 10_000_000
@@ -72,5 +94,67 @@ func TestStaticRecoveryDoesNotReuseOldPlaybackPTS(t *testing.T) {
 	}
 	if !PictureTime(time.Time{}, now, false).Equal(now) || !PictureTime(now.Add(time.Second), now, false).Equal(now) {
 		t.Fatal("invalid presentation time was not replaced by acquisition time")
+	}
+}
+
+func TestAckWaitBelongsToSelectedFrame(t *testing.T) {
+	start := time.Now()
+	d := Delivery{Enqueued: start.Add(90 * time.Millisecond)}
+	if got := d.Waited(start, start.Add(100*time.Millisecond)); got != 10*time.Millisecond {
+		t.Fatalf("fresh capture charged with an older frame's ACK wait: %s", got)
+	}
+	if got := d.Waited(start, start.Add(80*time.Millisecond)); got != 0 {
+		t.Fatalf("negative ACK duration: %s", got)
+	}
+}
+
+func TestRDPSentStagesKeepFramingAndAckSeparate(t *testing.T) {
+	now := time.Now()
+	trace := &Trace{Path: "diagnostic-fixture", Present: now.Add(-20 * time.Millisecond), Acquired: now.Add(-15 * time.Millisecond), EncodeSubmit: now.Add(-12 * time.Millisecond), EncodeComplete: now.Add(-8 * time.Millisecond), Ready: now.Add(-6 * time.Millisecond)}
+	trace.Capture()
+	d := Delivery{Trace: trace, Enqueued: now.Add(-5 * time.Millisecond)}
+	d.SentRDP("rdp-gfx", now.Add(-2*time.Millisecond), time.Millisecond, 2*time.Millisecond, time.Millisecond)
+	stats.Lock()
+	defer stats.Unlock()
+	defer delete(stats.windows, "capture/diagnostic-fixture")
+	defer delete(stats.windows, "send/rdp-gfx/diagnostic-fixture")
+	w := stats.windows["send/rdp-gfx/diagnostic-fixture"]
+	if trace.ID == 0 || w == nil || w.values["send_call"][0] != 2*time.Millisecond || w.values["ack_wait"][0] != time.Millisecond || w.values["rdp_prepare_encode"][0] != time.Millisecond {
+		t.Fatal("RDP timing combined encoding, framing/writes or ACK wait")
+	}
+}
+
+func TestFutureSourcePTSIsNotAcceptedAfterEncodingCatchesUp(t *testing.T) {
+	acquired := time.Now().Add(-time.Second)
+	trace := &Trace{Path: "future-source-fixture", SourceClock: "test-sync-clock",
+		Acquired: acquired, Present: acquired.Add(10 * time.Millisecond),
+		Display: acquired.Add(15 * time.Millisecond), Ready: acquired.Add(20 * time.Millisecond)}
+	trace.Capture()
+	d := Delivery{Trace: trace, Enqueued: trace.Ready.Add(time.Millisecond)}
+	d.SentRDP("rdp-gfx", d.Enqueued.Add(time.Millisecond), 0, 0, 0)
+	c := trace.sourceClockSample()
+	if c.Status != "future" || c.PTSToAcquireMS == nil || *c.PTSToAcquireMS != -10 || c.DisplayToAcquireMS == nil || *c.DisplayToAcquireMS != -15 {
+		t.Fatalf("lost signed source clock diagnostics: %+v", c)
+	}
+	stats.Lock()
+	defer stats.Unlock()
+	for _, label := range []string{"capture/future-source-fixture", "send/rdp-gfx/future-source-fixture"} {
+		w := stats.windows[label]
+		delete(stats.windows, label)
+		if w == nil {
+			t.Fatalf("missing processing sample: %s", label)
+		}
+		for _, metric := range []string{"present_to_acquire", "present_to_ready", "present_to_socket"} {
+			if len(w.values[metric]) != 0 {
+				t.Fatalf("future PTS became a positive cumulative latency: %s/%s", label, metric)
+			}
+		}
+	}
+	if trace.presentationValid() {
+		t.Fatal("future source PTS accepted")
+	}
+	trace.Present = time.Time{}
+	if trace.sourceClockSample().Status != "missing" {
+		t.Fatal("missing source timestamp was hidden")
 	}
 }

@@ -3,6 +3,7 @@
 package gpuconv
 
 /*
+#cgo CFLAGS: -I${SRCDIR}/third_party
 #cgo LDFLAGS: -ldl
 #include "native_linux.h"
 */
@@ -19,7 +20,8 @@ import (
 //go:embed shaders/desktop.spv
 var shader []byte
 
-// Converter owns a Vulkan device matching the captured DRM primary device.
+// Converter owns a Vulkan device associated with the captured DRM source,
+// including the split vc4 display/v3d renderer on Raspberry Pi 4/5.
 // Images keep the device alive after Close until their final lease is released.
 type Converter struct {
 	mu     sync.Mutex
@@ -123,6 +125,9 @@ func nativeSource(f dmabuf.Frame) C.bk_vk_source {
 		pitch: C.uint32_t(f.Pitch), offset: C.uint32_t(f.Offset), modifier: C.uint64_t(f.Modifier), size: C.uint64_t(f.Size),
 		x: C.uint32_t(f.X), y: C.uint32_t(f.Y), crop_width: C.uint32_t(f.CropWidth), crop_height: C.uint32_t(f.CropHeight), rotation: C.int(f.Rotation)}
 
+	if f.FlipY {
+		source.flip_y = 1
+	}
 	source.planes = C.uint32_t(f.PlaneCount)
 	for i := 0; i < 4; i++ {
 		source.pitches[i] = C.uint32_t(f.PlanePitches[i])

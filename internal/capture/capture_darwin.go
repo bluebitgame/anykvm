@@ -2,7 +2,7 @@
 
 package capture
 
-// #cgo LDFLAGS: -framework AVFoundation -framework CoreMedia -framework CoreMediaIO -framework CoreVideo -framework Cocoa -framework CoreGraphics -framework ImageIO -framework CoreServices -framework CoreImage
+// #cgo LDFLAGS: -framework AVFoundation -framework CoreMedia -framework CoreMediaIO -framework CoreVideo -framework Cocoa -framework CoreGraphics -framework CoreServices -framework CoreImage
 //
 // #include <stdlib.h>
 //
@@ -49,6 +49,7 @@ type darwinDevice struct {
 	session      unsafe.Pointer
 	statsAt      time.Time
 	statsFrames  int
+	outputLog    encodingLog
 
 	yuvPassthrough bool // store device YUV frames as-is (for the pipe encoder)
 
@@ -162,6 +163,7 @@ func (d *darwinDevice) Open() error {
 func (d *darwinDevice) OpenWithFormat(width, height, fps int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.outputLog = encodingLog{}
 
 	// DAL devices (iOS screen mirroring) can stall and deliver no frames when
 	// a session is closed and reopened in quick succession (codec switches,
@@ -269,6 +271,7 @@ func (d *darwinDevice) capture(keepNative bool) (*Frame, error) {
 			return nil, err
 		}
 		f.Buffer, f.Data, f.Format = data, data.Bytes(), FormatJPEG
+		d.outputLog.start("jpeg", jpegcodec.Backend())
 		return f, err
 	}
 	if tag == cPixfmtUnknown && !d.shouldDecode() {
@@ -280,6 +283,7 @@ func (d *darwinDevice) capture(keepNative bool) (*Frame, error) {
 			}
 			f.Buffer = framebuf.New(f.Data, func() { C.capture_sample_release(sample) })
 			f.Format = FormatJPEG
+			d.outputLog.start("jpeg", "passthrough")
 			owned = false
 			return f, nil
 		}
@@ -292,6 +296,7 @@ func (d *darwinDevice) capture(keepNative bool) (*Frame, error) {
 			return nil, fmt.Errorf("capture: unsupported compressed native sample")
 		}
 		f.Buffer, f.Format = framebuf.New(f.Data, nil), FormatJPEG
+		d.outputLog.start("jpeg", "passthrough")
 		return f, nil
 	}
 	if cap(d.frameBufs[d.bufIdx]) < int(size) {

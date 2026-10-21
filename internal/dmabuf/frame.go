@@ -14,6 +14,7 @@ type Frame struct {
 	Width, Height, FourCC, Pitch, Offset uint32
 	Modifier, Size                       uint64
 	X, Y, CropWidth, CropHeight          uint32
+	FlipY                                bool   // flip source vertically before display rotation
 	Rotation                             int    // clockwise degrees
 	DeviceMajor, DeviceMinor             uint32 // DRM primary device of the source
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -71,7 +72,11 @@ func TestProgressiveFirstPreservesSolidColors(t *testing.T) {
 }
 
 func TestProgressiveLayeredNativeEquivalence(t *testing.T) {
-	for _, mode := range []string{"native-scalar", "native-sse2", "native-avx2"} {
+	modes := []string{"native-scalar", "native-sse2", "native-avx2"}
+	if runtime.GOARCH == "arm64" {
+		modes = append(modes, "native")
+	}
+	for _, mode := range modes {
 		for _, quant := range []int{6, 8, 15} {
 			for bits := 1; bits <= 4; bits++ {
 				t.Run(fmt.Sprintf("%s/q%d/bits%d", mode, quant, bits), func(t *testing.T) {
@@ -343,63 +348,6 @@ func TestProgressiveReduceExtrapolateRamp(t *testing.T) {
 		for i, v := range low {
 			if v != int32(i*64)-1024 {
 				t.Fatalf("ramp low[%d]=%d", i, v)
-			}
-		}
-	}
-}
-
-func BenchmarkProgressiveRefinement(b *testing.B) {
-	const w, h = 1280, 720
-	for _, pattern := range []string{"gradient", "noise"} {
-		pixels := progressivePixels(w, h, pattern)
-		rects := dirtyProgressiveRects(pixels, nil, w, h)
-		for _, bits := range []int{0, 1, 2, 3} {
-			for _, phase := range []string{"first", "complete"} {
-				if bits == 0 && phase == "complete" {
-					continue
-				}
-				b.Run(fmt.Sprintf("%s/refine%d/%s", pattern, bits, phase), func(b *testing.B) {
-					e, err := newProgressiveEncoder(6)
-					if err != nil {
-						b.Fatal(err)
-					}
-					defer e.close()
-					if err = e.setRefinement(bits); err != nil {
-						b.Fatal(err)
-					}
-					// Warm the cache allocation so per-frame latency has no one-time cost.
-					if _, err = e.encode(pixels, w, h, rects[:8], 1); err != nil {
-						b.Fatal(err)
-					}
-					b.Logf("backend=%s", e.backend())
-					b.ResetTimer()
-					var output int
-					for n := 0; n < b.N; n++ {
-						output = 0
-						for i := 0; i < len(rects); {
-							end := progressiveBatchEnd(rects, i)
-							out, err := e.encode(pixels, w, h, rects[i:end], uint32(n+2))
-							if err != nil {
-								b.Fatal(err)
-							}
-							output += len(out)
-							i = end
-						}
-						if phase == "complete" {
-							for i := 0; i < len(rects); {
-								end := progressiveBatchEnd(rects, i)
-								out, err := e.upgrade(rects[i:end], uint32(n+2))
-								if err != nil {
-									b.Fatal(err)
-								}
-								output += len(out)
-								i = end
-							}
-						}
-					}
-					b.ReportMetric(float64(output), "bytes/frame")
-					b.ReportMetric(1e9/float64(b.Elapsed().Nanoseconds()/int64(b.N)), "encode-fps")
-				})
 			}
 		}
 	}

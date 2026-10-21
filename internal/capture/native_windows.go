@@ -12,6 +12,7 @@ import "C"
 import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/framerate"
+	"anykvm/internal/gpuconv"
 	"anykvm/internal/jpegcodec"
 	"anykvm/internal/videoenc"
 	"anykvm/internal/videotiming"
@@ -80,12 +81,18 @@ func (d *windowsDevice) SetVideoBitrate(kbps int)                    { d.enc.Set
 func (d *windowsDevice) SetVideoCodec(c string)                      { d.enc.SetVideoCodec(c) }
 func (d *windowsDevice) SetVideoChroma(c string)                     { d.enc.SetVideoChroma(c) }
 func (d *windowsDevice) SetVideoStreamOptions(o *VideoStreamOptions) { d.enc.SetVideoStreamOptions(o) }
+func (d *windowsDevice) SetOutputDownscaleOnly(v bool)               { d.enc.outputDownscaleOnly = v }
 func (d *windowsDevice) SetOutputSize(w, h int)                      { d.enc.targetW, d.enc.targetH = w, h }
+func (d *windowsDevice) SetOutputSizeLimit(w, h int)                 { d.enc.SetOutputSizeLimit(w, h) }
+func (d *windowsDevice) SetGPUSurface(v bool)                        { d.enc.gpuSurface = v }
 func (d *windowsDevice) PreserveCaptureMode() bool                   { return !isScreenDevice(d.id) }
+func (d *windowsDevice) SupportsGameStreamHEVC() bool                { return videoenc.SupportsHEVC() }
 func (d *windowsDevice) SupportsVideoCodec(c string) bool {
 	switch c {
 	case "", "mjpeg", "rawvideo", "h264":
 		return true
+	case "hevc":
+		return videoenc.SupportsHEVC()
 	case "av1":
 		return videoenc.SupportsAV1()
 	}
@@ -206,7 +213,7 @@ func (d *windowsDevice) OpenWithFormat(w, h, fps int) error {
 	d.enc.requestedRate = rate
 	d.enc.inputFPS = d.sourceRate
 	d.enc.scalableInput = isScreenDevice(d.id)
-	if isScreenDevice(d.id) {
+	if isScreenDevice(d.id) && !d.enc.outputDownscaleOnly {
 		d.enc.targetW, d.enc.targetH = w, h
 	}
 	d.enc.closed.Store(false)
@@ -239,9 +246,17 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 		}
 		return nil, nil
 	}
-	lease := &windowsFrame{ptr: native, adapter: d.adapter, gpuJPEG: &d.gpuJPEG}
-	if C.bk_win_frame_kind(native) == 2 && d.lastNativePath != "mjpeg" {
-		log.Printf("capture: Windows native MJPEG passthrough (no decode/re-encode)")
+	outputCodec := d.enc.videoCodec
+	if d.enc.streamOptions != nil {
+		outputCodec = d.enc.streamOptions.Codec
+		if outputCodec == "" {
+			outputCodec = "h264"
+		}
+	}
+	encodedOutput := outputCodec == "h264" || outputCodec == "hevc" || outputCodec == "av1"
+	lease := &windowsFrame{ptr: native, adapter: d.adapter, gpuJPEG: &d.gpuJPEG, surfaceLeases: &d.enc.gpuSurfaceLeases}
+	if C.bk_win_frame_kind(native) == 2 && !encodedOutput && !d.enc.shouldDecode() && d.lastNativePath != "mjpeg" {
+		d.enc.outputLog.start("jpeg", "passthrough")
 		d.lastNativePath = "mjpeg"
 	}
 	defer func() { lease.Release() }()
@@ -263,7 +278,7 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 			f.Timing = &videotiming.Trace{Present: mapTime(timing.present), AcquireStart: mapTime(timing.acquire_start), Acquired: mapTime(timing.acquired), CopySubmitted: mapTime(timing.copy_submitted), Anchor: anchor, AnchorQPC: int64(timing.now), Frequency: int64(timing.frequency), Repeated: timing.repeated != 0}
 		}
 	}
-	if C.bk_win_frame_kind(native) == 2 && !d.enc.shouldDecode() {
+	if C.bk_win_frame_kind(native) == 2 && !d.enc.shouldDecode() && !encodedOutput {
 		var data *C.uint8_t
 		var size C.size_t
 		var pitch C.int
@@ -309,6 +324,9 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 		if out.Format == FormatJPEG {
 			name = "jpeg"
 		}
+		if out.Format == FormatSurface {
+			name = "surface"
+		}
 		if d.enc.encoder != nil {
 			name = d.enc.encoder.Name()
 		}
@@ -323,11 +341,7 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 		t.Capture()
 	}
 	if lease.path != "" && lease.path != d.lastNativePath {
-		name := "JPEG"
-		if d.enc.encoder != nil {
-			name = d.enc.encoder.Name()
-		}
-		log.Printf("capture: Windows %s -> %s", lease.path, name)
+		log.Printf("capture: Windows path=%s", lease.path)
 		d.lastNativePath = lease.path
 	}
 	if lease.materialized {
@@ -376,11 +390,33 @@ func (d *windowsDevice) Close() error {
 }
 
 type windowsFrame struct {
+	surfaceLeases             *atomic.Int32
 	gpuJPEG                   *windowsGPUJPEG
 	adapter                   videoenc.WindowsAdapter
 	ptr                       *C.bk_win_frame
 	materialized, textureUsed bool
+	preserveJPEG              bool
 	path                      string
+}
+
+func (f *windowsFrame) SnapshotSurface() (*gpuconv.Surface, *framebuf.Buffer, bool, error) {
+	if f.surfaceLeases == nil || !f.adapter.Set || uintptr(C.bk_win_frame_handle(f.ptr)) == 0 {
+		return nil, nil, false, nil
+	}
+	if f.surfaceLeases.Load() >= 4 {
+		return nil, nil, true, nil
+	}
+	var message [512]C.char
+	snapshot := C.bk_win_frame_snapshot(f.ptr, &message[0], 512)
+	if snapshot == nil {
+		return nil, nil, true, fmt.Errorf("D3D11 immutable capture: %s", C.GoString(&message[0]))
+	}
+	f.surfaceLeases.Add(1)
+	leases := f.surfaceLeases
+	owner := framebuf.New(nil, func() { C.bk_win_frame_free(snapshot); leases.Add(-1) })
+	f.textureUsed, f.path = true, "immutable GPU surface (no pixel readback)"
+	return &gpuconv.Surface{SharedTexture: uintptr(C.bk_win_frame_handle(snapshot)), AdapterLUID: f.adapter.LUID,
+		Width: int(C.bk_win_frame_width(snapshot)), Height: int(C.bk_win_frame_height(snapshot)), Rotation: int(C.bk_win_frame_rotation(snapshot))}, owner, true, nil
 }
 
 // GPU state belongs to the capture session, not a borrowed frame. Capture and
@@ -397,6 +433,8 @@ func (j *windowsGPUJPEG) close() {
 	*j = windowsGPUJPEG{}
 }
 
+func (*windowsFrame) JPEGEncoderName() string { return "D3D11 Compute JPEG" }
+
 func (f *windowsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer, bool, error) {
 	j := f.gpuJPEG
 	if j == nil || j.disabled || !f.adapter.Set || os.Getenv("ANYKVM_WINDOWS_GPU_JPEG") == "0" {
@@ -409,9 +447,6 @@ func (f *windowsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer,
 	var err error
 	if j.encoder == nil {
 		j.encoder, err = jpegcodec.NewD3D11Encoder(f.adapter.LUID)
-		if err == nil {
-			log.Printf("capture: Windows D3D11 Compute JPEG (GPU DCT/quantization/Huffman) adapter=%s", f.adapter)
-		}
 	}
 	var data []byte
 	if err == nil {
@@ -441,6 +476,15 @@ func (f *windowsFrame) Release() {
 		f.ptr = nil
 	}
 }
+
+// MaterializeVideo retains device MJPEG for the compute decoder. Other
+// consumers keep Materialize's existing decoded-pixel contract.
+func (f *windowsFrame) MaterializeVideo(out *Frame) error {
+	f.preserveJPEG = true
+	defer func() { f.preserveJPEG = false }()
+	return f.Materialize(out)
+}
+
 func (f *windowsFrame) Materialize(out *Frame) error {
 	var data *C.uint8_t
 	var size C.size_t
@@ -456,6 +500,10 @@ func (f *windowsFrame) Materialize(out *Frame) error {
 	case 1:
 		out.Format, out.PixFmt = FormatYUV, "nv12"
 	case 2:
+		if f.preserveJPEG {
+			out.Format = FormatJPEG
+			return nil
+		}
 		pixels, w, h, err := jpegcodec.DecodeBGRA(out.Data)
 		if err != nil {
 			return err

@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import shlex
 import shutil
 import subprocess
@@ -34,12 +35,12 @@ VARIABLES = ("CC", "CXX", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS",
              "PKG_CONFIG_SYSROOT_DIR", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET")
 
 
-def choose(title, options):
+def choose(title, options, default=0):
     print(f"\n{title}", flush=True)
     for index, (label, _) in enumerate(options):
         print(f"  {index}) {label}")
     while True:
-        answer = input("Enter a number (Enter for 0, q to quit): ").strip().lower() or "0"
+        answer = input(f"Enter a number (Enter for {default}, q to quit): ").strip().lower() or str(default)
         if answer == "q":
             raise SystemExit(0)
         for index, (_, value) in enumerate(options):
@@ -49,13 +50,18 @@ def choose(title, options):
 
 
 def interactive_selection():
-    systems = choose("Select target platform", (("All platforms", ("linux", "windows", "darwin")),
-                                                ("Linux", ("linux",)),
-                                                ("Windows", ("windows",)),
-                                                ("macOS", ("darwin",))))
-    arches = choose("Select target architecture", (("All architectures", ("amd64", "arm64")),
-                                                   ("amd64 (x86-64)", ("amd64",)),
-                                                   ("arm64 (AArch64)", ("arm64",))))
+    host_system = platform.system().lower()
+    host_arch = platform.machine().lower()
+    host_arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(host_arch, host_arch)
+    system_options = [("Linux", ("linux",)), ("Windows", ("windows",)),
+                      ("macOS", ("darwin",))]
+    arch_options = [("amd64 (x86-64)", ("amd64",)), ("arm64 (AArch64)", ("arm64",))]
+    system_options.sort(key=lambda option: option[1][0] != host_system)
+    arch_options.sort(key=lambda option: option[1][0] != host_arch)
+    systems = choose("Select target platform", [("All", ("linux", "windows", "darwin")),
+                                               *system_options], default=1)
+    arches = choose("Select target architecture", [("All", ("amd64", "arm64")),
+                                                  *arch_options], default=1)
     viewer = choose("Include viewer", (("No (default)", False),
                                       ("Yes (requires SDL2)", True)))
     tags = choose("Include FFmpeg", (("No (default)", ""),
@@ -149,7 +155,7 @@ def main(argv=None):
     parser.add_argument("--targets", nargs="+", default=["all"],
                         help="all (default), native, or targets such as darwin/amd64 linux/arm64")
     parser.add_argument("--tags", default="",
-                        help="Go build tags; use viewer for SDL2 GUI, ffmpeg for media, or viewer,ffmpeg")
+                        help="Go build tags; viewer for SDL2 GUI, ffmpeg for media, spice for Linux SPICE GL (system development libraries required)")
     parser.add_argument("--output", type=Path, default=ROOT / "build" / "releases",
                         help="output directory (default: build/releases)")
     parser.add_argument("--dry-run", action="store_true", help="print the build matrix without compiling")

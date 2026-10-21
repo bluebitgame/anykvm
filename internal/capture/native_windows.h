@@ -19,6 +19,7 @@ bk_win_frame *bk_win_next(bk_win_capture *, int, char *, size_t);
 bk_win_frame *bk_win_repeat(bk_win_capture *);
 void bk_win_close(bk_win_capture *);
 void bk_win_frame_free(bk_win_frame *);
+bk_win_frame *bk_win_frame_snapshot(bk_win_frame *,char *,size_t);
 uintptr_t bk_win_frame_handle(bk_win_frame *);
 int bk_win_frame_width(bk_win_frame *);
 int bk_win_frame_height(bk_win_frame *);

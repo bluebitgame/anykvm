@@ -101,12 +101,12 @@ func TestVNCSharedDirtyGrid(t *testing.T) {
 	if len(computeDirtyRects(previous, pixels, w, h, 4)) != 0 {
 		t.Fatal("VNC tolerance changed")
 	}
-	for _, encoding := range []int32{encZRLE, encHextile, encZlib, encRaw} {
+	for _, encoding := range []int32{encZRLE, encHextile, encZlib, encRaw, encJPEG, encTight} {
 		if (&client{}).effectiveTileSize(encoding) != 64 {
 			t.Fatalf("encoding %d does not use the 64px grid", encoding)
 		}
 	}
-	for _, encoding := range []int32{encJPEG, encTight, encH264} {
+	for _, encoding := range []int32{encH264} {
 		if (&client{}).effectiveTileSize(encoding) != 0 {
 			t.Fatal("encoded video enabled pixel diffing")
 		}
@@ -151,26 +151,4 @@ func vncPixelFixture(w, h int, pattern string) []byte {
 		pixels[i*4], pixels[i*4+1], pixels[i*4+2], pixels[i*4+3] = byte(color), byte(color>>8), byte(color>>16), byte(i)
 	}
 	return pixels
-}
-
-func BenchmarkVNCSharedPixels(b *testing.B) {
-	const w, h = 1280, 720
-	for _, pattern := range []string{"solid", "noise"} {
-		pixels := vncPixelFixture(w, h, pattern)
-		previous := append([]byte(nil), pixels...)
-		b.Run(pattern+"/dirty", func(b *testing.B) {
-			b.SetBytes(int64(len(pixels)))
-			b.ReportAllocs()
-			for n := 0; n < b.N; n++ {
-				computeDirtyRects(previous, pixels, w, h, 0)
-			}
-		})
-		b.Run(pattern+"/zrle", func(b *testing.B) {
-			b.SetBytes(int64(len(pixels)))
-			b.ReportAllocs()
-			for n := 0; n < b.N; n++ {
-				buildZRLETiles(pixels, w, h, defaultPixelFormat())
-			}
-		})
-	}
 }

@@ -1,5 +1,9 @@
 package hid
 
+// PCScanCode returns a USB HID usage as a PC set-1 scan code.
+// Bit 8 marks E0; 0x200 denotes the special Pause sequence. Zero is unsupported.
+func PCScanCode(code uint8) uint16 { return windowsScanCodes[code] }
+
 // USB HID usages to PC set-1 scan codes; bit 8 marks the E0 prefix.
 // Physical scan codes preserve the target's keyboard layout.
 func windowsScanCode(code uint8) uint16 {

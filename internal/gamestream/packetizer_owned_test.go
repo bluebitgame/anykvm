@@ -54,35 +54,3 @@ func TestPooledPacketBatchesRemainIndependent(t *testing.T) {
 		}
 	}
 }
-
-func BenchmarkVideoPacketBuffers(b *testing.B) {
-	for _, encrypted := range []bool{false, true} {
-		for _, pooled := range []bool{false, true} {
-			name := map[bool]string{false: "plain", true: "AES-GCM"}[encrypted] + "/" + map[bool]string{false: "allocate", true: "reuse"}[pooled]
-			b.Run(name, func(b *testing.B) {
-				v := &videoPacketizer{}
-				if encrypted {
-					block, _ := aes.NewCipher(make([]byte, 16))
-					v.gcm, _ = cipher.NewGCM(block)
-				}
-				data := make([]byte, 41667) // Average access unit at 20 Mbps, 60 fps.
-				b.ReportAllocs()
-				b.SetBytes(int64(len(data)))
-				b.ResetTimer()
-				for range b.N {
-					if pooled {
-						batch, err := v.packBatch(data, false, 0, 1024, 2)
-						if err != nil {
-							b.Fatal(err)
-						}
-						batch.Release()
-					} else {
-						if _, err := v.pack(data, false, 0, 1024, 2); err != nil {
-							b.Fatal(err)
-						}
-					}
-				}
-			})
-		}
-	}
-}

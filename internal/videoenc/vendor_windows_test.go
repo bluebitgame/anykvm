@@ -20,6 +20,9 @@ func TestWindowsVendorNative(t *testing.T) {
 		t.Skip("set ANYKVM_TEST_WINDOWS_VENDOR=nvenc,amf,qsv (choose installed GPUs) on Windows")
 	}
 	codecs := []string{"h264"}
+	if os.Getenv("ANYKVM_TEST_VENDOR_HEVC") != "" {
+		codecs = append(codecs, "hevc")
+	}
 	if os.Getenv("ANYKVM_TEST_VENDOR_AV1") != "" {
 		codecs = append(codecs, "av1")
 	}

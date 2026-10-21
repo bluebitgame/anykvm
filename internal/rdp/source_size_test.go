@@ -8,6 +8,79 @@ import (
 	"time"
 )
 
+func TestRDPOutputSizeAllowsReductionButNeverEnlarges(t *testing.T) {
+	c := &client{}
+	for _, tc := range []struct{ requestW, requestH, wantW, wantH int }{
+		{2560, 1440, 1920, 1080},
+		{1280, 720, 1280, 720},
+		{2560, 720, 1920, 1080},
+	} {
+		c.setOutputSize(tc.requestW, tc.requestH)
+		for _, format := range []capture.VideoFormat{capture.FormatRaw, capture.FormatJPEG, capture.FormatYUV, capture.FormatSurface} {
+			f := bridge.Frame{Width: 1920, Height: 1080, SourceWidth: 1920, SourceHeight: 1080, Format: format, PreserveSource: true}
+			w, h := c.bitmapOutputSize(f, f.Width, f.Height)
+			vw, vh := c.videoOutputSize(f)
+			if w != tc.wantW || h != tc.wantH || vw != w || vh != h {
+				t.Fatalf("format=%v request=%dx%d got bitmap=%dx%d video=%dx%d", format, tc.requestW, tc.requestH, w, h, vw, vh)
+			}
+		}
+	}
+	// Source-sized H.264 must no longer wait forever for an oversized layout.
+	c.setOutputSize(2560, 1440)
+	f := bridge.Frame{Format: capture.FormatH264, Width: 1920, Height: 1080, SourceWidth: 1920, SourceHeight: 1080, CaptureScalesOutput: true}
+	w, h := c.videoOutputSize(f)
+	v := videoPipeline{outputW: w, outputH: h}
+	if v.waitingForCaptureSize(f) {
+		t.Fatal("waiting for an impossible upscale")
+	}
+	// A previously reduced canvas is not enlarged while capture reopens.
+	f.Width, f.Height = 1280, 720
+	if w, h := c.bitmapOutputSize(f, f.Width, f.Height); w != 1280 || h != 720 {
+		t.Fatal("enlarged an old frame")
+	}
+}
+
+func TestRDPTargetLimitMatchesNativeCaptureAndBitmapOutput(t *testing.T) {
+	c := &client{}
+	f := bridge.Frame{Format: capture.FormatH264, Width: 1440, Height: 900,
+		SourceWidth: 2880, SourceHeight: 1800, CaptureScalesOutput: true, OutputMaxW: 1440, OutputMaxH: 900}
+	for _, tc := range []struct{ rw, rh, w, h int }{{2560, 1440, 1440, 900}, {1280, 720, 1280, 720}, {3840, 2160, 1440, 900}} {
+		c.setOutputSize(tc.rw, tc.rh)
+		w, h := c.videoOutputSize(f)
+		if w != tc.w || h != tc.h {
+			t.Fatalf("%+v: video=%dx%d", tc, w, h)
+		}
+		v := videoPipeline{outputW: w, outputH: h}
+		current := f
+		current.Width, current.Height = tc.w, tc.h
+		if v.waitingForCaptureSize(current) {
+			t.Fatal("waiting for a client canvas larger than Target")
+		}
+		for _, format := range []capture.VideoFormat{capture.FormatRaw, capture.FormatYUV, capture.FormatJPEG, capture.FormatSurface} {
+			pixels := f
+			pixels.Format, pixels.Width, pixels.Height = format, 2880, 1800
+			if bw, bh := c.bitmapOutputSize(pixels, pixels.Width, pixels.Height); bw != w || bh != h {
+				t.Fatalf("format=%v bitmap=%dx%d video=%dx%d", format, bw, bh, w, h)
+			}
+		}
+	}
+	c.setOutputSize(2560, 1440)
+	f.OutputMaxW, f.OutputMaxH = 1441, 901
+	if w, h := c.videoOutputSize(f); w != 1440 || h != 900 {
+		t.Fatalf("AVC padding exceeded odd limit: %dx%d", w, h)
+	}
+	f.PreserveSource, f.CaptureScalesOutput = true, false
+	f.Width, f.Height = 2560, 1440
+	if w, h := c.videoOutputSize(f); w > 1441 || h > 901 {
+		t.Fatal("passthrough bypassed explicit Target ceiling")
+	}
+	f.OutputMaxW = 1
+	v := videoPipeline{outputW: 1, outputH: 900}
+	if data, _, _, err := v.frame(f, 1000, 60); err == nil || len(data) != 0 {
+		t.Fatal("tiny ceiling silently rounded up")
+	}
+}
+
 func TestRDPFixedSourceSwitchKeepsNativeH264WithoutConversion(t *testing.T) {
 	c := channelTestClient()
 	conn := &surfaceTestConn{frames: make(chan struct{}, 4)}

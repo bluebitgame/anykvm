@@ -50,7 +50,16 @@ func (d *kmsDevice) SetVideoCodec(v string)                      { d.enc.SetVide
 func (d *kmsDevice) SetVideoBitrate(v int)                       { d.enc.SetVideoBitrate(v) }
 func (d *kmsDevice) SetVideoChroma(v string)                     { d.enc.SetVideoChroma(v) }
 func (d *kmsDevice) SetVideoStreamOptions(v *VideoStreamOptions) { d.enc.SetVideoStreamOptions(v) }
+func (d *kmsDevice) SetOutputDownscaleOnly(v bool)               { d.enc.outputDownscaleOnly = v }
 func (d *kmsDevice) SetOutputSize(w, h int)                      { d.enc.targetW, d.enc.targetH = w, h }
+func (d *kmsDevice) SetOutputSizeLimit(w, h int)                 { d.enc.SetOutputSizeLimit(w, h) }
+func (d *kmsDevice) SetGPUSurface(v bool)                        { d.enc.gpuSurface = v }
+
+func (d *kmsDevice) SupportsVideoCodec(codec string) bool { return d.enc.SupportsVideoCodec(codec) }
+
+func (d *kmsDevice) SupportsGameStreamAV1() bool { return videoenc.SupportsAV1() }
+
+func (d *kmsDevice) SupportsGameStreamHEVC() bool { return videoenc.SupportsHEVC() }
 
 // KMS capture omits the cursor plane.
 func (d *kmsDevice) SetHideCursor(bool) {}
@@ -109,7 +118,9 @@ func (d *kmsDevice) OpenWithFormat(w, h, fps int) error {
 	d.enc.requestedRate = rate
 	d.enc.inputFPS = rate
 	d.enc.scalableInput = true
-	d.enc.targetW, d.enc.targetH = w, h
+	if !d.enc.outputDownscaleOnly {
+		d.enc.targetW, d.enc.targetH = w, h
+	}
 	d.enc.closed.Store(false)
 	log.Printf("capture: Linux KMS %q %s connector=%d primary-plane=%d %dx%d@%d/%d (DMA-BUF; cursor omitted)", d.id, C.GoString(&d.output.card[0]), d.output.connector, d.output.plane, d.output.width, d.output.height, rate.Num, rate.Den)
 	return nil
@@ -143,6 +154,8 @@ func (d *kmsDevice) Capture() (*Frame, error) {
 	out, err := d.enc.encodeMediaFrame(frame)
 	if out != nil {
 		out.nativeBuffer = nil
+	}
+	if err == nil && (out != nil || d.enc.gpuSurface) {
 		d.pacer.accepted(now, d.rate.Interval())
 	}
 	if err != nil {
@@ -180,6 +193,33 @@ type kmsFrame struct {
 }
 
 func (f *kmsFrame) DRMDevice() (uint32, uint32) { return f.source.DeviceMajor, f.source.DeviceMinor }
+func (f *kmsFrame) SnapshotSurface() (*gpuconv.Surface, *framebuf.Buffer, bool, error) {
+	d := f.device
+	if d.enc.gpuSurfaceLeases.Load() >= 4 {
+		return nil, nil, true, nil
+	}
+	if d.converter == nil {
+		var err error
+		d.converter, err = gpuconv.New(f.source.DeviceMajor, f.source.DeviceMinor)
+		if err != nil {
+			return nil, nil, true, err
+		}
+	}
+	w, h := int(d.output.width), int(d.output.height)
+	if w*h > (64<<20)/4 {
+		return nil, nil, true, fmt.Errorf("GPU capture surface exceeds 64 MiB")
+	}
+	// Convert performs a GPU copy while the producer's DMA-BUF read fence is
+	// held. The resulting allocation is immutable even if the scanout is reused.
+	i, err := d.converter.Convert(f.source, w, h, false)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	d.enc.gpuSurfaceLeases.Add(1)
+	owner := framebuf.New(nil, func() { i.Close(); d.enc.gpuSurfaceLeases.Add(-1) })
+	d.gpuFrames++
+	return &gpuconv.Surface{Width: w, Height: h, Image: i}, owner, true, nil
+}
 func (f *kmsFrame) Submit(videoenc.PixelBufferSubmitter, uint64, bool) (bool, error) {
 	return false, fmt.Errorf("KMS uses DMA-BUF images")
 }
@@ -200,6 +240,8 @@ func (f *kmsFrame) EncodeTexture(e videoenc.Encoder, key bool) ([]byte, bool, er
 	return nil, false, nil
 }
 
+func (*kmsFrame) JPEGEncoderName() string { return "Vulkan Compute JPEG" }
+
 func (f *kmsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer, bool, error) {
 	d := f.device
 	if d.jpegDisabled || os.Getenv("ANYKVM_LINUX_GPU_JPEG") == "0" {
@@ -209,7 +251,8 @@ func (f *kmsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer, boo
 	if d.jpegEncoder == nil {
 		d.jpegEncoder, err = jpegcodec.NewVulkanEncoder(f.source.DeviceMajor, f.source.DeviceMinor)
 		if err == nil {
-			log.Printf("capture: KMS Vulkan Compute JPEG (GPU DCT/quantization/Huffman)")
+			major, minor := d.jpegEncoder.DRMDevice()
+			log.Printf("capture: Vulkan JPEG DRM source=%d:%d renderer=%d:%d", f.source.DeviceMajor, f.source.DeviceMinor, major, minor)
 		}
 	}
 	var data []byte
@@ -238,7 +281,7 @@ func (f *kmsFrame) Materialize(out *Frame) error {
 		d.converter = converter
 		log.Printf("capture: KMS Vulkan BGRA readback for CPU/JPEG or non-DMA-BUF encoder consumer")
 	}
-	w, h := fitCaptureSize(out.Width, out.Height, d.enc.targetW, d.enc.targetH)
+	w, h := d.enc.fitOutputSize(out.Width, out.Height)
 	converted, err := d.converter.Convert(f.source, w, h, false)
 	if err != nil {
 		return err

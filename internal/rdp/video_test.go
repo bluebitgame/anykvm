@@ -268,7 +268,8 @@ func TestH264DisplayControlResizeWithoutConversion(t *testing.T) {
 	defer func() { c.close(); <-result }()
 	idr := join([]byte{0, 0, 1, 0x67, 66, 0, 31, 0x80}, []byte{0, 0, 1, 0x68, 0xce}, []byte{0, 0, 1, 0x65, 0x80})
 	push := func(w, h int, data []byte) {
-		c.frames <- bridge.Frame{CaptureScalesOutput: true, Format: capture.FormatH264, Width: w, Height: h, Data: data}
+		c.frames <- bridge.Frame{CaptureScalesOutput: true, Format: capture.FormatH264, Width: w, Height: h,
+			SourceWidth: 1920, SourceHeight: 1080, Data: data}
 	}
 	wait := func(w, h int) {
 		t.Helper()

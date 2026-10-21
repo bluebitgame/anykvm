@@ -50,6 +50,17 @@ func resultSession(p *C.bm_session, msg *C.char) (*Session, error) {
 	}
 	return &Session{ptr: p}, nil
 }
+
+// HasEncoder checks the library declaration without opening an encoder.
+func HasEncoder(name string) bool {
+	if Available() != nil {
+		return false
+	}
+	p := C.CString(name)
+	defer C.free(unsafe.Pointer(p))
+	return C.bm_has_encoder(p) != 0
+}
+
 func NewEncoder(o VideoOptions) (*Session, error) {
 	o.Rate = o.Rate.Or(o.FPS)
 	if err := Available(); err != nil {

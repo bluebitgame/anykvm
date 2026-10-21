@@ -16,6 +16,8 @@ func TestWindowsEncoderFallback(t *testing.T) {
 		{"system software before x264", "h264", "mf-software", []string{"h264_nvenc", "h264_amf", "h264_qsv", "mf-hardware", "mf-software"}},
 		{"x264 last", "h264", "libx264", []string{"h264_nvenc", "h264_amf", "h264_qsv", "mf-hardware", "mf-software", "libx264"}},
 		{"all fail", "h264", "", []string{"h264_nvenc", "h264_amf", "h264_qsv", "mf-hardware", "mf-software", "libx264"}},
+		{"HEVC hardware", "hevc", "mf-hardware", []string{"hevc_nvenc", "hevc_amf", "hevc_qsv", "mf-hardware"}},
+		{"HEVC has no software fallback", "hevc", "", []string{"hevc_nvenc", "hevc_amf", "hevc_qsv", "mf-hardware"}},
 		{"AV1 hardware", "av1", "mf-hardware", []string{"av1_nvenc", "av1_amf", "av1_qsv", "mf-hardware"}},
 		{"AV1 has no software fallback", "av1", "", []string{"av1_nvenc", "av1_amf", "av1_qsv", "mf-hardware"}},
 	} {

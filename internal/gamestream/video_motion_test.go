@@ -19,7 +19,11 @@ import (
 
 // Exercise changing source frames and P-frame decoding; a first-IDR-only test
 // cannot detect a stream which displays one frame then freezes.
-func TestVideoMotionAcrossFrames(t *testing.T) {
+func TestVideoMotionAcrossFrames(t *testing.T) { testVideoMotionAcrossFrames(t, "h264") }
+
+func TestHEVCVideoMotionAcrossFrames(t *testing.T) { testVideoMotionAcrossFrames(t, "hevc") }
+
+func testVideoMotionAcrossFrames(t *testing.T, codec string) {
 	ff := os.Getenv("ANYKVM_TEST_FFMPEG")
 	if ff == "" {
 		t.Skip("set ANYKVM_TEST_FFMPEG")
@@ -52,14 +56,15 @@ func TestVideoMotionAcrossFrames(t *testing.T) {
 	x := &streamSession{
 		server: &Server{videoSocket: socket}, ctx: ctx,
 		options: streamOptions{
-			Width: 320, Height: 240, FPS: 30, Bitrate: 2000,
+			Width: 320, Height: 240, FPS: 30, Bitrate: 2000, Codec: codec,
 			PacketSize: packetSize, MinFEC: 2,
 		},
 		videoPeer: peer.LocalAddr().(*net.UDPAddr),
 		frames:    make(chan bridge.Frame, 1), keyframe: make(chan struct{}, 1),
 	}
 	done := make(chan error, 1)
-	go func() { _, err := x.encodeVideo(makeFrame(true), &videoPacketizer{}, time.Now()); done <- err }()
+	x.frames <- makeFrame(true)
+	go func() { x.videoLoop(); done <- nil }()
 	defer func() {
 		cancel()
 		if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
@@ -105,7 +110,7 @@ func TestVideoMotionAcrossFrames(t *testing.T) {
 			}
 		}
 	}
-	decode := exec.CommandContext(ctx, ff, "-hide_banner", "-loglevel", "error", "-xerror", "-f", "h264", "-i", "pipe:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+	decode := exec.CommandContext(ctx, ff, "-hide_banner", "-loglevel", "error", "-xerror", "-f", codec, "-i", "pipe:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
 	decode.Stdin = bytes.NewReader(stream)
 	var stderr bytes.Buffer
 	decode.Stderr = &stderr

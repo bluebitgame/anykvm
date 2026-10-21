@@ -4,6 +4,7 @@ import (
 	"anykvm/internal/avmedia"
 	"anykvm/internal/framerate"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/netstats"
 	"anykvm/internal/videoenc"
 	"bytes"
 	"crypto/aes"
@@ -17,6 +18,10 @@ import (
 )
 
 func (x *streamSession) videoLoop() {
+	x.videoLoopUsing(videoenc.New)
+}
+
+func (x *streamSession) videoLoopUsing(newEncoder func(videoenc.Options) (videoenc.Encoder, error)) {
 	var first bridge.Frame
 	defer func() { first.Release() }()
 	// A direct sender-driven stream cannot necessarily fulfill a decoder's IDR
@@ -62,12 +67,7 @@ func (x *streamSession) videoLoop() {
 		if first.Format == capture.FormatH264 || first.Format == capture.FormatHEVC || first.Format == capture.FormatAV1 {
 			next, err = x.streamEncodedVideo(first, v, epoch)
 		} else {
-			if x.options.Codec == "hevc" {
-				next = first
-				err = errors.New("HEVC source did not produce encoded video")
-			} else {
-				next, err = x.encodeVideo(first, v, epoch)
-			}
+			next, err = x.encodeVideoUsing(first, v, epoch, newEncoder)
 		}
 		first = next
 		if waitingForSource && err == nil && x.ctx.Err() == nil && next.Width > 0 {
@@ -117,7 +117,9 @@ func (x *streamSession) encodeVideoUsing(first bridge.Frame, v *videoPacketizer,
 		return first, err
 	}
 	defer encoder.Close()
-	log.Printf("gamestream: in-process video encoder %s", encoder.Name())
+	var jpegDecoder jpegcodec.VideoDecoder
+	defer jpegDecoder.Close()
+	x.logVideoEncoder(o.Codec, encoder.Name())
 	x.input.geometryMu.Lock()
 	x.input.sourceW = first.Width
 	x.input.sourceH = first.Height
@@ -173,18 +175,16 @@ func (x *streamSession) encodeVideoUsing(first bridge.Frame, v *videoPacketizer,
 			}
 		}
 		pixels := current.Data
+		pixelFormat, pixelW, pixelH := "bgra", current.Width, current.Height
 		if current.Format == capture.FormatJPEG {
-			decoded, w, h, err := jpegcodec.DecodeBGRA(current.Data)
+			decoded, err := jpegDecoder.Decode(current.Data, current.Width, current.Height, o.Width, o.Height)
 			if err != nil {
 				return current, err
 			}
-			if w != current.Width || h != current.Height {
-				return current, errors.New("JPEG dimensions mismatch")
-			}
-			pixels = decoded
+			pixels, pixelFormat, pixelW, pixelH = decoded.Data, decoded.Format, decoded.Width, decoded.Height
 		}
 		encodeStart := time.Now()
-		encoded, err := videoenc.EncodePixelsOwned(encoder, o, pixels, current.Width, current.Height, "bgra", force)
+		encoded, err := videoenc.EncodePixelsOwned(encoder, o, pixels, pixelW, pixelH, pixelFormat, force)
 		maxEncode = max(maxEncode, time.Since(encodeStart))
 		if err != nil {
 			return current, err
@@ -252,7 +252,7 @@ func (x *streamSession) encodeVideoUsing(first bridge.Frame, v *videoPacketizer,
 			idrs++
 		}
 		if elapsed := now.Sub(statsStart); elapsed >= 5*time.Second {
-			log.Printf("gamestream: encoded video %.1f fps source=%dx%d output=%dx%d idrs=%d max_gap=%.1fms max_encode=%.1fms max_pacing=%.1fms max_packetize_send=%.1fms", float64(frames)/elapsed.Seconds(), current.Width, current.Height, o.Width, o.Height, idrs, float64(maxGap)/float64(time.Millisecond), float64(maxEncode)/float64(time.Millisecond), float64(maxPacing)/float64(time.Millisecond), float64(maxSend)/float64(time.Millisecond))
+			log.Printf("gamestream: video %.1f fps source=%dx%d output=%dx%d idrs=%d max_gap=%.1fms max_encode=%.1fms max_pacing=%.1fms max_packetize_send=%.1fms", float64(frames)/elapsed.Seconds(), current.Width, current.Height, o.Width, o.Height, idrs, float64(maxGap)/float64(time.Millisecond), float64(maxEncode)/float64(time.Millisecond), float64(maxPacing)/float64(time.Millisecond), float64(maxSend)/float64(time.Millisecond))
 			statsStart, frames, idrs = now, 0, 0
 			maxGap, maxEncode, maxPacing, maxSend = 0, 0, 0, 0
 		}
@@ -400,7 +400,9 @@ func (x *streamSession) nativeAudioLoop(newEncoder func() (nativeOpusEncoder, er
 				continue
 			}
 			for _, p := range packets {
-				if _, err := x.server.audioSocket.WriteToUDP(p, peer); err != nil {
+				n, err := x.server.audioSocket.WriteToUDP(p, peer)
+				netstats.Add(n)
+				if err != nil {
 					return err
 				}
 			}

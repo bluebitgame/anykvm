@@ -15,12 +15,25 @@ import (
 	"unsafe"
 )
 
-// JPEGEncoder owns a compute-only device matching the captured DRM GPU.
+// JPEGEncoder owns a compute-only device associated with the captured DRM
+// source, including the split vc4 display/v3d renderer on Raspberry Pi 4/5.
 // Intermediate coefficients and Huffman segments never leave device memory.
 type JPEGEncoder struct {
 	mu           sync.Mutex
 	ptr          *C.bk_vk
-	major, minor uint32
+	major, minor uint32 // Capture source identity; the renderer may be a different DRM device.
+}
+
+// DRMDevice identifies the selected renderer, which can differ from the source.
+func (e *JPEGEncoder) DRMDevice() (uint32, uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ptr == nil {
+		return 0, 0
+	}
+	var major, minor C.uint32_t
+	C.bk_vk_drm_device(e.ptr, &major, &minor)
+	return uint32(major), uint32(minor)
 }
 
 // Stages are transform, MCU Huffman coding, offset scan and JPEG packing.
@@ -46,7 +59,7 @@ func NewJPEGEncoder(major, minor uint32, stages [4][]byte) (*JPEGEncoder, error)
 	return &JPEGEncoder{ptr: ptr, major: major, minor: minor}, nil
 }
 
-func (e *JPEGEncoder) EncodeSource(frame dmabuf.Frame, width, height int, quantization [128]uint32, huffman [1024]uint32, header []byte) ([]byte, error) {
+func (e *JPEGEncoder) EncodeSource(frame dmabuf.Frame, width, height int, quantization *[128]uint32, huffman *[3072]uint32, header []byte) ([]byte, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.ptr == nil {
@@ -56,9 +69,9 @@ func (e *JPEGEncoder) EncodeSource(frame dmabuf.Frame, width, height int, quanti
 		return nil, err
 	}
 	if frame.DeviceMajor != e.major || frame.DeviceMinor != e.minor {
-		return nil, fmt.Errorf("Vulkan JPEG source does not match encoder DRM device")
+		return nil, fmt.Errorf("Vulkan JPEG source does not match configured capture DRM device")
 	}
-	if width < 1 || height < 1 || width > 8192 || height > 8192 || len(header) < 2 || len(header) > 1024 ||
+	if quantization == nil || huffman == nil || width < 1 || height < 1 || width > 8192 || height > 8192 || len(header) < 2 || len(header) > 1024 ||
 		((width+15)/16)*((height+15)/16) > (128<<20)/3072 {
 		return nil, fmt.Errorf("invalid Vulkan JPEG frame or segment storage")
 	}

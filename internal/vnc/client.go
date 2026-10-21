@@ -79,6 +79,7 @@ type client struct {
 
 	lastEnc    int32 // last chosen frame encoding (for change logging)
 	lastEncSet bool
+	lastFormat capture.VideoFormat
 
 	mouseX, mouseY int // previous absolute position for computing deltas
 	lastButtons    uint8
@@ -99,8 +100,10 @@ type client struct {
 	qemuMouseRel  bool // client advertised -263 in SetEncodings
 	mouseRelative bool // server has requested relative mouse mode via QEMU message
 
-	cursorCap capture.CursorCapture
-	curLogged bool
+	cursorCap  capture.CursorCapture
+	curLogged  bool
+	cursorHash [32]byte
+	cursorSent bool
 }
 
 type frameData struct {
@@ -487,6 +490,7 @@ func (c *client) readLoop() {
 			pf := parsePixelFormat(buf[3:19])
 			c.encMu.Lock()
 			c.pixelFmt = pf
+			c.needFull = true
 			c.encMu.Unlock()
 			// Note: the persistent zlib/ZRLE streams must NOT be reset here.
 			// A pixel-format change is byte-transparent to zlib; injecting a
@@ -514,6 +518,7 @@ func (c *client) readLoop() {
 			c.encMu.Lock()
 			c.encodings = encs
 			c.jpegQuality = jpegQualityFromEncodings(encs)
+			c.needFull = true
 			c.encMu.Unlock()
 			c.logEncodingList(encs)
 			c.refreshPixelNeed()
@@ -740,11 +745,14 @@ func (c *client) sendEndOfContinuousUpdates() {
 }
 
 func (c *client) writeLoop() {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.done:
 			return
 		case <-c.wake:
+		case <-ticker.C:
 		}
 
 		for {
@@ -774,6 +782,20 @@ func (c *client) writeLoop() {
 			}
 			c.sendFrame(frame)
 			frame.release()
+		}
+		// Cursor updates are independent of desktop pixels. Reserve a pending
+		// request before writing; a new request arriving during the write survives.
+		c.stateMu.Lock()
+		pending := c.pendingReq
+		allowed := pending || c.contUpdates || (c.forceContinuous && c.started)
+		if allowed {
+			c.pendingReq = false
+		}
+		c.stateMu.Unlock()
+		if allowed && !c.sendCursorIfChanged() && pending {
+			c.stateMu.Lock()
+			c.pendingReq = true
+			c.stateMu.Unlock()
 		}
 	}
 }
@@ -814,7 +836,11 @@ func (c *client) sendFrame(frame *frameData) {
 		c.stateMu.Unlock()
 		return
 	}
-	if frame.format == capture.FormatJPEG && enc != encJPEG && enc != encTight {
+	// A server quality lock must also apply to compressed capture input.
+	// Decode here when the source cannot provide raw pixels (or a stale MJPEG
+	// frame races with the raw-pixel request), then encode dirty rectangles at
+	// the locked quality instead of silently forwarding source-quality JPEG.
+	if frame.format == capture.FormatJPEG && (c.jpegLock > 0 || (enc != encJPEG && enc != encTight)) {
 		pixels, w, h, err := jpegcodec.DecodeBGRA(frame.data)
 		if err != nil || w != int(frame.width) || h != int(frame.height) {
 			c.close()
@@ -828,16 +854,19 @@ func (c *client) sendFrame(frame *frameData) {
 	// Open H.264 forwards the capture-produced access unit directly as a single
 	// full-framebuffer rectangle, bypassing the dirty-rect machinery.
 	if enc == encH264 {
-		c.logEncoding(enc, pf)
+		c.logEncoding(enc, pf, frame.format)
 		// Each frame.data from readH264Frame is already a complete access unit
 		// (extracted by the push-based Annex-B parser in capture_ffmpeg.go).
 		c.sendH264Update(int(frame.width), int(frame.height), frame.data, 0)
 		return
 	}
 
-	// Pixel encodings share 64px dirty detection. Hextile still uses 16px wire
-	// tiles inside each sent rectangle; encoded video bypasses pixel diffing.
+	// Raw pixels share 64px dirty detection, including JPEG rectangle encoding.
+	// Already compressed MJPEG remains whole-frame passthrough.
 	effTile := c.effectiveTileSize(enc)
+	if frame.format == capture.FormatJPEG {
+		effTile = 0
+	}
 
 	// A full refresh is forced on the first frame, size change, pixel-format
 	// change, or when the client requested a non-incremental update.
@@ -864,12 +893,19 @@ func (c *client) sendFrame(frame *frameData) {
 			// Nothing changed within tolerance: keep the existing baseline
 			// (do NOT overwrite it, so sub-tolerance drift accumulates against
 			// the last transmitted pixels and self-corrects once it exceeds
-			// the tolerance) and skip sending.
+			// the tolerance) and skip sending. Preserve the outstanding request
+			// so a later changed frame can satisfy a request-driven viewer.
+			c.stateMu.Lock()
+			c.pendingReq = true
+			c.stateMu.Unlock()
 			return
 		}
 	}
 
-	c.logEncoding(enc, pf)
+	if effTile > 0 && (enc == encJPEG || enc == encTight) {
+		rects = splitJPEGRects(rects)
+	}
+	c.logEncoding(enc, pf, frame.format)
 
 	var curEnc int32
 	var curData []byte
@@ -899,11 +935,10 @@ func (c *client) sendFrame(frame *frameData) {
 }
 
 // effectiveTileSize returns the tile size used for dirty-region detection for
-// the given encoding. ZRLE, Hextile, Zlib and Raw use shared 64px detection.
-// JPEG/Tight and H.264 forward encoded pictures without raw-pixel comparisons.
+// the given encoding on raw pixels. Compressed source frames bypass detection.
 func (c *client) effectiveTileSize(enc int32) int {
 	switch enc {
-	case encZRLE, encHextile, encZlib, encRaw:
+	case encZRLE, encHextile, encZlib, encRaw, encJPEG, encTight:
 		return pixelops.BlockSize
 	default:
 		return 0
@@ -947,42 +982,38 @@ func (c *client) updatePrevRects(frame *frameData, rects []rectangle) {
 // capabilities. The capture format is driven by prior negotiation (H.264 want,
 // pixel need), so it always matches what the client can consume.
 func (c *client) chooseEncoding(pf pixelFormat, frame *frameData) int32 {
-	switch frame.format {
-	case capture.FormatH264:
-		// Forward the capture-produced H.264 access unit as-is.
+	if frame.format == capture.FormatH264 {
 		if c.supportsOpenH264() && len(frame.data) > 0 {
 			return encH264
 		}
 		return encRaw
-	case capture.FormatJPEG:
-		if c.supportsTight() && c.supportsJPEGQuality() && pf.bpp >= 2 {
-			return encTight
-		}
-		if c.hasEncoding(encJPEG) && pf.bpp >= 2 {
-			return encJPEG
-		}
-		fallthrough // Decode JPEG to pixels when optional JPEG paths are disabled.
-	default: // capture.FormatRaw
-		if c.supportsZRLE() {
-			return encZRLE
-		}
-		if c.supportsZlib() {
-			return encZlib
-		}
-		if c.supportsHextile() {
-			return encHextile
-		}
-		return encRaw
 	}
+	// JPEG-capable viewers accept either whole-frame MJPEG passthrough or
+	// independently encoded dirty rectangles from raw capture pixels.
+	if c.supportsTight() && c.supportsJPEGQuality() && pf.bpp >= 2 {
+		return encTight
+	}
+	if c.supportsJPEG() && pf.bpp >= 2 {
+		return encJPEG
+	}
+	if c.supportsZRLE() {
+		return encZRLE
+	}
+	if c.supportsZlib() {
+		return encZlib
+	}
+	if c.supportsHextile() {
+		return encHextile
+	}
+	return encRaw
 }
 
 // refreshPixelNeed recomputes whether this client requires raw pixels and, if
 // the value changed, reports it upward via the server callback.
 //
-// Pixels are NOT required only when the client will use a whole-frame JPEG/Tight
-// encoding: those encodings forward the capture device's MJPEG as-is, so raw
-// pixels (and hence JPEG decoding in the capture layer) can be skipped. Any
-// other encoding (ZRLE/Zlib/Hextile/Raw, which are pixel-based) needs pixels.
+// JPEG/Tight viewers can accept device MJPEG without raw pixels when quality
+// is unlocked. A server quality lock requests pixels for dirty JPEG encoding;
+// sendFrame also decodes any compressed frames the source still supplies.
 func (c *client) refreshPixelNeed() {
 	c.encMu.Lock()
 	pf := c.pixelFmt
@@ -991,9 +1022,10 @@ func (c *client) refreshPixelNeed() {
 	}
 	jpegOnly := ((c.hasEncodingLocked(encTight) && c.jpegQualityLocked()) ||
 		c.hasEncodingLocked(encJPEG)) && pf.bpp >= 2
+	qualityLocked := c.jpegLock > 0
 	c.encMu.Unlock()
 
-	need := !jpegOnly
+	need := !jpegOnly || qualityLocked
 
 	c.stateMu.Lock()
 	changed := !c.pixelNeedSet || c.pixelNeed != need
@@ -1062,7 +1094,7 @@ func (c *client) jpegQualityLocked() bool {
 }
 
 // sendRects encodes the given rectangles with the chosen encoding and writes a
-// single FramebufferUpdate message. Returns false on write error.
+// single FramebufferUpdate message. Returns false on encoding or write error.
 func (c *client) sendRects(enc int32, frame *frameData, pf pixelFormat, rects []rectangle) bool {
 	var buf bytes.Buffer
 
@@ -1073,7 +1105,11 @@ func (c *client) sendRects(enc int32, frame *frameData, pf pixelFormat, rects []
 	buf.Write(hdr[:])
 
 	for _, r := range rects {
-		c.encodeRect(&buf, enc, frame, pf, r)
+		if err := c.encodeRect(&buf, enc, frame, pf, r); err != nil {
+			c.logf("encode rectangle: %v", err)
+			c.close()
+			return false
+		}
 	}
 
 	var started time.Time
@@ -1090,7 +1126,7 @@ func (c *client) sendRects(enc int32, frame *frameData, pf pixelFormat, rects []
 }
 
 // encodeRect appends one rectangle (header + encoded body) to buf.
-func (c *client) encodeRect(buf *bytes.Buffer, enc int32, frame *frameData, pf pixelFormat, r rectangle) {
+func (c *client) encodeRect(buf *bytes.Buffer, enc int32, frame *frameData, pf pixelFormat, r rectangle) error {
 	var rhdr [12]byte
 	binary.BigEndian.PutUint16(rhdr[0:], uint16(r.x))
 	binary.BigEndian.PutUint16(rhdr[2:], uint16(r.y))
@@ -1101,9 +1137,9 @@ func (c *client) encodeRect(buf *bytes.Buffer, enc int32, frame *frameData, pf p
 
 	switch enc {
 	case encTight:
-		c.encodeTightBody(buf, frame, r)
+		return c.encodeTightBody(buf, frame, r)
 	case encJPEG:
-		c.encodeJPEGBody(buf, frame, r)
+		return c.encodeJPEGBody(buf, frame, r)
 	case encZRLE:
 		c.encodeZRLEBody(buf, frame, pf, r)
 	case encZlib:
@@ -1113,20 +1149,36 @@ func (c *client) encodeRect(buf *bytes.Buffer, enc int32, frame *frameData, pf p
 	default:
 		c.encodeRawBody(buf, frame, pf, r)
 	}
+	return nil
 }
 
 // logEncoding logs the chosen frame encoding whenever it changes.
-func (c *client) logEncoding(enc int32, pf pixelFormat) {
-	if c.lastEncSet && c.lastEnc == enc {
+func (c *client) logEncoding(enc int32, pf pixelFormat, format capture.VideoFormat) {
+	if c.lastEncSet && c.lastEnc == enc && c.lastFormat == format {
 		return
 	}
 	c.lastEnc = enc
 	c.lastEncSet = true
+	c.lastFormat = format
+	encoder := "Go"
+	switch enc {
+	case encH264:
+		encoder = "passthrough"
+	case encJPEG, encTight:
+		encoder = jpegcodec.Backend()
+		if format == capture.FormatJPEG {
+			encoder = "passthrough"
+		}
+	case encZlib, encZRLE:
+		encoder = "Go compress/zlib"
+	case encRaw:
+		encoder = "none (pixels)"
+	}
 	if enc == encTight || enc == encJPEG {
-		c.logf("frame encoding: %s (bpp=%d, jpegQuality=%d)",
-			encodingName(enc), pf.bpp*8, c.jpegQualityValue())
+		c.logf("video codec=%s encoder=%q (bpp=%d, jpegQuality=%d)",
+			encodingName(enc), encoder, pf.bpp*8, c.jpegQualityValue())
 	} else {
-		c.logf("frame encoding: %s (bpp=%d)", encodingName(enc), pf.bpp*8)
+		c.logf("video codec=%s encoder=%q (bpp=%d)", encodingName(enc), encoder, pf.bpp*8)
 	}
 }
 
@@ -1326,96 +1378,6 @@ func (c *client) sendDesktopSize(width, height uint16) bool {
 	return true
 }
 
-func (c *client) sendCursorIfChanged() {
-	cs, ok := c.captureCursorState()
-	if !ok {
-		return
-	}
-	enc, data, w, h, hotX, hotY := c.prepareCursor(cs)
-	if enc == 0 {
-		return
-	}
-	if !c.curLogged {
-		c.logf("cursor: %dx%d hot=(%d,%d) size=%d enc=%s", w, h, hotX, hotY, len(data), encodingName(enc))
-		c.curLogged = true
-	}
-
-	var buf bytes.Buffer
-	buf.WriteByte(msgFramebufferUpdate)
-	buf.WriteByte(0)
-	var nr [2]byte
-	binary.BigEndian.PutUint16(nr[:], 1)
-	buf.Write(nr[:])
-
-	var rhdr [12]byte
-	binary.BigEndian.PutUint16(rhdr[0:], hotX)
-	binary.BigEndian.PutUint16(rhdr[2:], hotY)
-	binary.BigEndian.PutUint16(rhdr[4:], w)
-	binary.BigEndian.PutUint16(rhdr[6:], h)
-	binary.BigEndian.PutUint32(rhdr[8:], uint32(enc))
-	buf.Write(rhdr[:])
-	buf.Write(data)
-
-	if err := c.writeFull(buf.Bytes()); err != nil {
-		c.logf("sendCursorUpdate write: %v", err)
-		c.close()
-	}
-}
-
-func (c *client) captureCursorState() (*capture.CursorState, bool) {
-	if c.cursorCap == nil {
-		return nil, false
-	}
-	cs, err := c.cursorCap.Capture()
-	if err != nil || cs == nil || !cs.Changed || cs.Width <= 0 || cs.Height <= 0 {
-		return nil, false
-	}
-	return cs, true
-}
-
-func (c *client) prepareCursor(cs *capture.CursorState) (enc int32, data []byte, w, h, hotX, hotY uint16) {
-	if cs.Width > 128 || cs.Height > 128 || len(cs.Image) != cs.Width*cs.Height*4 {
-		return 0, nil, 0, 0, 0, 0
-	}
-	enc = int32(0)
-	switch {
-	case c.supportsCursorWithAlpha():
-		enc = encCursorWithAlpha
-	case c.supportsCursor():
-		enc = encCursor
-	case c.hasEncoding(encXCursor):
-		enc = encXCursor
-	}
-	if enc == 0 {
-		return 0, nil, 0, 0, 0, 0
-	}
-	if enc == encCursorWithAlpha {
-		var raw [4]byte
-		binary.BigEndian.PutUint32(raw[:], uint32(encRaw))
-		data = append(raw[:], cs.Image...)
-	} else {
-		pf := c.pixelFormatSnapshot()
-		data = pf.convertBGRAToPixel(cs.Image, cs.Width, cs.Height)
-		mask := buildCursorMask(cs.Image, cs.Width, cs.Height)
-		maskLen := ((cs.Width + 7) / 8) * cs.Height
-		data = append(data, mask[:maskLen]...)
-		if len(data) == 0 {
-			return 0, nil, 0, 0, 0, 0
-		}
-	}
-	return enc, data, uint16(cs.Width), uint16(cs.Height), uint16(cs.HotX), uint16(cs.HotY)
-}
-
-func (c *client) writeCursorRectHeader(buf *bytes.Buffer, enc int32, w, h, hotX, hotY uint16) {
-	var rhdr [12]byte
-	binary.BigEndian.PutUint16(rhdr[0:], hotX)
-	binary.BigEndian.PutUint16(rhdr[2:], hotY)
-	binary.BigEndian.PutUint16(rhdr[4:], w)
-	binary.BigEndian.PutUint16(rhdr[6:], h)
-	binary.BigEndian.PutUint32(rhdr[8:], uint32(enc))
-	buf.Write(rhdr[:])
-}
-
 func (c *client) sendFrameUpdate(pixelEnc, curEnc int32, curData []byte, curW, curH, curHotX, curHotY uint16, frame *frameData, pf pixelFormat, rects []rectangle) bool {
 	nr := uint16(len(rects))
 	hasCursor := curEnc != 0
@@ -1435,7 +1397,11 @@ func (c *client) sendFrameUpdate(pixelEnc, curEnc int32, curData []byte, curW, c
 		buf.Write(curData)
 	}
 	for _, r := range rects {
-		c.encodeRect(&buf, pixelEnc, frame, pf, r)
+		if err := c.encodeRect(&buf, pixelEnc, frame, pf, r); err != nil {
+			c.logf("encode rectangle: %v", err)
+			c.close()
+			return false
+		}
 	}
 
 	var started time.Time
@@ -1451,20 +1417,6 @@ func (c *client) sendFrameUpdate(pixelEnc, curEnc int32, curData []byte, curW, c
 	return true
 }
 
-func buildCursorMask(bgra []byte, w, h int) []byte {
-	rowBytes := (w + 7) / 8
-	mask := make([]byte, rowBytes*h)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			alpha := bgra[(y*w+x)*4+3]
-			if alpha >= 64 {
-				mask[y*rowBytes+x/8] |= 1 << (7 - (x % 8))
-			}
-		}
-	}
-	return mask
-}
-
 // encodeRawBody appends Raw-encoded pixels for rect r (converted to the
 // negotiated pixel format).
 func (c *client) encodeRawBody(buf *bytes.Buffer, frame *frameData, pf pixelFormat, r rectangle) {
@@ -1472,27 +1424,40 @@ func (c *client) encodeRawBody(buf *bytes.Buffer, frame *frameData, pf pixelForm
 	buf.Write(pf.convertFrame(sub))
 }
 
-// jpegForRect returns JPEG bytes for the frame. Tight/JPEG are only selected for
-// FormatJPEG frames, which carry the whole-frame MJPEG bytes and are never
-// diffed into sub-rectangles, so the capture JPEG is forwarded as-is.
-func (c *client) jpegForRect(frame *frameData, r rectangle) []byte {
-	return frame.data
+// jpegForRect preserves device MJPEG bytes, or encodes just the requested
+// rectangle from raw BGRA at the client's negotiated (or locked) quality.
+func (c *client) jpegForRect(frame *frameData, r rectangle) ([]byte, error) {
+	if frame.format == capture.FormatJPEG {
+		return frame.data, nil
+	}
+	return encodeJPEG(cropBGRA(frame.data, int(frame.width), r), r.w, r.h, c.jpegQualityValue())
 }
 
 // encodeTightBody appends a Tight(JPEG) rectangle body for rect r.
-func (c *client) encodeTightBody(buf *bytes.Buffer, frame *frameData, r rectangle) {
-	jpegData := c.jpegForRect(frame, r)
-	// Tight JpegCompression: single compression-control byte 0x90.
+func (c *client) encodeTightBody(buf *bytes.Buffer, frame *frameData, r rectangle) error {
+	jpegData, err := c.jpegForRect(frame, r)
+	if err != nil {
+		return err
+	}
+	if len(jpegData) > 0x3fffff {
+		return fmt.Errorf("Tight JPEG exceeds compact length limit: %d", len(jpegData))
+	}
 	buf.WriteByte(tightJPEG)
 	var clen [3]byte
 	n := encodeCompactLen(clen[:], len(jpegData))
 	buf.Write(clen[:n])
 	buf.Write(jpegData)
+	return nil
 }
 
 // encodeJPEGBody appends a standalone JPEG (21) rectangle body for rect r.
-func (c *client) encodeJPEGBody(buf *bytes.Buffer, frame *frameData, r rectangle) {
-	buf.Write(c.jpegForRect(frame, r))
+func (c *client) encodeJPEGBody(buf *bytes.Buffer, frame *frameData, r rectangle) error {
+	jpegData, err := c.jpegForRect(frame, r)
+	if err != nil {
+		return err
+	}
+	buf.Write(jpegData)
+	return nil
 }
 
 // encodeHextileBody appends a Hextile rectangle body for rect r.

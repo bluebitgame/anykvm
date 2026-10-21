@@ -17,7 +17,7 @@ import (
 
 // A native VideoToolbox fixture consists of big-endian lengths followed by
 // complete Annex-B access units. The benchmark at
-// tools/codec-bench/macos/videotoolbox_encode_bench.m can produce it without
+// A standalone VideoToolbox encoder can produce it without
 // screen capture. Decode after actual GameStream packetization and reassembly.
 func TestNativeHEVCPacketDecode(t *testing.T) {
 	path, ff := os.Getenv("ANYKVM_TEST_HEVC_FRAMES"), os.Getenv("ANYKVM_TEST_FFMPEG")

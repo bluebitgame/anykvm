@@ -2,7 +2,6 @@ package pixelops
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -162,35 +161,5 @@ func TestPixelAPIsAndBounds(t *testing.T) {
 	if !EqualBGRBlock(pixels, other, 256, 64, 64) || RunBGR(pixels) != 4096 ||
 		!bytes.Equal(PackBGR(make([]byte, 4096*3), pixels), bytes.Repeat([]byte{1, 2, 3}, 4096)) {
 		t.Fatal("selected public implementation changed color data")
-	}
-}
-
-func BenchmarkPixelOps(b *testing.B) {
-	for _, impl := range append(testImplementations(), implementation{"auto", EqualBGRBlock, RunBGR, func(dst, src []byte) { PackBGR(dst, src) }, RunByte}) {
-		for _, width := range []int{64, 1280} {
-			height := 64
-			if width == 1280 {
-				height = 720
-			}
-			pixels := bytes.Repeat([]byte{3, 17, 193, 255}, width*height)
-			other := bytes.Repeat([]byte{3, 17, 193, 99}, width*height)
-			out := make([]byte, width*height*3)
-			for _, operation := range []string{"equal", "run", "pack"} {
-				b.Run(fmt.Sprintf("%dx%d/%s/%s", width, height, operation, impl.name), func(b *testing.B) {
-					b.SetBytes(int64(len(pixels)))
-					b.ReportAllocs()
-					for n := 0; n < b.N; n++ {
-						switch operation {
-						case "equal":
-							impl.equal(pixels, other, width*4, width, height)
-						case "run":
-							impl.run(pixels)
-						case "pack":
-							impl.pack(out, pixels)
-						}
-					}
-				})
-			}
-		}
 	}
 }

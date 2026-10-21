@@ -3,7 +3,6 @@ package rdp
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
@@ -174,60 +173,6 @@ func TestPlanar420Export(t *testing.T) {
 			decoded := planarPixels(decodePlanar420(t, wire, w, h), w, h)
 			if err := os.WriteFile(filepath.Join(directory, name+".bgra"), decoded, 0600); err != nil {
 				t.Fatal(err)
-			}
-		}
-	}
-}
-
-// Compare the same source pictures and complete 128px dirty groups. The NV12
-// path includes ClearCodec's full-frame conversion; BGRA excludes it for both.
-// A sequence of varying pictures exercises caches without benchmarking one
-// repeatedly identical tile. Capture, transport and client decoding are excluded.
-func BenchmarkPlanar420VsClear(b *testing.B) {
-	const w, h = 1280, 720
-	for _, content := range []string{"solid", "gradient", "noise"} {
-		nv, bgra := make([][]byte, 8), make([][]byte, 8)
-		for f := range nv {
-			nv[f] = progressiveNV12Pixels(w, h, content)
-			if content == "noise" {
-				rand.New(rand.NewSource(int64(991 + f))).Read(nv[f])
-			} else {
-				for i := 0; i < w*h; i++ {
-					nv[f][i] = byte(16 + (int(nv[f][i])-16+f*7)%220)
-				}
-			}
-			bgra[f], _ = bitmapBGRA(nv[f], w, h, "nv12")
-		}
-		rects := coalesceBitmapRects(dirtyBitmapRects(bgra[0], nil, w, h), w, h)
-		for _, format := range []string{"nv12", "bgra"} {
-			for _, codec := range []string{"planar", "clearcodec"} {
-				b.Run(content+"/"+format+"/"+codec, func(b *testing.B) {
-					clear := newClearEncoder()
-					var e planarEncoder
-					var total int64
-					b.ReportAllocs()
-					b.SetBytes(int64(w * h * 4))
-					b.ResetTimer()
-					for f := 0; f < b.N; f++ {
-						pixels, pf := bgra[f%len(nv)], progressiveBGRA
-						if format == "nv12" {
-							pixels = nv[f%len(nv)]
-							if codec == "planar" {
-								pf = progressiveNV12
-							} else {
-								pixels, _ = bitmapBGRA(pixels, w, h, "nv12")
-							}
-						}
-						for _, r := range rects {
-							if codec == "planar" {
-								total += int64(len(e.encodeRect(pixels, w, h, r, pf)))
-							} else {
-								total += int64(len(clear.encode(bitmapTile(pixels, w, r), r.w, r.h)))
-							}
-						}
-					}
-					b.ReportMetric(float64(total)/float64(b.N), "encoded-B/frame")
-				})
 			}
 		}
 	}

@@ -44,7 +44,10 @@ func (e *progressiveEncoder) initRefinement(w, h int) {
 		log.Printf("rdp: Progressive %dx%d exceeds refinement cache limit; using SIMPLE", w, h)
 		return
 	}
-	e.coefficients = make([]int32, n*progressiveTileCoefficients)
+	// GPU backends own the coefficient cache; only scheduling bits live here.
+	if _, resident := e.native.(interface{ residentCoefficients() }); !resident {
+		e.coefficients = make([]int32, n*progressiveTileCoefficients)
+	}
 	e.pending = make([]bool, n)
 }
 
@@ -157,35 +160,11 @@ func encodeProgressivePass(pixels []byte, w, h int, rects []bitmapRect, frame ui
 			}
 		}
 	}
-	var stream, rectangles []byte
-	if first {
-		stream = append(stream, progressiveBlock(0xccc0, join(u32(0xcaccacca), u16(0x100)))...)
-		// Enable reference state in the context; each FIRST still has original
-		// tile flags (0), so no temporal sub-band difference is transmitted.
-		stream = append(stream, progressiveBlock(0xccc3, join([]byte{0}, u16(64), []byte{1}))...)
-	}
-	stream = append(stream, progressiveBlock(0xccc1, join(u32(frame), u16(1)))...)
-	for _, r := range rects {
-		rectangles = append(rectangles, join(u16(r.x), u16(r.y), u16(r.w), u16(r.h))...)
-	}
-	q := byte(quantization | quantization<<4)
-	prog := []byte(nil)
-	if !upgrade {
-		prog = make([]byte, 16)
-		prog[0] = 50 // Informational quality; actual precision is in the nibbles.
-		for i := 1; i < 16; i++ {
-			prog[i] = byte(bits | bits<<4)
-		}
-		// MS-RDPEGFX 2.2.4.2.1.5.2: LL3 is the first low nibble
-		// of each component's five-byte extra quantization table.
-		for _, i := range []int{1, 6, 11} {
-			prog[i] &= 0xf0
-		}
-	}
-	region := join([]byte{64}, u16(len(rects)), []byte{1, byte(len(prog) / 16), 1}, u16(count), u32(uint32(len(tiles))),
-		rectangles, []byte{q, q, q, q, q}, prog, tiles)
-	stream = append(stream, progressiveBlock(0xccc4, region)...)
-	return append(stream, progressiveBlock(0xccc2, nil)...)
+	return progressiveLayeredWire(rects, frame, first, quantization, bits, upgrade, tiles, count)
+}
+
+func progressiveLayeredWire(rects []bitmapRect, frame uint32, first bool, quantization, bits int, upgrade bool, tiles []byte, count int) []byte {
+	return progressiveWire(rects, frame, first, quantization, bits, upgrade, tiles, count, true)
 }
 
 func encodeProgressiveUpgradeComponent(coeffs []int32, bits int) ([]byte, []byte) {

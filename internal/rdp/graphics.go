@@ -285,14 +285,18 @@ func graphicsCapabilityWithReport(p []byte, preference string, report func(strin
 			reason = "enabled"
 		}
 		advertised = append(advertised, fmt.Sprintf("version=0x%08x length=%d flags=0x%08x AVC420=%t (%s)", v, size, f, supported, reason))
+		scaledFlags := uint32(0)
+		if v == 0xa0701 {
+			scaledFlags = f & gfxCapsScaledMapDisable
+		}
 		if supported && v > version {
-			version, flags = v, 0
+			version, flags = v, scaledFlags
 			if v == 0x80105 {
 				flags = 0x10
 			}
 		}
 		if bitmap && v > bitmapVersion {
-			bitmapVersion, bitmapFlags = v, f&3
+			bitmapVersion, bitmapFlags = v, f&3|scaledFlags
 			if v >= 0xa0002 && v != 0xa0100 {
 				bitmapFlags |= 0x20
 			}
@@ -300,7 +304,7 @@ func graphicsCapabilityWithReport(p []byte, preference string, report func(strin
 		// THINCLIENT peers only require regular RemoteFX. Do not clear their
 		// flag to force a codec that they did not promise to implement.
 		if bitmap && f&1 == 0 && v > progressiveVersion {
-			progressiveVersion, progressiveFlags = v, f&2
+			progressiveVersion, progressiveFlags = v, f&2|scaledFlags
 			if v >= 0xa0002 && v != 0xa0100 {
 				progressiveFlags |= 0x20
 			}
@@ -361,6 +365,10 @@ func (c *client) handleGFX(p []byte) error {
 				return fmt.Errorf("%w: repeated GFX capability advertisement", errProtocol)
 			}
 			runtime := c.s.runtimeConfig()
+			allowed := DefaultCodecOptions()
+			if runtime.AllowedCodecs != nil {
+				allowed = *runtime.AllowedCodecs
+			}
 			version, flags, codec, err := graphicsCapabilityWithReport(body, runtime.Codec, func(advertised string) {
 				log.Printf("rdp: %s: RDPGFX capabilities advertised: [%s]", c.conn.RemoteAddr(), advertised)
 			}, runtime.AllowedCodecs)
@@ -370,8 +378,9 @@ func (c *client) handleGFX(p []byte) error {
 			if err := c.sendGFX(gfxCapabilityConfirm(version, flags)); err != nil {
 				return err
 			}
-			log.Printf("rdp: %s: RDPGFX capability confirmed version=0x%08x flags=0x%08x codec=%s policy=%s allowed=%v", c.conn.RemoteAddr(), version, flags, codec, runtime.Codec, runtime.AllowedCodecs)
+			log.Printf("rdp: %s: RDPGFX capability confirmed version=0x%08x flags=0x%08x codec=%s allowed=[%s]", c.conn.RemoteAddr(), version, flags, codec, allowed)
 			c.codec = codec
+			c.scaledMapping = graphicsSupportsScaledMapping(version, flags)
 			if err := c.activate(); err != nil {
 				return err
 			}
@@ -463,28 +472,15 @@ func (c *client) sendGFX(p []byte) error {
 	return nil
 }
 
-// RESET_GRAPHICS changes the output buffer, but does not delete offscreen
-// surfaces. Delete the allocated ID before creating its replacement, and avoid
-// recreating the activation surface when the first frame has the same size.
 func (c *client) ensureGraphicsSize(w, h int) error {
-	if w == c.surfaceW && h == c.surfaceH {
-		return nil
-	}
-	p := graphicsReset(w, h)
-	if c.surfaceW != 0 {
-		p = join(gfxPDU(0xa, u16(1)), p)
-	}
-	if err := c.sendGFX(p); err != nil {
-		return err
-	}
-	if c.surfaceW != 0 {
-		log.Printf("rdp: %s: graphics output resized %dx%d -> %dx%d", c.conn.RemoteAddr(), c.surfaceW, c.surfaceH, w, h)
-	}
-	c.surfaceW, c.surfaceH = w, h
-	return nil
+	return c.ensureGraphicsLayout(makeGraphicsLayout(w, h, w, h, false))
 }
 
 func graphicsReset(w, h int) []byte {
+	return join(graphicsResetOutput(w, h), graphicsCreateSurface(1, w, h), gfxPDU(0xf, join(u16(1), u16(0), u32(0), u32(0))))
+}
+
+func graphicsResetOutput(w, h int) []byte {
 	p := make([]byte, 332)
 	le.PutUint32(p, uint32(w))
 	le.PutUint32(p[4:], uint32(h))
@@ -492,7 +488,7 @@ func graphicsReset(w, h int) []byte {
 	le.PutUint32(p[20:], uint32(w-1))
 	le.PutUint32(p[24:], uint32(h-1))
 	le.PutUint32(p[28:], 1)
-	return join(gfxPDU(0xe, p), gfxPDU(9, join(u16(1), u16(w), u16(h), []byte{0x20})), gfxPDU(0xf, join(u16(1), u16(0), u32(0), u32(0))))
+	return gfxPDU(0xe, p)
 }
 
 func graphicsFrame(data []byte, w, h int, id, timestamp uint32) []byte {
@@ -502,15 +498,25 @@ func graphicsFrame(data []byte, w, h int, id, timestamp uint32) []byte {
 	return join(gfxPDU(0xb, join(u32(timestamp), u32(id))), gfxPDU(1, wire), gfxPDU(0xc, u32(id)))
 }
 
+func (c *client) frameWindowFull() bool {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return !c.suspendAck && c.sent-c.acknowledged >= 2
+}
+
 func (c *client) waitWindow() error {
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
-		c.ackMu.Lock()
-		full := !c.suspendAck && c.sent-c.acknowledged >= 2
-		c.ackMu.Unlock()
-		if !full {
+		if !c.frameWindowFull() {
 			return nil
+		}
+		if timer == nil {
+			timer = time.NewTimer(5 * time.Second)
 		}
 		select {
 		case <-c.done:

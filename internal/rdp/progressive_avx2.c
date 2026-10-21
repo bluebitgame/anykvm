@@ -8,6 +8,18 @@
 #include <immintrin.h>
 #include <string.h>
 
+ANYKVM_RFX_TARGET_AVX2 size_t bk_rfx_zero_run_avx2(const int32_t *coeffs, size_t count) {
+    size_t i = 0;
+    for (; i + 8 <= count; i += 8) {
+        __m256i values = _mm256_loadu_si256((const __m256i *)(coeffs + i));
+        __m256i equal = _mm256_cmpeq_epi32(values, _mm256_setzero_si256());
+        unsigned mask = (unsigned)_mm256_movemask_ps(_mm256_castsi256_ps(equal));
+        if (mask != 255) return i + (unsigned)__builtin_ctz((~mask) & 255);
+    }
+    while (i < count && coeffs[i] == 0) i++;
+    return i;
+}
+
 static inline ANYKVM_RFX_TARGET_AVX2 __m256i load8(const int32_t *p) {
     return _mm256_loadu_si256((const __m256i *)p);
 }

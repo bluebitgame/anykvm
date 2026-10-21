@@ -137,25 +137,3 @@ func TestWSLargeBorrowedPayloadDeliveredAndReleased(t *testing.T) {
 		})
 	}
 }
-
-func BenchmarkWSVideoQueue(b *testing.B) {
-	for _, owned := range []bool{false, true} {
-		b.Run(map[bool]string{false: "legacy", true: "owned"}[owned], func(b *testing.B) {
-			s := NewServer(Config{})
-			c := &wsClient{sendCh: make(chan *outboundMessage, 8), jpegReady: make(chan struct{}, 1), done: make(chan struct{})}
-			s.clients[c] = struct{}{}
-			f := bridge.Frame{Format: capture.FormatJPEG, Data: make([]byte, 128*1024)}
-			if owned {
-				f.Buffer = framebuf.New(f.Data, nil)
-				defer f.Release()
-			}
-			defer c.close()
-			b.ReportAllocs()
-			b.ResetTimer()
-			for range b.N {
-				s.PushFrame(f)
-				c.takeJPEG().release()
-			}
-		})
-	}
-}

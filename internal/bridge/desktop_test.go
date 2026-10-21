@@ -23,9 +23,13 @@ type outputDesktopCapture struct {
 	desktopCapture
 	outputW, outputH       int
 	preferredW, preferredH int
+	downscaleOnly          bool
+	maxW, maxH             int
 }
 
-func (d *outputDesktopCapture) SetOutputSize(w, h int) { d.outputW, d.outputH = w, h }
+func (d *outputDesktopCapture) SetOutputSize(w, h int)        { d.outputW, d.outputH = w, h }
+func (d *outputDesktopCapture) SetOutputDownscaleOnly(v bool) { d.downscaleOnly = v }
+func (d *outputDesktopCapture) SetOutputSizeLimit(w, h int)   { d.maxW, d.maxH = w, h }
 func (d *outputDesktopCapture) OpenWithFormat(w, h, fps int) error {
 	d.preferredW, d.preferredH = w, h
 	if d.outputW > 0 && d.outputH > 0 {
@@ -71,8 +75,8 @@ func TestRDPNativeBitrateAcrossCaptureRestartsAndProtocols(t *testing.T) {
 		t.Fatal(err)
 	}
 	dev.waitForRead(t)
-	if dev.openedEncoderFrames != 3 || dev.openedBitrate != 20000 || dev.openW != 1920 || dev.openH != 1080 || dev.openFPS != 30 {
-		t.Fatal("desktop resize lost the RDP bitrate or frame rate")
+	if dev.openedEncoderFrames != 3 || dev.openedBitrate != 20000 || dev.openW != 1280 || dev.openH != 720 || dev.openFPS != 30 {
+		t.Fatal("desktop resize lost bitrate/frame rate or exceeded Target size")
 	}
 	b.RequestRDPKeyframe() // Reopen when the backend cannot force a keyframe.
 	dev.waitForRead(t)
@@ -130,7 +134,11 @@ func TestRDPNativeOutputScalingWithoutDesktopAuto(t *testing.T) {
 		}
 		b.StartRDPWithSize("clearcodec", 1976, 952)
 		dev.waitForRead(t)
-		if dev.openW != 1976 || dev.openH != 952 || dev.preferredW != m.CapW || dev.preferredH != m.CapH {
+		wantW, wantH := 1976, 952
+		if !native {
+			wantW, wantH = 1920, 1080
+		}
+		if !dev.downscaleOnly || dev.openW != wantW || dev.openH != wantH || dev.preferredW != m.CapW || dev.preferredH != m.CapH || dev.maxW != m.CapW || dev.maxH != m.CapH {
 			t.Fatalf("capture preferred=%dx%d output=%dx%d", dev.preferredW, dev.preferredH, dev.openW, dev.openH)
 		}
 		if err := b.ResizeRDPDesktop(1280, 720); err != nil {
@@ -143,10 +151,46 @@ func TestRDPNativeOutputScalingWithoutDesktopAuto(t *testing.T) {
 		b.OnClientDisconnected()
 		b.StartGameStream(0, capture.VideoStreamOptions{Width: 640, Height: 480, FPS: 30, Bitrate: 1000})
 		dev.waitForRead(t)
-		if dev.outputW != 0 || dev.outputH != 0 {
+		if dev.downscaleOnly || dev.outputW != 0 || dev.outputH != 0 || dev.maxW != 0 || dev.maxH != 0 {
 			t.Fatal("RDP output override survived protocol takeover")
 		}
 		b.Stop()
+	}
+}
+
+func TestRDPTargetCeilingRecomputedOnSwitchWithoutChangingClientRequest(t *testing.T) {
+	first, second := &outputDesktopCapture{}, &outputDesktopCapture{}
+	b := NewBridge([]*MachineSession{
+		{Capture: first, CapW: 1440, CapH: 900},
+		{Capture: second, CapW: 1920, CapH: 1080},
+	}, "alt", 30, 0, 0)
+	if err := b.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer b.Stop()
+	b.StartRDPWithSize("h264", 2560, 1440)
+	first.waitForRead(t)
+	if first.openW != 1440 || first.openH != 900 {
+		t.Fatal("client request overrode first Target")
+	}
+	b.SwitchMachine(1)
+	second.waitForRead(t)
+	if second.openW != 1920 || second.openH != 1080 {
+		t.Fatal("previous Target cap replaced the original client request")
+	}
+	if err := b.ResizeRDPDesktop(1280, 720); err != nil {
+		t.Fatal(err)
+	}
+	second.waitForRead(t)
+	if second.openW != 1280 || second.openH != 720 {
+		t.Fatal("ceiling prevented downscaling")
+	}
+	if err := b.ResizeRDPDesktop(3840, 2160); err != nil {
+		t.Fatal(err)
+	}
+	second.waitForRead(t)
+	if second.openW != 1920 || second.openH != 1080 {
+		t.Fatal("resize bypassed Target ceiling")
 	}
 }
 
@@ -190,7 +234,7 @@ func TestRDPH264CaptureProducesRequestedOutput(t *testing.T) {
 		}
 		select {
 		case f := <-sink.frames:
-			if !f.CaptureScalesOutput || f.Format != capture.FormatH264 || f.Width != size[0] || f.Height != (size[1]+1)&^1 {
+			if !f.CaptureScalesOutput || f.Format != capture.FormatH264 || f.Width != size[0] || f.Height != (size[1]+1)&^1 || f.OutputMaxW != 1920 || f.OutputMaxH != 1080 {
 				t.Fatalf("requested=%v captured=%+v", size, f)
 			}
 		case <-time.After(time.Second):
@@ -439,8 +483,8 @@ func TestRDPAutoScalesMatchedModeToClientSize(t *testing.T) {
 		auto, fail   bool
 		wantW, wantH int
 	}{
-		{"matched", true, false, 1976, 952},
-		{"mode unavailable", true, true, 1976, 952},
+		{"matched", true, false, 1920, 1080},
+		{"mode unavailable", true, true, 1920, 1080},
 		{"fixed output", false, false, 1920, 1080},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

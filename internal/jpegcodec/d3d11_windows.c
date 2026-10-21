@@ -176,7 +176,7 @@ static HRESULT prepare_frame(bk_jpeg_gpu *e, const bk_jpeg_parameters *parameter
     HRESULT hr;
     UINT count = parameters->mcu_count;
     UINT output_capacity = (parameters->header_bytes + count * BK_JPEG_SEGMENT_CAPACITY + 2 + 3) & ~3u;
-    TRY(gpu_buffer_new(e, &e->coefficients, count * BK_JPEG_COEFFICIENTS_PER_MCU * sizeof(int32_t), 0, 0));
+    TRY(gpu_buffer_new(e, &e->coefficients, count * BK_JPEG_COEFFICIENTS_PER_MCU * sizeof(int16_t), 0, 0));
     TRY(gpu_buffer_new(e, &e->segments, count * BK_JPEG_SEGMENT_CAPACITY, 1, 0));
     TRY(gpu_buffer_new(e, &e->segment_info, (count * 2 + 1) * 4, 0, 0));
     TRY(gpu_buffer_new(e, &e->output, output_capacity, 1, 0));
@@ -288,7 +288,7 @@ int bk_jpeg_gpu_encode(bk_jpeg_gpu *e, uintptr_t handle, int rotation, int width
         .mcu_columns = columns, .mcu_count = columns * rows, .header_bytes = (UINT)header_bytes,
         .crop_size = {desc.Width, desc.Height}
     };
-    memcpy(parameters.quantization, quantization, sizeof(parameters.quantization));
+    bk_jpeg_prepare_quantization(&parameters, quantization);
     memcpy(parameters.huffman, huffman, sizeof(parameters.huffman));
     TRY(prepare_frame(e, &parameters, header));
     hr = IDXGIKeyedMutex_AcquireSync(e->mutex, 0, 1000);
@@ -296,7 +296,7 @@ int bk_jpeg_gpu_encode(bk_jpeg_gpu *e, uintptr_t handle, int rotation, int width
     locked = 1;
     bind_frame(e);
     ID3D11DeviceContext_CSSetShader(e->context, e->transform, NULL, 0);
-    ID3D11DeviceContext_Dispatch(e->context, columns, rows, 6);
+    ID3D11DeviceContext_Dispatch(e->context, columns, rows, 5);
     encode_scan(e, parameters.mcu_count);
     TRY(read_jpeg(e, jpeg, jpeg_bytes));
 done:
@@ -311,3 +311,5 @@ done:
     }
     return SUCCEEDED(hr);
 }
+
+#include "decode_d3d11_windows.inc"

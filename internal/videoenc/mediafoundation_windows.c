@@ -397,17 +397,19 @@ static HRESULT bk_initialize(bk_mf_encoder *e) {
         return hr;
     hr = MF_E_TOPO_CODEC_NOT_FOUND;
     size_t size = (size_t)e->width * e->height * 3 / 2;
-    uint8_t *probe = malloc(size);
-    if (!probe) {
+    uint8_t *probe = e->codec == 0 ? malloc(size) : NULL;
+    if (e->codec == 0 && !probe) {
         hr = E_OUTOFMEMORY;
         goto done;
     }
-    memset(probe, 16, (size_t)e->width * e->height);
-    memset(probe + (size_t)e->width * e->height, 128, size - (size_t)e->width * e->height);
+    if (probe) {
+        memset(probe, 16, (size_t)e->width * e->height);
+        memset(probe + (size_t)e->width * e->height, 128, size - (size_t)e->width * e->height);
+    }
     for (UINT32 i = 0; i < count; i++) {
         snprintf(e->operation, sizeof(e->operation), "Media Foundation encoder configuration");
         hr = bk_configure(e, activations[i]);
-        if (SUCCEEDED(hr)) {
+        if (SUCCEEDED(hr) && probe) {
             // Reject drivers that buffer indefinitely in this low-delay contract.
             e->input = probe;
             e->input_size = size;
@@ -462,6 +464,37 @@ static HRESULT bk_load(bk_mf_encoder *e) {
          HRESULT(WINAPI *)(DWORD, DWORD, IMFMediaBuffer **));
 #undef LOAD
     return S_OK;
+}
+
+int bk_mf_supports(int codec) {
+    if (codec != 1 && codec != 2)
+        return 0;
+    HRESULT com = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(com) && com != RPC_E_CHANGED_MODE)
+        return 0;
+    bk_mf_encoder e = {0};
+    IMFActivate **activations = NULL;
+    UINT32 count = 0;
+    int supported = 0, started = 0;
+    if (FAILED(bk_load(&e)) || FAILED(e.startup(MF_VERSION, MFSTARTUP_FULL)))
+        goto done;
+    started = 1;
+    MFT_REGISTER_TYPE_INFO input = {MFMediaType_Video, MFVideoFormat_NV12};
+    MFT_REGISTER_TYPE_INFO output = {MFMediaType_Video, *bk_subtype(codec)};
+    if (SUCCEEDED(e.enumerate(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &input,
+                              &output, &activations, &count)))
+        supported = count > 0;
+done:
+    for (UINT32 i = 0; activations && i < count; i++)
+        IMFActivate_Release(activations[i]);
+    CoTaskMemFree(activations);
+    if (started)
+        e.shutdown();
+    if (e.module)
+        FreeLibrary(e.module);
+    if (SUCCEEDED(com))
+        CoUninitialize();
+    return supported;
 }
 
 static DWORD WINAPI bk_worker(void *context) {

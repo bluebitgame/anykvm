@@ -16,6 +16,8 @@ type jpegTextureFixture struct {
 	err                    error
 }
 
+func (*jpegTextureFixture) JPEGEncoderName() string { return "test GPU JPEG" }
+
 func (f *jpegTextureFixture) EncodeJPEG(w, h, q int) (*framebuf.Buffer, bool, error) {
 	f.width, f.height, f.quality = w, h, q
 	f.calls++

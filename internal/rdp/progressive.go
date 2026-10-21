@@ -1,11 +1,11 @@
 package rdp
 
+import "encoding/binary"
+
 // RemoteFX Progressive's complete-tile path, independently implemented from
 // MS-RDPEGFX 2.2.4.2 / 3.2.8.1 and MS-RDPRFX 3.1.8.1. Each SIMPLE tile is
 // original (no coefficient differences), with a configurable uniform quantization
-// factor (default 6). FIRST/UPGRADE and reduce-extrapolate DWT are not emitted yet.
-// The codec is opt-in until interoperability and capture workload measurements
-// justify changing the default fallback.
+// factor (default 6). FIRST/UPGRADE lives in progressive_refine.go.
 
 func progressiveBlock(kind int, body []byte) []byte {
 	return join(u16(kind), u32(uint32(6+len(body))), body)
@@ -22,16 +22,9 @@ func encodeProgressiveRects(pixels []byte, w, h int, rects []bitmapRect, frame u
 }
 
 func encodeProgressiveRectsFormat(pixels []byte, w, h int, rects []bitmapRect, frame uint32, first bool, quantization int, format progressivePixelFormat) []byte {
-	var stream, tiles []byte
-	if first {
-		stream = append(stream, progressiveBlock(0xccc0, join(u32(0xcaccacca), u16(0x100)))...)
-		stream = append(stream, progressiveBlock(0xccc3, join([]byte{0}, u16(64), []byte{0}))...)
-	}
-	stream = append(stream, progressiveBlock(0xccc1, join(u32(frame), u16(1)))...)
+	var tiles []byte
 	count := 0
-	var rectangles []byte
 	for _, r := range rects {
-		rectangles = append(rectangles, join(u16(r.x), u16(r.y), u16(r.w), u16(r.h))...)
 		for y := r.y; y < r.y+r.h; y += 64 {
 			for x := r.x; x < r.x+r.w; x += 64 {
 				var planes [3][4096]int32
@@ -54,11 +47,83 @@ func encodeProgressiveRectsFormat(pixels []byte, w, h int, rects []bitmapRect, f
 			}
 		}
 	}
-	q := byte(quantization | quantization<<4)
-	region := join([]byte{64}, u16(len(rects)), []byte{1, 0, 0}, u16(count), u32(uint32(len(tiles))),
-		rectangles, []byte{q, q, q, q, q}, tiles)
-	stream = append(stream, progressiveBlock(0xccc4, region)...)
-	return append(stream, progressiveBlock(0xccc2, nil)...)
+	return progressiveSimpleWire(rects, frame, first, quantization, tiles, count)
+}
+
+func progressiveSimpleWire(rects []bitmapRect, frame uint32, first bool, quantization int, tiles []byte, count int) []byte {
+	return progressiveWire(rects, frame, first, quantization, 0, false, tiles, count, false)
+}
+
+// Allocate the final packet once; workers and GPU backends already supply tile
+// blocks in wire order, so there is no need for intermediate region buffers.
+func progressiveWire(rects []bitmapRect, frame uint32, first bool, quantization, bits int, upgrade bool, tiles []byte, count int, layered bool) []byte {
+	header := 12 + 6 + 12 + 8*len(rects) + 5
+	if first {
+		header += 22
+	}
+	if layered && !upgrade {
+		header += 16
+	}
+	wire := make([]byte, header+len(tiles)+6)
+	offset := 0
+	put8 := func(value int) { wire[offset] = byte(value); offset++ }
+	put16 := func(value int) { binary.LittleEndian.PutUint16(wire[offset:], uint16(value)); offset += 2 }
+	put32 := func(value uint32) { binary.LittleEndian.PutUint32(wire[offset:], value); offset += 4 }
+	block := func(kind, length int) { put16(kind); put32(uint32(length)) }
+	if first {
+		block(0xccc0, 12)
+		put32(0xcaccacca)
+		put16(0x100)
+		block(0xccc3, 10)
+		put8(0)
+		put16(64)
+		if layered {
+			put8(1)
+		} else {
+			put8(0)
+		}
+	}
+	block(0xccc1, 12)
+	put32(frame)
+	put16(1)
+	block(0xccc4, header-offset+len(tiles))
+	put8(64)
+	put16(len(rects))
+	put8(1)
+	if layered && !upgrade {
+		put8(1)
+	} else {
+		put8(0)
+	}
+	if layered {
+		put8(1)
+	} else {
+		put8(0)
+	}
+	put16(count)
+	put32(uint32(len(tiles)))
+	for _, r := range rects {
+		put16(r.x)
+		put16(r.y)
+		put16(r.w)
+		put16(r.h)
+	}
+	for range 5 {
+		put8(quantization | quantization<<4)
+	}
+	if layered && !upgrade {
+		put8(50)
+		for i := 0; i < 15; i++ {
+			value := bits | bits<<4
+			if i%5 == 0 {
+				value &= 0xf0
+			} // LL3 keeps its original precision.
+			put8(value)
+		}
+	}
+	offset += copy(wire[offset:], tiles)
+	block(0xccc2, 6)
+	return wire
 }
 
 func quantizeProgressive(coeffs []int32, quantization int) {
@@ -197,6 +262,23 @@ func encodeRLGR1(coeffs []int32) []byte {
 	return w.data
 }
 
+const graphicsProgressiveHeaderSize = 21
+
 func graphicsProgressive(data []byte) []byte {
-	return gfxPDU(2, join(u16(1), u16(int(codecProgressive)), u32(1), []byte{0x20}, u32(uint32(len(data))), data))
+	return appendGraphicsProgressive(nil, data)
+}
+
+func appendGraphicsProgressive(dst, data []byte) []byte {
+	start := len(dst)
+	dst = append(dst, make([]byte, graphicsProgressiveHeaderSize+len(data))...)
+	header := dst[start:]
+	binary.LittleEndian.PutUint16(header, 2) // WIRETOSURFACE_2
+	binary.LittleEndian.PutUint32(header[4:], uint32(len(header)))
+	binary.LittleEndian.PutUint16(header[8:], 1) // Surface ID
+	binary.LittleEndian.PutUint16(header[10:], uint16(codecProgressive))
+	binary.LittleEndian.PutUint32(header[12:], 1) // Codec context ID
+	header[16] = 0x20
+	binary.LittleEndian.PutUint32(header[17:], uint32(len(data)))
+	copy(header[graphicsProgressiveHeaderSize:], data)
+	return dst
 }

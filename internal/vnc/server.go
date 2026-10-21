@@ -9,6 +9,7 @@ import (
 
 	"anykvm/internal/capture"
 	"anykvm/internal/framebuf"
+	"anykvm/internal/netstats"
 	"anykvm/internal/videotiming"
 )
 
@@ -109,6 +110,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("vnc: listen error: %w", err)
 	}
+	s.ln = netstats.WrapListener(s.ln)
 	if s.config.CursorCapture != nil {
 		if err := s.config.CursorCapture.Open(); err != nil {
 			log.Printf("vnc: cursor capture unavailable: %v", err)
@@ -164,7 +166,6 @@ func (s *Server) Close() error {
 	if c != nil {
 		c.close()
 	}
-
 	if s.ln != nil {
 		return s.ln.Close()
 	}

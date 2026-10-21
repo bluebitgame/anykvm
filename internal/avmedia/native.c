@@ -172,6 +172,8 @@ static int open_codec(bm_session *s, const AVCodec *codec, AVDictionary **opts, 
         return error_code(err, len, "avcodec_open2", result);
     return 0;
 }
+int bm_has_encoder(const char *name) { return avcodec_find_encoder_by_name(name) != NULL; }
+
 bm_session *bm_encoder(const char *name, const char *device, int w, int h, int fps_num, int fps_den,
                        int bitrate, int audio_ms, char *err, size_t len) {
     bm_session *s = alloc_session();
@@ -216,7 +218,7 @@ bm_session *bm_encoder(const char *name, const char *device, int w, int h, int f
         c->colorspace = AVCOL_SPC_BT709;
         c->color_primaries = AVCOL_PRI_BT709;
         c->color_trc = AVCOL_TRC_BT709;
-        if (!strcmp(name, "h264_nvenc") || !strcmp(name, "av1_nvenc")) {
+        if (!strcmp(name, "h264_nvenc") || !strcmp(name, "hevc_nvenc") || !strcmp(name, "av1_nvenc")) {
             c->pix_fmt = AV_PIX_FMT_NV12;
             av_dict_set(&opts, "preset", "p1", 0);
             av_dict_set(&opts, "tune", "ull", 0);
@@ -230,8 +232,8 @@ bm_session *bm_encoder(const char *name, const char *device, int w, int h, int f
                 av_dict_set(&opts, "profile", "baseline", 0);
                 av_dict_set(&opts, "coder", "cavlc", 0);
             } else
-                c->profile = AV_PROFILE_AV1_MAIN;
-        } else if (!strcmp(name, "h264_vaapi") || !strcmp(name, "av1_vaapi")) {
+                c->profile = c->codec_id == AV_CODEC_ID_HEVC ? AV_PROFILE_HEVC_MAIN : AV_PROFILE_AV1_MAIN;
+        } else if (!strcmp(name, "h264_vaapi") || !strcmp(name, "hevc_vaapi") || !strcmp(name, "av1_vaapi")) {
             int result =
                 av_hwdevice_ctx_create(&s->device, AV_HWDEVICE_TYPE_VAAPI, device, NULL, 0);
             if (result < 0) {
@@ -257,7 +259,7 @@ bm_session *bm_encoder(const char *name, const char *device, int w, int h, int f
             av_dict_set(&opts, "async_depth", "1", 0);
             av_dict_set(&opts, "rc_mode", "CBR", 0);
             av_dict_set(&opts, "profile",
-                        c->codec_id == AV_CODEC_ID_AV1 ? "main" : "constrained_baseline", 0);
+                        c->codec_id == AV_CODEC_ID_H264 ? "constrained_baseline" : "main", 0);
         } else if (strstr(name, "videotoolbox")) {
             c->pix_fmt = AV_PIX_FMT_NV12;
             av_dict_set(&opts, "realtime", "1", 0);
@@ -286,6 +288,28 @@ bm_session *bm_encoder(const char *name, const char *device, int w, int h, int f
             av_dict_set(&opts, "preset", "veryfast", 0);
             av_dict_set(&opts, "async_depth", "1", 0);
             av_dict_set(&opts, "low_delay_brc", "1", 0);
+        } else if (!strcmp(name, "hevc_amf")) {
+            c->pix_fmt = AV_PIX_FMT_NV12;
+            av_dict_set(&opts, "usage", "ultralowlatency", 0);
+            av_dict_set(&opts, "quality", "speed", 0);
+            av_dict_set(&opts, "rc", "cbr", 0);
+            av_dict_set(&opts, "profile", "main", 0);
+            av_dict_set(&opts, "preanalysis", "0", 0);
+            av_dict_set(&opts, "header_insertion_mode", "idr", 0);
+            av_dict_set(&opts, "forced_idr", "1", 0);
+            av_dict_set(&opts, "async_depth", "1", 0);
+        } else if (!strcmp(name, "hevc_qsv")) {
+            c->pix_fmt = AV_PIX_FMT_NV12;
+            av_dict_set(&opts, "profile", "main", 0);
+            av_dict_set(&opts, "preset", "veryfast", 0);
+            av_dict_set(&opts, "async_depth", "1", 0);
+            av_dict_set(&opts, "look_ahead", "0", 0);
+            av_dict_set(&opts, "forced_idr", "1", 0);
+            av_dict_set(&opts, "low_delay_brc", "1", 0);
+            if (bitrate > 0) {
+                c->rc_max_rate = c->bit_rate;
+                c->rc_buffer_size = (int)(c->bit_rate * fps_den / fps_num);
+            }
         } else if (!strcmp(name, "h264_amf")) {
             c->pix_fmt = AV_PIX_FMT_NV12;
             av_dict_set(&opts, "usage", "ultralowlatency", 0);

@@ -1077,6 +1077,39 @@ int bk_win_frame_height(bk_win_frame *f) {
 int bk_win_frame_rotation(bk_win_frame *f) {
     return f->rotation;
 }
+// A retained reference to c->shared would still observe the next capture.
+// Copy into a separate shared texture before returning to the capture loop.
+bk_win_frame *bk_win_frame_snapshot(bk_win_frame *f,char *error,size_t capacity) {
+    if (!f||!f->texture||!f->device||!f->context||!f->handle||
+        f->width<1||f->height<1||(uint64_t)f->width*f->height>64u*1024*1024/4) {
+        snprintf(error,capacity,"invalid GPU capture source"); return NULL;
+    }
+    bk_win_frame *out=calloc(1,sizeof(*out));
+    if (!out) {snprintf(error,capacity,"GPU snapshot allocation failed");return NULL;}
+    HRESULT hr=S_OK;IDXGIKeyedMutex *source_mutex=NULL,*snapshot_mutex=NULL;IDXGIResource *resource=NULL;
+    int source_locked=0,snapshot_locked=0;
+    D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(f->texture,&desc);
+    desc.Usage=D3D11_USAGE_DEFAULT;desc.CPUAccessFlags=0;
+    desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;desc.MiscFlags=D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+    TRY(ID3D11Device_CreateTexture2D(f->device,&desc,NULL,&out->texture));
+    TRY(ID3D11Texture2D_QueryInterface(out->texture,&IID_IDXGIResource,(void **)&resource));
+    TRY(IDXGIResource_GetSharedHandle(resource,&out->handle));
+    TRY(ID3D11Texture2D_QueryInterface(f->texture,&IID_IDXGIKeyedMutex,(void **)&source_mutex));
+    TRY(ID3D11Texture2D_QueryInterface(out->texture,&IID_IDXGIKeyedMutex,(void **)&snapshot_mutex));
+    hr=IDXGIKeyedMutex_AcquireSync(source_mutex,0,1000);if(hr!=S_OK){hr=E_FAIL;goto done;}source_locked=1;
+    hr=IDXGIKeyedMutex_AcquireSync(snapshot_mutex,0,1000);if(hr!=S_OK){hr=E_FAIL;goto done;}snapshot_locked=1;
+    ID3D11DeviceContext_CopyResource(f->context,(ID3D11Resource *)out->texture,(ID3D11Resource *)f->texture);
+    out->width=f->width;out->height=f->height;out->rotation=f->rotation;
+    out->device=f->device;ID3D11Device_AddRef(out->device);
+    out->context=f->context;ID3D11DeviceContext_AddRef(out->context);
+done:
+    if(snapshot_locked){HRESULT released=IDXGIKeyedMutex_ReleaseSync(snapshot_mutex,0);if(SUCCEEDED(hr))hr=released;}
+    if(source_locked){HRESULT released=IDXGIKeyedMutex_ReleaseSync(source_mutex,0);if(SUCCEEDED(hr))hr=released;}
+    DROP(IDXGIKeyedMutex,source_mutex);DROP(IDXGIKeyedMutex,snapshot_mutex);DROP(IDXGIResource,resource);
+    if(FAILED(hr)){error_text(error,capacity,"immutable GPU snapshot",hr);bk_win_frame_free(out);return NULL;}
+    return out;
+}
+
 void bk_win_frame_free(bk_win_frame *f) {
     if (!f)
         return;

@@ -26,11 +26,16 @@ func TestJPEGComputeShaderABI(t *testing.T) {
 }
 
 func checkJPEGShaderABI(t *testing.T, entry string, expectedBindings []uint32, group [3]uint32) {
+	checkJPEGShaderProgramABI(t, "jpeg420", jpegComputeShader, entry, expectedBindings, group, true)
+}
+
+func checkJPEGShaderProgramABI(t *testing.T, sourceName, source, entry string, expectedBindings []uint32, group [3]uint32, constantBuffer bool) {
+	t.Helper()
 	suffix := ""
 	if entry != "main" {
 		suffix = "_" + entry
 	}
-	name := "shaders/jpeg420" + suffix
+	name := "shaders/" + sourceName + suffix
 	spirv, err := os.ReadFile(name + ".spv")
 	if os.IsNotExist(err) {
 		t.Skip("run tools/build_shaders.py to validate JPEG SPIR-V")
@@ -53,7 +58,7 @@ func checkJPEGShaderABI(t *testing.T, entry string, expectedBindings []uint32, g
 		data     []byte
 		expected string
 	}{
-		{[]byte(jpegComputeShader), manifest.Source}, {spirv, manifest.SPIRV},
+		{[]byte(source), manifest.Source}, {spirv, manifest.SPIRV},
 	} {
 		hash := sha256.Sum256(item.data)
 		if hex.EncodeToString(hash[:]) != item.expected {
@@ -112,6 +117,9 @@ func checkJPEGShaderABI(t *testing.T, entry string, expectedBindings []uint32, g
 		}
 		seen[binding] = true
 	}
+	if !constantBuffer {
+		return
+	}
 	want := []uint32{0, 8, 16, 20, 24, 28, 32, 40, 48, 560}
 	for _, members := range offsets {
 		if len(members) != len(want) {
@@ -128,4 +136,24 @@ func checkJPEGShaderABI(t *testing.T, entry string, expectedBindings []uint32, g
 		}
 	}
 	t.Fatal("JPEG constant-buffer offsets differ from host layout")
+}
+
+func TestJPEGDecodeShaderABI(t *testing.T) {
+	source, err := os.ReadFile("shaders/jpeg_decode.hlsl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []struct {
+		entry    string
+		bindings []uint32
+		group    [3]uint32
+	}{
+		{"main", []uint32{0, 1, 2, 5}, [3]uint32{64, 1, 1}},
+		{"inverseDCT", []uint32{1, 2, 3}, [3]uint32{8, 8, 1}},
+		{"packNV12", []uint32{1, 3, 4}, [3]uint32{64, 1, 1}},
+	} {
+		t.Run(stage.entry, func(t *testing.T) {
+			checkJPEGShaderProgramABI(t, "jpeg_decode", string(source), stage.entry, stage.bindings, stage.group, false)
+		})
+	}
 }

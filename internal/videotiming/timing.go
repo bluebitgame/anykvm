@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,10 +16,20 @@ import (
 
 var Enabled = os.Getenv("ANYKVM_VIDEO_TIMING") == "1"
 var sequence atomic.Uint64
+var traceSequence atomic.Uint64
+var sampleEvery = timingSampleEvery()
+
+func timingSampleEvery() uint64 {
+	n, err := strconv.ParseUint(os.Getenv("ANYKVM_VIDEO_TIMING_EVERY"), 10, 64)
+	if err != nil || n < 1 || n > 10000 {
+		return 30
+	}
+	return n
+}
 
 // Sample keeps trace allocation and aggregation off most frames. Native QPC
-// markers are enabled for the session, but only every 30th picture is reported.
-func Sample() bool { return Enabled && (sequence.Add(1)-1)%30 == 0 }
+// markers are enabled for the session; the default is one picture in 30.
+func Sample() bool { return Enabled && (sequence.Add(1)-1)%sampleEvery == 0 }
 
 // Native contains QPC ticks, all on the host CPU clock. ConversionEnd is the
 // return from GPU work submission, not completion of the conversion on the GPU.
@@ -29,13 +40,17 @@ type Native struct {
 
 // Trace is populated by capture, then treated as immutable by every consumer.
 type Trace struct {
-	Present, AcquireStart, Acquired, CopySubmitted time.Time
-	ConversionStart, ConversionSubmitted           time.Time
-	EncodeSubmit, EncodeComplete, Ready            time.Time
-	Anchor                                         time.Time
-	AnchorQPC, Frequency                           int64
-	Path                                           string
-	Repeated                                       bool
+	ID                                                  uint64
+	Present, AcquireStart, Acquired, CopySubmitted      time.Time
+	Display                                             time.Time // display scheduling reference, never capture start
+	SourceClock                                         string
+	TextureReadyStart, TextureReadyEnd, TextureImported time.Time
+	ConversionStart, ConversionSubmitted                time.Time
+	EncodeSubmit, EncodeComplete, Ready                 time.Time
+	Anchor                                              time.Time
+	AnchorQPC, Frequency                                int64
+	Path                                                string
+	Repeated                                            bool
 }
 
 // QPCTime preserves the Go monotonic anchor and avoids multiplying an absolute
@@ -88,27 +103,63 @@ func (d Delivery) Enqueue() Delivery {
 // Sent records successful writes to the OS/socket, not network delivery or
 // client display. Each consumer owns its own enqueue/start timestamps.
 func (d Delivery) Sent(protocol string, started time.Time) {
+	d.sent(protocol, started, nil)
+}
+
+// Waited measures only the selected frame's share of an ACK stall. An old
+// capture may have been replaced many times before this frame was enqueued.
+func (d Delivery) Waited(started, ended time.Time) time.Duration {
+	if d.Enqueued.After(started) {
+		started = d.Enqueued
+	}
+	if ended.Before(started) {
+		return 0
+	}
+	return ended.Sub(started)
+}
+
+func (d Delivery) SentRDP(protocol string, started time.Time, processing, sending, ack time.Duration) {
+	if d.Trace == nil {
+		return
+	}
+	d.sent(protocol, started, map[string]time.Duration{
+		"rdp_prepare_encode": processing,
+		"send_call":          sending,
+		"ack_wait":           ack,
+	})
+}
+
+func (d Delivery) sent(protocol string, started time.Time, stages map[string]time.Duration) {
 	if d.Trace == nil {
 		return
 	}
 	end := time.Now()
 	values := make(map[string]time.Duration)
+	for name, value := range stages {
+		if value >= 0 {
+			values[name] = value
+		}
+	}
 	add(values, "queue_and_prepare", d.Enqueued, started)
 	add(values, "ready_to_enqueue", d.Trace.Ready, d.Enqueued)
 	add(values, "send_span", started, end)
 	add(values, "ready_to_socket", d.Trace.Ready, end)
-	if !d.Trace.Repeated {
+	if d.Trace.presentationValid() {
 		add(values, "present_to_socket", d.Trace.Present, end)
 	}
-	observe("send/"+protocol+"/"+d.Trace.Path, values)
+	add(values, "acquire_to_socket", d.Trace.Acquired, end)
+	observe("send/"+protocol+"/"+d.Trace.Path, values, d.Trace)
 }
 
 func (t *Trace) Capture() {
 	if t == nil {
 		return
 	}
+	if t.ID == 0 {
+		t.ID = traceSequence.Add(1)
+	}
 	v := make(map[string]time.Duration)
-	if !t.Repeated {
+	if t.presentationValid() {
 		add(v, "present_to_acquire", t.Present, t.Acquired)
 		add(v, "present_to_ready", t.Present, t.Ready)
 	}
@@ -119,7 +170,18 @@ func (t *Trace) Capture() {
 	add(v, "encode_and_wait", t.EncodeSubmit, t.EncodeComplete)
 	add(v, "output_to_ready", t.EncodeComplete, t.Ready)
 	add(v, "acquire_to_ready", t.Acquired, t.Ready)
-	observe("capture/"+t.Path, v)
+	add(v, "capture_to_encode_submit", t.Acquired, t.EncodeSubmit)
+	add(v, "capture_encode_queue", t.Acquired, t.TextureReadyStart)
+	add(v, "texture_ready_wait", t.TextureReadyStart, t.TextureReadyEnd)
+	add(v, "texture_import_cpu", t.TextureReadyEnd, t.TextureImported)
+	add(v, "encode_submit_prepare", t.TextureImported, t.EncodeSubmit)
+	observe("capture/"+t.Path, v, t)
+}
+
+// Validate the source against acquisition once, rather than accepting a future
+// source PTS as soon as encoding/sending has taken long enough to catch up.
+func (t *Trace) presentationValid() bool {
+	return !t.Repeated && !t.Present.IsZero() && !t.Acquired.IsZero() && !t.Present.After(t.Acquired)
 }
 
 func add(values map[string]time.Duration, name string, start, end time.Time) {
@@ -138,11 +200,12 @@ var stats = struct {
 	windows map[string]*window
 }{windows: make(map[string]*window)}
 
-func observe(label string, values map[string]time.Duration) {
+func observe(label string, values map[string]time.Duration, trace *Trace) {
 	if len(values) == 0 {
 		return
 	}
 	now := time.Now()
+	writeSample(label, values, trace, now)
 	stats.Lock()
 	w := stats.windows[label]
 	if w == nil {
@@ -172,7 +235,7 @@ func observe(label string, values map[string]time.Duration) {
 		sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
 		fields = append(fields, fmt.Sprintf("%s_ms=%.3f/%.3f/%.3f(n=%d)", name, ms(quantile(v, 50)), ms(quantile(v, 95)), ms(quantile(v, 99)), len(v)))
 	}
-	log.Printf("video-timing: %s p50/p95/p99 %s (sample=1/30; host CPU clock)", label, strings.Join(fields, " "))
+	log.Printf("video-timing: %s p50/p95/p99 %s (sample=1/%d; host CPU clock)", label, strings.Join(fields, " "), sampleEvery)
 }
 
 func quantile(sorted []time.Duration, percent int) time.Duration {

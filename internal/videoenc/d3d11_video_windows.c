@@ -1,4 +1,4 @@
-//go:build windows && cgo && !ffmpeg
+//go:build windows && cgo
 
 #define BK_VENDOR_IMPLEMENTATION
 #include "vendor_windows.h"

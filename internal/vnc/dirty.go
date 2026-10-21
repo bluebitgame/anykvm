@@ -104,3 +104,18 @@ func cropBGRA(src []byte, width int, r rectangle) []byte {
 	}
 	return out
 }
+
+// splitJPEGRects bounds independently encoded JPEGs. Tight limits width to
+// 2048 pixels; bounding height also leaves room in its 22-bit payload length
+// for high-quality noisy images. Source MJPEG passthrough is never split.
+func splitJPEGRects(rects []rectangle) []rectangle {
+	var out []rectangle
+	for _, r := range rects {
+		for y := r.y; y < r.y+r.h; y += 256 {
+			for x := r.x; x < r.x+r.w; x += 2048 {
+				out = append(out, rectangle{x, y, min(2048, r.x+r.w-x), min(256, r.y+r.h-y)})
+			}
+		}
+	}
+	return out
+}

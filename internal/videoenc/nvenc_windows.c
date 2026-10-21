@@ -1,4 +1,4 @@
-//go:build windows && cgo && !ffmpeg
+//go:build windows && cgo
 
 #define BK_VENDOR_IMPLEMENTATION
 #include "third_party/nvenc/nvEncodeAPI.h"
@@ -56,13 +56,7 @@ static int bk_nvenc_status(NVENCSTATUS status, const char *operation, char *erro
             goto failed;                                                                                               \
     } while (0)
 
-static void *bk_nvenc_open(const bk_vendor_options *o, char *error, size_t capacity) {
-    bk_nvenc *e = calloc(1, sizeof(*e));
-    if (!e) {
-        snprintf(error, capacity, "out of memory");
-        return NULL;
-    }
-    e->options = *o;
+static int bk_nvenc_session(bk_nvenc *e, const bk_vendor_options *o, char *error, size_t capacity) {
     e->module = bk_vendor_library(L"nvEncodeAPI64.dll");
     NVENCSTATUS(NVENCAPI * create)(NV_ENCODE_API_FUNCTION_LIST *) =
         e->module ? (void *)GetProcAddress(e->module, "NvEncodeAPICreateInstance") : NULL;
@@ -92,7 +86,52 @@ static void *bk_nvenc_open(const bk_vendor_options *o, char *error, size_t capac
     session.device = e->device;
     session.apiVersion = NVENCAPI_VERSION;
     NV_TRY(e->api.nvEncOpenEncodeSessionEx(&session, &e->session));
-    GUID codec = o->codec == 2 ? NV_ENC_CODEC_AV1_GUID : NV_ENC_CODEC_H264_GUID;
+    return 0;
+failed:
+    return -1;
+}
+
+int bk_nvenc_supports(int codec) {
+    bk_vendor_options options = {0};
+    bk_nvenc *e = calloc(1, sizeof(*e));
+    if (!e)
+        return 0;
+    char error[512];
+    int supported = 0;
+    if (bk_nvenc_session(e, &options, error, sizeof(error)) < 0)
+        goto done;
+    GUID wanted = codec == 1 ? NV_ENC_CODEC_HEVC_GUID : NV_ENC_CODEC_AV1_GUID;
+    GUID guids[32];
+    uint32_t count = 0;
+    if (e->api.nvEncGetEncodeGUIDs(e->session, guids, 32, &count) != NV_ENC_SUCCESS || count > 32)
+        goto done;
+    for (uint32_t i = 0; i < count; i++) {
+        if (memcmp(&guids[i], &wanted, sizeof(wanted)) != 0)
+            continue;
+        NV_ENC_BUFFER_FORMAT formats[64];
+        uint32_t n = 0;
+        if (e->api.nvEncGetInputFormats(e->session, wanted, formats, 64, &n) != NV_ENC_SUCCESS || n > 64)
+            break;
+        for (uint32_t j = 0; j < n; j++)
+            if (formats[j] == NV_ENC_BUFFER_FORMAT_NV12)
+                supported = 1;
+        break;
+    }
+done:
+    bk_nvenc_close(e);
+    return supported;
+}
+
+static void *bk_nvenc_open(const bk_vendor_options *o, char *error, size_t capacity) {
+    bk_nvenc *e = calloc(1, sizeof(*e));
+    if (!e) {
+        snprintf(error, capacity, "out of memory");
+        return NULL;
+    }
+    e->options = *o;
+    HRESULT hr;
+    if (bk_nvenc_session(e, o, error, capacity) < 0) goto failed;
+    GUID codec = o->codec == 2 ? NV_ENC_CODEC_AV1_GUID : o->codec == 1 ? NV_ENC_CODEC_HEVC_GUID : NV_ENC_CODEC_H264_GUID;
     NV_ENC_PRESET_CONFIG preset = {0};
     preset.version = NV_ENC_PRESET_CONFIG_VER;
     preset.presetCfg.version = NV_ENC_CONFIG_VER;
@@ -117,6 +156,11 @@ static void *bk_nvenc_open(const bk_vendor_options *o, char *error, size_t capac
         config.encodeCodecConfig.av1Config.outputAnnexBFormat = 0;
         config.encodeCodecConfig.av1Config.idrPeriod = config.gopLength;
         config.encodeCodecConfig.av1Config.chromaFormatIDC = 1;
+    } else if (o->codec == 1) {
+        config.profileGUID = NV_ENC_HEVC_PROFILE_MAIN_GUID;
+        config.encodeCodecConfig.hevcConfig.repeatSPSPPS = 1;
+        config.encodeCodecConfig.hevcConfig.idrPeriod = config.gopLength;
+        config.encodeCodecConfig.hevcConfig.chromaFormatIDC = 1;
     } else {
         config.profileGUID = NV_ENC_H264_PROFILE_BASELINE_GUID;
         config.encodeCodecConfig.h264Config.repeatSPSPPS = 1;

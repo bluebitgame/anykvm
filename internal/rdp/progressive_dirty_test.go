@@ -3,7 +3,6 @@ package rdp
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -74,78 +73,5 @@ func TestProgressiveBatchEnd(t *testing.T) {
 		{0, 128, 128, 128}, {128, 128, 128, 128}}
 	if progressiveBatchEnd(mixed, 0) != 4 || progressiveBatchEnd(mixed, 4) != 6 {
 		t.Fatal("mixed rectangle sizes were batched by rectangle count instead of tiles")
-	}
-}
-
-// Compare the old 128px detector with the production 64px detector, including
-// dirty scanning, CGO calls, and output copies. Transport/capture are excluded.
-func BenchmarkProgressiveDirtyTiles(b *testing.B) {
-	const w, h = 1280, 720
-	for _, workload := range []string{"cursor", "sparse", "full"} {
-		previous := progressivePixels(w, h, "gradient")
-		pixels := append([]byte(nil), previous...)
-		patch := func(x, y int) {
-			for yy := y; yy < y+16; yy++ {
-				for xx := x; xx < x+16; xx++ {
-					i := (yy*w + xx) * 4
-					pixels[i], pixels[i+1], pixels[i+2] = 255, 255, 255
-				}
-			}
-		}
-		switch workload {
-		case "cursor":
-			patch(17, 19)
-		case "sparse":
-			for i := 0; i < 8; i++ {
-				patch(i*128+17, (i%4)*128+19)
-			}
-		case "full":
-			previous = nil
-		}
-		for _, size := range []int{128, 64} {
-			b.Run(fmt.Sprintf("%s/%dpx", workload, size), func(b *testing.B) {
-				e, err := newProgressiveEncoder(0)
-				if errors.Is(err, errProgressiveNativeUnavailable) || errors.Is(err, errProgressiveSIMDUnavailable) {
-					b.Skip(err)
-				}
-				if err != nil {
-					b.Fatal(err)
-				}
-				defer e.close()
-				b.Logf("encoder=%s quantization=6", e.backend())
-				encode := func(frame uint32) (encoded, tiles, batches int) {
-					var rects []bitmapRect
-					if size == 64 {
-						rects = dirtyProgressiveRects(pixels, previous, w, h)
-					} else {
-						rects = dirtyBitmapRectsSized(pixels, previous, w, h, size)
-					}
-					for i := 0; i < len(rects); {
-						end := progressiveBatchEnd(rects, i)
-						out, err := e.encode(pixels, w, h, rects[i:end], frame)
-						if err != nil {
-							b.Fatal(err)
-						}
-						encoded += len(out)
-						for _, r := range rects[i:end] {
-							tiles += progressiveRectTiles(r)
-						}
-						batches++
-						i = end
-					}
-					return
-				}
-				encode(0) // Warm up persistent scratch/output; omit context headers.
-				b.ReportAllocs()
-				b.ResetTimer()
-				var encoded, tiles, batches int
-				for frame := 0; frame < b.N; frame++ {
-					encoded, tiles, batches = encode(uint32(frame))
-				}
-				b.ReportMetric(float64(encoded), "encoded-B/frame")
-				b.ReportMetric(float64(tiles), "tiles/frame")
-				b.ReportMetric(float64(batches), "batches/frame")
-			})
-		}
 	}
 }

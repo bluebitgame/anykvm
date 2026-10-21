@@ -1,0 +1,120 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux/amd64
+            runner: ubuntu-22.04
+            artifact: linux-amd64
+          - target: linux/arm64
+            runner: ubuntu-22.04
+            artifact: linux-arm64
+          - target: windows/amd64
+            runner: ubuntu-22.04
+            artifact: windows-amd64
+          - target: windows/arm64
+            runner: ubuntu-22.04
+            artifact: windows-arm64
+          - target: darwin/amd64
+            runner: macos-15-intel
+            artifact: darwin-amd64
+          - target: darwin/arm64
+            runner: macos-15
+            artifact: darwin-arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install Linux build dependencies
+        if: matrix.target == 'linux/amd64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libv4l-dev libasound2-dev
+      - name: Check release packaging
+        run: python3 -m unittest discover -s tools -p test_package_release.py
+      - name: Build with native media support
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: python3 tools/build.py --targets "$BUILD_TARGET"
+      - name: Require Windows audio runtime
+        if: startsWith(matrix.target, 'windows/')
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: python3 tools/package_opus.py --arch "${BUILD_TARGET#*/}" --output "build/releases/$ARTIFACT/lib"
+      - name: Package executable, runtime libraries and licenses
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: python3 tools/package_release.py --target "$BUILD_TARGET"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: anykvm-${{ matrix.artifact }}
+          path: build/dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: anykvm-*
+          path: dist
+          merge-multiple: true
+      - name: Verify packages and collect checksums
+        working-directory: dist
+        run: |
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            test -s "anykvm-$platform.tar.gz"
+          done
+          for platform in windows-amd64 windows-arm64; do
+            test -s "anykvm-$platform.zip"
+          done
+          cat *.sha256 > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          rm -- *.sha256
+      - name: Upload assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false
+          fi

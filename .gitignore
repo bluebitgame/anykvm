@@ -29,6 +29,7 @@ __pycache__/
 # Generated shader assets and local benchmark records
 /internal/gpuconv/shaders/*.json
 /internal/jpegcodec/shaders/*.json
+/internal/rdp/shaders/*.json
 /tools/codec-bench/**/results*.json
 
 # Pinned third-party inputs restored by tools/prepare_sources.py

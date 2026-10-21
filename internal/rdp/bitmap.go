@@ -236,34 +236,31 @@ func bitmapBGRA(data []byte, w, h int, format string) ([]byte, error) {
 	return out, nil
 }
 
-// Keep the output cadence independent of encoding and socket-write duration.
-// Missed slots are skipped so a slow frame does not accumulate a send backlog.
-func nextBitmapDeadline(deadline, started time.Time, interval time.Duration) time.Time {
-	if deadline.IsZero() {
-		return started.Add(interval)
-	}
-	if !deadline.After(started) {
-		return deadline.Add((started.Sub(deadline)/interval + 1) * interval)
-	}
-	return deadline
+func (c *client) bitmapLoop() error {
+	return c.bitmapLoopWithEncoder(nil)
 }
 
-func (c *client) bitmapLoop() error {
+func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 	v := videoPipeline{}
 	defer v.close()
 	var previous []byte
 	previousFormat := progressivePixelFormat(255)
+	previousSurface := false
 	w, h := 0, 0
 	clear := newClearEncoder()
 	planar := planarEncoder{}
 	if c.codec == codecPlanar {
-		log.Printf("rdp: %s: Planar YCoCg420 encoder=%s CLL=1", c.conn.RemoteAddr(), planar.backend())
+		log.Printf("rdp: %s: bitmap codec=%s encoder=%q CLL=1", c.conn.RemoteAddr(), c.codec, planar.backend())
 	}
-	var progressive *progressiveEncoder
+	if c.codec == codecClear {
+		log.Printf("rdp: %s: bitmap codec=%s encoder=Go pixelops=%q", c.conn.RemoteAddr(), c.codec, pixelops.Backend())
+	}
 	if c.codec == codecProgressive {
 		var err error
 		runtime := c.s.runtimeConfig()
-		progressive, err = newProgressiveEncoder(runtime.ProgressiveQuantization)
+		if progressive == nil {
+			progressive, err = newProgressiveEncoder(runtime.ProgressiveQuantization)
+		}
 		if err != nil {
 			return err
 		}
@@ -271,13 +268,13 @@ func (c *client) bitmapLoop() error {
 		if err := progressive.setRefinement(runtime.ProgressiveRefinement); err != nil {
 			return err
 		}
-		log.Printf("rdp: %s: Progressive encoder=%s quantization=%d refine=%d", c.conn.RemoteAddr(), progressive.backend(), progressive.quantization, progressive.refineBits)
+		log.Printf("rdp: %s: bitmap codec=%s encoder=%q quantization=%d refine=%d", c.conn.RemoteAddr(), c.codec, progressive.backend(), progressive.quantization, progressive.refineBits)
 	}
-	started, nextFrame := time.Now(), time.Time{}
+	started := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	statsStarted := started
-	var frames, tiles, payload int64
+	var frames, tiles int64
 	var held bridge.Frame
 	defer func() { held.Release() }()
 	var refinementFrames, refinementTiles int64
@@ -287,14 +284,13 @@ func (c *client) bitmapLoop() error {
 		if progressive != nil && progressive.refineBits != 0 {
 			// Fresh captures take priority. In the gaps, refine immediately and
 			// resume on each ACK rather than waiting for a tile to stop changing.
-			n, bytes, encoded, sent, err := c.sendProgressiveRefinement(progressive, started)
+			n, _, encoded, sent, err := c.sendProgressiveRefinement(progressive, started)
 			if err != nil {
 				return err
 			}
 			if n != 0 {
 				refinementFrames++
 				refinementTiles += int64(n)
-				payload += int64(bytes)
 				encodeMax, sendMax = max(encodeMax, encoded), max(sendMax, sent)
 				continue
 			}
@@ -304,22 +300,36 @@ func (c *client) bitmapLoop() error {
 			return nil
 		case <-ticker.C:
 			elapsed := time.Since(statsStarted).Seconds()
-			log.Printf("rdp: %s: bitmap codec=%s output=%.1f fps refine=%.1f fps graphics=%.1f Mbps tiles=%d refine_tiles=%d encode_max=%.1fms send_max=%.1fms ack_wait_max=%.1fms",
-				c.conn.RemoteAddr(), c.codec, float64(frames)/elapsed, float64(refinementFrames)/elapsed, float64(payload)*8/elapsed/1e6, tiles, refinementTiles,
+			log.Printf("rdp: %s: bitmap output=%.1f fps refine=%.1f fps tiles=%d refine_tiles=%d encode_max=%.1fms send_max=%.1fms ack_wait_max=%.1fms",
+				c.conn.RemoteAddr(), float64(frames)/elapsed, float64(refinementFrames)/elapsed, tiles, refinementTiles,
 				float64(encodeMax)/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond))
 			statsStarted = time.Now()
-			frames, tiles, payload = 0, 0, 0
+			frames, tiles = 0, 0
 			refinementFrames, refinementTiles = 0, 0
 			encodeMax, sendMax, ackMax = 0, 0, 0
 		case <-c.ack:
 			// A released ACK slot can immediately carry the next refinement.
 		case f := <-c.frames:
-			var ok bool
-			f, ok = c.waitBitmapCapture(f, f.Width, f.Height, nextFrame)
-			if !ok {
-				return nil
-			}
 			held = f
+			var frameAckWait, lateAckWait time.Duration
+			if !predictionCoded(f.Format) {
+				ackStarted := time.Now()
+				next, _, err := c.waitCaptureWindow(f)
+				f, held = next, next
+				if err != nil {
+					return err
+				}
+				ackEnded := time.Now()
+				ackMax = max(ackMax, ackEnded.Sub(ackStarted))
+				frameAckWait += f.Timing.Waited(ackStarted, ackEnded)
+			}
+			select {
+			case <-c.done:
+				return nil
+			default:
+			}
+			processingStarted := time.Now()
+			requestedW, requestedH := c.requestedOutputSize(f.Width, f.Height)
 			refresh := c.reset.Swap(false)
 			if refresh {
 				previous = nil
@@ -338,17 +348,35 @@ func (c *client) bitmapLoop() error {
 					c.s.cfg.OnKeyframe()
 				}
 			}
-			data, width, height, format, err := v.sourcePixels(f)
-			if err != nil {
-				return err
-			}
-			if len(data) == 0 {
-				continue
+			surface := f.Surface != nil
+			width, height := f.Width, f.Height
+			var data []byte
+			format := "bgra"
+			var err error
+			if surface {
+				if progressive == nil || f.Format != capture.FormatSurface || f.Buffer == nil || f.Surface.Width != width || f.Surface.Height != height {
+					return fmt.Errorf("invalid GPU capture for RDP Progressive")
+				}
+			} else {
+				data, width, height, format, err = v.sourcePixels(f)
+				if err != nil {
+					return err
+				}
+				if len(data) == 0 {
+					continue
+				}
 			}
 			pixelFormat := progressiveBGRA
 			var pixels []byte
-			outputW, outputH := c.requestedOutputSize(width, height)
-			if outputW != width || outputH != height {
+			outputW, outputH := c.bitmapOutputSize(f, width, height)
+			if surface {
+				// Only coordinate metadata crosses the CPU. The surface shader
+				// performs the fit/resample and keeps both comparison frames in VRAM.
+				fit := fittedFrameRect(width, height, outputW, outputH, false)
+				f.ContentRect = transformedContentRect(frameContentRect(f), width, height, fit)
+				f.Width, f.Height = outputW, outputH
+				width, height = outputW, outputH
+			} else if outputW != width || outputH != height {
 				pixels, err = bitmapBGRA(data, width, height, format)
 				if err == nil {
 					f.Width, f.Height = width, height
@@ -363,23 +391,29 @@ func (c *client) bitmapLoop() error {
 			if err != nil {
 				return err
 			}
+			layout := makeGraphicsLayout(width, height, requestedW, requestedH, c.scaledMapping)
+			layoutChanged := c.graphics != layout
 			resized := width != w || height != h
-			frameStarted := time.Now()
-			if !refresh && !resized && frameStarted.Before(nextFrame) {
-				continue
-			}
-			if resized {
+			if resized || layoutChanged {
 				if w != 0 && c.codec == codecProgressive {
 					if err := c.sendGFX(gfxPDU(3, join(u16(1), u32(1)))); err != nil {
 						return err
 					}
 				}
+				if progressive != nil {
+					progressive.first = true
+					progressive.discardRefinements()
+				}
 				previous = nil
 			}
-			if (c.codec == codecProgressive || c.codec == codecPlanar) && previousFormat != pixelFormat {
+			modeChanged := previousSurface != surface
+			if (c.codec == codecProgressive || c.codec == codecPlanar) && (previousFormat != pixelFormat || modeChanged) {
 				name := "BGRA"
 				if pixelFormat == progressiveNV12 {
 					name = "NV12 (BT.709 video range)"
+				}
+				if surface {
+					name = "GPU BGRA (immutable capture; GPU dirty detection)"
 				}
 				label := "Progressive"
 				if c.codec == codecPlanar {
@@ -390,7 +424,15 @@ func (c *client) bitmapLoop() error {
 				previousFormat = pixelFormat
 			}
 			var rects []bitmapRect
-			if c.codec == codecProgressive || c.codec == codecPlanar {
+			prepareTime := time.Duration(0)
+			if surface {
+				started := time.Now()
+				rects, err = progressive.prepareSurface(f.Surface, width, height, refresh || resized || layoutChanged || modeChanged)
+				prepareTime = time.Since(started)
+				if err != nil {
+					return err
+				}
+			} else if c.codec == codecProgressive || c.codec == codecPlanar {
 				rects = dirtyProgressiveRectsFormat(pixels, previous, width, height, pixelFormat)
 				if c.codec == codecPlanar {
 					rects = coalesceBitmapRects(rects, width, height)
@@ -402,25 +444,31 @@ func (c *client) bitmapLoop() error {
 			if len(rects) == 0 {
 				continue
 			}
-			ackStarted := time.Now()
-			if err := c.waitWindow(); err != nil {
-				return err
+			if predictionCoded(f.Format) {
+				ackStarted := time.Now()
+				if err := c.waitWindow(); err != nil {
+					return err
+				}
+				ackEnded := time.Now()
+				lateAckWait = ackEnded.Sub(ackStarted)
+				ackMax = max(ackMax, lateAckWait)
+				frameAckWait += f.Timing.Waited(ackStarted, ackEnded)
 			}
-			ackMax = max(ackMax, time.Since(ackStarted))
-			if resized {
-				if err := c.ensureGraphicsSize(width, height); err != nil {
+			if resized || layoutChanged {
+				if err := c.ensureGraphicsLayout(layout); err != nil {
 					return err
 				}
 				w, h = width, height
 				clear = newClearEncoder()
 			}
-			c.input.frameGeometry(f, w, h)
+			c.frameGeometry(f, w, h)
 			c.ackMu.Lock()
 			c.sent++
 			id := c.sent
 			c.ackMu.Unlock()
 			batch := gfxPDU(0xb, join(u32(uint32(time.Since(started)/time.Millisecond)), u32(id)))
-			var encodeTime, sendTime time.Duration
+			encodeTime := prepareTime
+			var sendTime time.Duration
 			var firstWrite time.Time
 			sendBatch := func(p []byte) error {
 				writeStarted := time.Now()
@@ -429,11 +477,9 @@ func (c *client) bitmapLoop() error {
 				}
 				err := c.sendGFX(p)
 				sendTime += time.Since(writeStarted)
-				if err == nil {
-					payload += int64(len(p))
-				}
 				return err
 			}
+			var progressivePackets [][]byte
 			for index := 0; index < len(rects); {
 				r := rects[index]
 				index++
@@ -444,15 +490,27 @@ func (c *client) bitmapLoop() error {
 						continue
 					}
 				}
-				var update []byte
+				var update, progressiveData []byte
 				if c.codec == codecProgressive {
 					end := progressiveBatchEnd(rects, index-1)
-					encoded, err := progressive.encodeFormat(pixels, w, h, rects[index-1:end], id, pixelFormat)
+					var encoded []byte
+					var err error
+					if surface {
+						encoded, err = progressive.encodeSurface(w, h, rects[index-1:end], id)
+					} else {
+						if len(progressivePackets) == 0 {
+							windowEnd := progressiveWindowEnd(rects, index-1)
+							progressivePackets, err = progressive.encodeWindow(pixels, w, h, rects[index-1:windowEnd], id, pixelFormat)
+						}
+						if err == nil {
+							encoded, progressivePackets = progressivePackets[0], progressivePackets[1:]
+						}
+					}
 					if err != nil {
 						return err
 					}
 					index = end
-					update = graphicsProgressive(encoded)
+					progressiveData = encoded
 				} else if c.codec == codecPlanar {
 					encoded := planar.encodeRect(pixels, w, h, r, pixelFormat)
 					update = graphicsBitmap(encoded, r, c.codec)
@@ -462,21 +520,41 @@ func (c *client) bitmapLoop() error {
 					update = graphicsBitmap(encoded, r, c.codec)
 				}
 				encodeTime += time.Since(encodeStarted)
-				if len(batch)+len(update) > 256<<10 {
+				updateSize := len(update)
+				if progressiveData != nil {
+					updateSize = graphicsProgressiveHeaderSize + len(progressiveData)
+				}
+				if len(batch)+updateSize > 256<<10 {
 					if err := sendBatch(batch); err != nil {
 						return err
 					}
 					batch = batch[:0]
 				}
-				batch = append(batch, update...)
+				if progressiveData != nil {
+					packing := time.Now()
+					batch = appendGraphicsProgressive(batch, progressiveData)
+					encodeTime += time.Since(packing)
+				} else {
+					batch = append(batch, update...)
+				}
 			}
 			batch = append(batch, gfxPDU(0xc, u32(id))...)
 			if err := sendBatch(batch); err != nil {
 				return err
 			}
-			f.Timing.Sent("rdp-bitmap", firstWrite)
-			previous = append(previous[:0], pixels...)
-			nextFrame = nextBitmapDeadline(nextFrame, frameStarted, time.Second/time.Duration(captureFPS(f)))
+			processing := time.Since(processingStarted) - lateAckWait - sendTime
+			f.Timing.SentRDP("rdp-bitmap", firstWrite, processing, sendTime, frameAckWait)
+			if surface {
+				committing := time.Now()
+				if err := progressive.commitSurface(); err != nil {
+					return err
+				}
+				encodeTime += time.Since(committing)
+				previous = nil
+			} else {
+				previous = append(previous[:0], pixels...)
+			}
+			previousSurface = surface
 			frames++
 			tiles += int64(len(rects))
 			encodeMax, sendMax = max(encodeMax, encodeTime), max(sendMax, sendTime)

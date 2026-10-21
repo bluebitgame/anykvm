@@ -1,4 +1,4 @@
-//go:build darwin && cgo && !anykvm_jpeg_turbo
+//go:build darwin && cgo && !amd64 && !anykvm_jpeg_simd
 
 #import <Foundation/Foundation.h>
 #include <CoreGraphics/CoreGraphics.h>

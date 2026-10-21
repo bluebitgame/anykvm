@@ -1,4 +1,4 @@
-//go:build windows && cgo && !ffmpeg
+//go:build windows && cgo
 
 #define BK_VENDOR_IMPLEMENTATION
 #include "third_party/vpl/mfxvideo.h"
@@ -295,6 +295,65 @@ static int bk_qsv_implementation(HMODULE module, uint64_t luid, mfxU32 *implemen
     return found;
 }
 
+// VPL publishes codec/profile/input-format support without creating an encoder.
+int bk_qsv_supports(int codec) {
+    HMODULE module = bk_qsv_driver();
+    if (!module)
+        return 0;
+    mfxHDL *(MFX_CDECL * query)(mfxImplCapsDeliveryFormat, mfxU32 *) =
+        (void *)GetProcAddress(module, "MFXQueryImplsDescription");
+    mfxStatus(MFX_CDECL * release)(mfxHDL) = (void *)GetProcAddress(module, "MFXReleaseImplDescription");
+    mfxU32 id = codec == 1 ? MFX_CODEC_HEVC : MFX_CODEC_AV1;
+    mfxU32 profile = codec == 1 ? MFX_PROFILE_HEVC_MAIN : MFX_PROFILE_AV1_MAIN;
+    int supported = 0;
+    if (query && release) {
+        mfxU32 count = 0;
+        mfxHDL *descriptions = query(MFX_IMPLCAPS_IMPLDESCSTRUCTURE, &count);
+        for (mfxU32 i = 0; descriptions && i < count; i++) {
+            mfxImplDescription *d = descriptions[i];
+            if (!d || d->Impl != MFX_IMPL_TYPE_HARDWARE)
+                continue;
+            for (mfxU16 c = 0; c < d->Enc.NumCodecs; c++) {
+                if (d->Enc.Codecs[c].CodecID != id)
+                    continue;
+                for (mfxU16 p = 0; p < d->Enc.Codecs[c].NumProfiles; p++) {
+                    struct encprofile *pr = &d->Enc.Codecs[c].Profiles[p];
+                    if (pr->Profile != profile)
+                        continue;
+                    for (mfxU16 m = 0; m < pr->NumMemTypes; m++)
+                        for (mfxU16 f = 0; f < pr->MemDesc[m].NumColorFormats; f++)
+                            if (pr->MemDesc[m].ColorFormats[f] == MFX_FOURCC_NV12)
+                                supported = 1;
+                }
+            }
+        }
+        for (mfxU32 i = 0; descriptions && i < count; i++)
+            release(descriptions[i]);
+    } else if (codec == 1) {
+        // Older Media SDK drivers expose the capability query on a session.
+        mfxStatus(MFX_CDECL * init)(mfxInitParam, mfxSession *) = (void *)GetProcAddress(module, "MFXInitEx");
+        mfxStatus(MFX_CDECL * close)(mfxSession) = (void *)GetProcAddress(module, "MFXClose");
+        mfxStatus(MFX_CDECL * encode_query)(mfxSession, mfxVideoParam *, mfxVideoParam *) =
+            (void *)GetProcAddress(module, "MFXVideoENCODE_Query");
+        mfxInitParam params = {0};
+        mfxSession session = NULL;
+        params.Implementation = MFX_IMPL_HARDWARE_ANY | MFX_IMPL_VIA_D3D11;
+        params.Version.Major = 1;
+        params.Version.Minor = 19;
+        mfxStatus status = init && close && encode_query ? init(params, &session) : MFX_ERR_UNSUPPORTED;
+        if (status >= 0 && session) {
+            mfxVideoParam output = {0};
+            output.mfx.CodecId = id;
+            mfxStatus result = encode_query(session, NULL, &output);
+            supported = status != MFX_WRN_PARTIAL_ACCELERATION && result >= 0 &&
+                        result != MFX_WRN_PARTIAL_ACCELERATION && output.mfx.CodecId == id;
+            close(session);
+        }
+    }
+    FreeLibrary(module);
+    return supported;
+}
+
 static void *bk_qsv_open(const bk_vendor_options *o, char *error, size_t capacity) {
     bk_qsv *e = calloc(1, sizeof(*e));
     if (!e) {
@@ -336,7 +395,7 @@ static void *bk_qsv_open(const bk_vendor_options *o, char *error, size_t capacit
             goto failed;
         }
         QSV_TRY(initialize(init, &e->session));
-    } else if (legacy_init && o->codec == 0) {
+    } else if (legacy_init && o->codec != 2) {
         mfxInitParam init = {0};
         init.Implementation = MFX_IMPL_HARDWARE_ANY | MFX_IMPL_VIA_D3D11;
         if (o->adapter_set) {
@@ -375,8 +434,8 @@ static void *bk_qsv_open(const bk_vendor_options *o, char *error, size_t capacit
     mfxVideoParam params = {0};
     params.AsyncDepth = 1;
     params.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY;
-    params.mfx.CodecId = o->codec == 2 ? MFX_CODEC_AV1 : MFX_CODEC_AVC;
-    params.mfx.CodecProfile = o->codec == 2 ? MFX_PROFILE_AV1_MAIN : MFX_PROFILE_AVC_BASELINE;
+    params.mfx.CodecId = o->codec == 2 ? MFX_CODEC_AV1 : o->codec == 1 ? MFX_CODEC_HEVC : MFX_CODEC_AVC;
+    params.mfx.CodecProfile = o->codec == 2 ? MFX_PROFILE_AV1_MAIN : o->codec == 1 ? MFX_PROFILE_HEVC_MAIN : MFX_PROFILE_AVC_BASELINE;
     params.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
     params.mfx.GopPicSize = (mfxU16)(((uint64_t)o->num * 2 + o->den - 1) / o->den);
     params.mfx.GopRefDist = 1;
@@ -419,6 +478,11 @@ static void *bk_qsv_open(const bk_vendor_options *o, char *error, size_t capacit
         coding2.AdaptiveI = coding2.AdaptiveB = MFX_CODINGOPTION_OFF;
         params.ExtParam = extensions;
         params.NumExtParam = 3;
+    } else if (o->codec == 1) {
+        coding2.RepeatPPS = MFX_CODINGOPTION_ON;
+        coding2.AdaptiveI = coding2.AdaptiveB = MFX_CODINGOPTION_OFF;
+        params.ExtParam = &extensions[1];
+        params.NumExtParam = 2;
     } else {
         params.ExtParam = &extensions[2];
         params.NumExtParam = 2;

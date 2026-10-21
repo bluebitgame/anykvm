@@ -3,6 +3,7 @@ package wsmedia
 import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/videotiming"
+	"log"
 	"sync"
 	"time"
 
@@ -10,15 +11,16 @@ import (
 )
 
 type wsClient struct {
-	conn         *websocket.Conn
-	srv          *Server
-	sendCh       chan *outboundMessage
-	sendMu       sync.RWMutex
-	done         chan struct{}
-	once         sync.Once
-	active       bool            // guarded by Server.mu; capability handshake has started capture.
-	audioCodecs  map[string]bool // guarded by Server.mu
-	audioFormats map[string]bool // nil for legacy codec-only capability messages
+	conn            *websocket.Conn
+	srv             *Server
+	sendCh          chan *outboundMessage
+	sendMu          sync.RWMutex
+	done            chan struct{}
+	once            sync.Once
+	active          bool            // guarded by Server.mu; capability handshake has started capture.
+	audioCodecs     map[string]bool // guarded by Server.mu
+	audioFormats    map[string]bool // nil for legacy codec-only capability messages
+	loggedVideoKind byte
 
 	// JPEG pictures are independent: retain only the newest unsent picture.
 	// Keep this separate from ordered video, metadata and audio messages.
@@ -193,8 +195,16 @@ func (c *wsClient) writeOutbound(msg *outboundMessage) bool {
 		return false
 	}
 	msg.timing.Sent("websocket", started)
+	if kind := msg.kind(); kind == msgJPEG || kind == msgH264 || kind == msgHEVC || kind == msgAV1 {
+		if kind := msg.kind(); kind != c.loggedVideoKind {
+			codec := map[byte]string{msgJPEG: "jpeg", msgH264: "h264", msgHEVC: "hevc", msgAV1: "av1"}[kind]
+			log.Printf("wsmedia: %s: video codec=%s encoder=passthrough", c.conn.RemoteAddr(), codec)
+			c.loggedVideoKind = kind
+		}
+	}
 	return true
 }
+
 func (c *wsClient) writeMessage(kind int, msg []byte) bool {
 	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := c.conn.WriteMessage(kind, msg); err != nil {

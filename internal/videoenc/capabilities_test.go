@@ -1,10 +1,10 @@
 package videoenc
 
 import (
-	"encoding/binary"
 	"errors"
-	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -28,37 +28,6 @@ func (e *probeEncoder) Encode(_ []byte, force bool) ([]byte, error) {
 }
 func (e *probeEncoder) Name() string { return "test" }
 func (e *probeEncoder) Close()       { e.closed = true }
-func TestAV1ProbeRequiresRecoveryFrame(t *testing.T) {
-	data, err := os.ReadFile("../testdata/stream.ivf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := data[44 : 44+int(binary.LittleEndian.Uint32(data[32:]))]
-	for _, tc := range []struct {
-		name string
-		e    probeEncoder
-		want bool
-	}{
-		{"key", probeEncoder{data: key}, true}, {"delayed key", probeEncoder{data: key, delayed: true}, true},
-		{"no output", probeEncoder{}, false}, {"driver error", probeEncoder{fail: true}, false},
-		{"wrong codec", probeEncoder{data: []byte{0, 0, 1, 0x65}}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := probeAV1(func(o Options) (Encoder, error) {
-				if o.Codec != "av1" {
-					t.Fatal(o)
-				}
-				return &tc.e, nil
-			})
-			if got != tc.want || !tc.e.closed || tc.e.calls > 4 {
-				t.Fatalf("got=%v encoder=%+v", got, tc.e)
-			}
-		})
-	}
-	if probeAV1(func(Options) (Encoder, error) { return nil, ErrUnavailable }) {
-		t.Fatal("unavailable advertised")
-	}
-}
 func TestDarwinAV1CannotFallBackToH264(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS only")
@@ -66,5 +35,35 @@ func TestDarwinAV1CannotFallBackToH264(t *testing.T) {
 	if e, err := New(Options{Codec: "av1", Width: 1280, Height: 720}); err == nil {
 		e.Close()
 		t.Fatal("AV1 silently substituted")
+	}
+}
+
+func TestCodecCapabilityQueriesOnlyRequestedCodecOnce(t *testing.T) {
+	for _, codec := range []string{"hevc", "av1"} {
+		for _, supported := range []bool{false, true} {
+			var capability codecCapability
+			var calls atomic.Int32
+			query := func(request string) bool {
+				if request != codec {
+					t.Errorf("queried %s instead of %s", request, codec)
+				}
+				calls.Add(1)
+				return supported
+			}
+			var wg sync.WaitGroup
+			for i := 0; i < 16; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if capability.get(codec, query) != supported {
+						t.Error("driver declaration changed")
+					}
+				}()
+			}
+			wg.Wait()
+			if calls.Load() != 1 {
+				t.Fatalf("capability queried %d times", calls.Load())
+			}
+		}
 	}
 }

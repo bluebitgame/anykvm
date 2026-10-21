@@ -10,6 +10,12 @@ import build
 
 
 class BuildTests(unittest.TestCase):
+    def setUp(self):
+        for name, value in (("system", "Linux"), ("machine", "x86_64")):
+            patcher = patch.object(build.platform, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_only_linux_builds_require_shader_compilation(self):
         for target in ("darwin/amd64", "windows/arm64", "linux/arm64"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary, \
@@ -57,7 +63,7 @@ class BuildTests(unittest.TestCase):
         output = io.StringIO()
         with patch("builtins.input", side_effect=["", "", "", ""]), \
                 contextlib.redirect_stdout(output):
-            self.assertEqual(build.interactive_selection(), (list(build.TARGETS), ""))
+            self.assertEqual(build.interactive_selection(), (["linux/amd64"], ""))
         titles = ("Select target platform", "Select target architecture", "Include viewer", "Include FFmpeg")
         positions = [output.getvalue().index(title) for title in titles]
         self.assertEqual(positions, sorted(positions))

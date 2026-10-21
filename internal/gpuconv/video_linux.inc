@@ -1,4 +1,4 @@
-// Native Vulkan Video H.264: one reference, no B pictures, bounded submission.
+// Native Vulkan Video H.264/HEVC/AV1: one reference, no reordered pictures, bounded submission.
 // Included by native_linux.c so conversion and encoding share the same device.
 typedef struct {
     VkImage image;
@@ -14,7 +14,7 @@ struct bk_vk_encoder {
     video_image input, dpb[2];
     video_image nv12_images[64];
     bk_vk_source nv12_sources[64];
-    uint64_t nv12_inodes[64],nv12_devices[64];
+    uint64_t nv12_inodes[64], nv12_devices[64];
     unsigned nv12_count;
     VkCommandPool commands;
     VkCommandBuffer command;
@@ -22,16 +22,30 @@ struct bk_vk_encoder {
     VkSemaphore ready;
     buffer bitstream;
     VkVideoEncodeH264ProfileInfoKHR h264_profile;
+    VkVideoEncodeH265ProfileInfoKHR h265_profile;
+    VkVideoEncodeAV1ProfileInfoKHR av1_profile;
     VkVideoEncodeUsageInfoKHR usage;
     VkVideoProfileInfoKHR profile;
     VkVideoProfileListInfoKHR profiles;
     VkVideoCapabilitiesKHR caps;
     VkVideoEncodeCapabilitiesKHR encode_caps;
     VkVideoEncodeH264CapabilitiesKHR h264_caps;
+    VkVideoEncodeH265CapabilitiesKHR h265_caps;
+    VkVideoEncodeAV1CapabilitiesKHR av1_caps;
     VkVideoEncodeRateControlLayerInfoKHR layer;
     VkVideoEncodeH264RateControlInfoKHR h264_rc;
+    VkVideoEncodeH265RateControlInfoKHR h265_rc;
+    VkVideoEncodeAV1RateControlInfoKHR av1_rc;
     VkVideoEncodeRateControlInfoKHR rc;
     StdVideoEncodeH264ReferenceInfo previous;
+    StdVideoEncodeH265ReferenceInfo h265_previous;
+    StdVideoEncodeAV1ReferenceInfo av1_previous;
+    StdVideoH265LevelIdc h265_level;
+    StdVideoAV1Level av1_level;
+    uint32_t ctb_log2, transform_log2, av1_sb_log2;
+    StdVideoAV1TileInfo av1_tiles;
+    uint16_t av1_col_starts[65], av1_row_starts[65], av1_tile_widths[64], av1_tile_heights[64];
+    int codec;
     uint32_t width, height, aligned_width, aligned_height, gop, frame, slot;
     int initialized, input_initialized;
     uint8_t *headers;
@@ -132,6 +146,8 @@ static StdVideoH264LevelIdc video_level(uint32_t w, uint32_t h, uint32_t num, ui
             return levels[i].id;
     return STD_VIDEO_H264_LEVEL_IDC_INVALID;
 }
+#include "video_codecs_linux.inc"
+#include "video_capability_linux.inc"
 bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int den, int bitrate, char *error,
                                  size_t capacity) {
     if (!v->video_queue) {
@@ -142,27 +158,41 @@ bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int d
     if (!e)
         return NULL;
     e->v = v;
+    e->codec = v->video_codec;
     e->width = width;
     e->height = height;
     e->gop = ((uint64_t)num * 2 + den - 1) / den;
     e->h264_profile = (VkVideoEncodeH264ProfileInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PROFILE_INFO_KHR,
                                                         .stdProfileIdc = STD_VIDEO_H264_PROFILE_IDC_BASELINE};
+    e->h265_profile = (VkVideoEncodeH265ProfileInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_PROFILE_INFO_KHR,
+                                                        .stdProfileIdc = STD_VIDEO_H265_PROFILE_IDC_MAIN};
+    e->av1_profile = (VkVideoEncodeAV1ProfileInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PROFILE_INFO_KHR,
+                                                      .stdProfile = STD_VIDEO_AV1_PROFILE_MAIN};
     e->usage = (VkVideoEncodeUsageInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_USAGE_INFO_KHR,
-                                           .pNext = &e->h264_profile,
+                                           .pNext = e->codec == 1   ? (void *)&e->h265_profile
+                                                    : e->codec == 2 ? (void *)&e->av1_profile
+                                                                    : (void *)&e->h264_profile,
                                            .videoUsageHints = VK_VIDEO_ENCODE_USAGE_STREAMING_BIT_KHR,
                                            .videoContentHints = VK_VIDEO_ENCODE_CONTENT_DESKTOP_BIT_KHR,
                                            .tuningMode = VK_VIDEO_ENCODE_TUNING_MODE_ULTRA_LOW_LATENCY_KHR};
-    e->profile = (VkVideoProfileInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR,
-                                         .pNext = &e->usage,
-                                         .videoCodecOperation = VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
-                                         .chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-                                         .lumaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
-                                         .chromaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR};
+    e->profile =
+        (VkVideoProfileInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR,
+                                .pNext = &e->usage,
+                                .videoCodecOperation = e->codec == 1   ? VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR
+                                                       : e->codec == 2 ? VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR
+                                                                       : VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+                                .chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
+                                .lumaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                                .chromaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR};
     e->profiles = (VkVideoProfileListInfoKHR){
         .sType = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, .profileCount = 1, .pProfiles = &e->profile};
     e->h264_caps.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR;
+    e->h265_caps.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_CAPABILITIES_KHR;
+    e->av1_caps.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_CAPABILITIES_KHR;
     e->encode_caps.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR;
-    e->encode_caps.pNext = &e->h264_caps;
+    e->encode_caps.pNext = e->codec == 1   ? (void *)&e->h265_caps
+                           : e->codec == 2 ? (void *)&e->av1_caps
+                                           : (void *)&e->h264_caps;
     e->caps.sType = VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR;
     e->caps.pNext = &e->encode_caps;
     VkResult status = v->GetPhysicalDeviceVideoCapabilitiesKHR(v->physical, &e->profile, &e->caps);
@@ -173,7 +203,9 @@ bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int d
     if (width < (int)e->caps.minCodedExtent.width || height < (int)e->caps.minCodedExtent.height ||
         width > (int)e->caps.maxCodedExtent.width || height > (int)e->caps.maxCodedExtent.height ||
         e->caps.maxDpbSlots < 2 || e->caps.maxActiveReferencePictures < 1 ||
-        !e->h264_caps.maxPPictureL0ReferenceCount ||
+        (e->codec == 0 && !e->h264_caps.maxPPictureL0ReferenceCount) ||
+        (e->codec == 1 && !e->h265_caps.maxPPictureL0ReferenceCount) ||
+        (e->codec == 2 && (!e->av1_caps.maxSingleReferenceCount || !(e->av1_caps.singleReferenceNameMask & 127))) ||
         !(e->encode_caps.rateControlModes & VK_VIDEO_ENCODE_RATE_CONTROL_MODE_CBR_BIT_KHR) ||
         (uint64_t)bitrate * 1000 > e->encode_caps.maxBitrate ||
         (e->encode_caps.supportedEncodeFeedbackFlags & (VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BUFFER_OFFSET_BIT_KHR |
@@ -181,21 +213,25 @@ bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int d
             (VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BUFFER_OFFSET_BIT_KHR |
              VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR)) {
         snprintf(error, capacity,
-                 "Vulkan H.264 baseline lacks required extent, one-reference CBR or bitstream-feedback capabilities");
+                 "Vulkan Video lacks required extent, one-reference CBR or bitstream-feedback capabilities");
         goto failed;
     }
-    uint32_t gw = e->caps.pictureAccessGranularity.width, gh = e->caps.pictureAccessGranularity.height;
-    if (gw < 16)
-        gw = 16;
-    if (gh < 16)
-        gh = 16;
-    e->aligned_width = (width + gw - 1) / gw * gw;
-    e->aligned_height = (height + gh - 1) / gh * gh;
-    StdVideoH264LevelIdc level = video_level(width, height, num, den, bitrate);
-    if (level == STD_VIDEO_H264_LEVEL_IDC_INVALID || level > e->h264_caps.maxLevelIdc) {
-        snprintf(error, capacity, "Vulkan H.264 level cannot cover requested size/rate/bitrate");
+    StdVideoH264LevelIdc level = STD_VIDEO_H264_LEVEL_IDC_INVALID;
+    if (e->codec == 0) {
+        uint32_t gw = e->caps.pictureAccessGranularity.width, gh = e->caps.pictureAccessGranularity.height;
+        if (gw < 16)
+            gw = 16;
+        if (gh < 16)
+            gh = 16;
+        e->aligned_width = (width + gw - 1) / gw * gw;
+        e->aligned_height = (height + gh - 1) / gh * gh;
+        level = video_level(width, height, num, den, bitrate);
+        if (level == STD_VIDEO_H264_LEVEL_IDC_INVALID || level > e->h264_caps.maxLevelIdc) {
+            snprintf(error, capacity, "Vulkan H.264 level cannot cover requested size/rate/bitrate");
+            goto failed;
+        }
+    } else if (video_extra_configure(e, num, den, bitrate, error, capacity) < 0)
         goto failed;
-    }
     // Check actual input and DPB format support instead of assuming NV12 exists.
     for (int pass = 0; pass < 2; pass++) {
         VkPhysicalDeviceVideoFormatInfoKHR fi = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR,
@@ -226,8 +262,18 @@ bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int d
     VkVideoEncodeH264SessionCreateInfoKHR hs = {.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_CREATE_INFO_KHR,
                                                 .useMaxLevelIdc = VK_TRUE,
                                                 .maxLevelIdc = level};
+    VkVideoEncodeH265SessionCreateInfoKHR h265_session = {
+        .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_SESSION_CREATE_INFO_KHR,
+        .useMaxLevelIdc = VK_TRUE,
+        .maxLevelIdc = e->h265_level};
+    VkVideoEncodeAV1SessionCreateInfoKHR av1_session = {.sType =
+                                                            VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_SESSION_CREATE_INFO_KHR,
+                                                        .useMaxLevel = VK_TRUE,
+                                                        .maxLevel = e->av1_level};
     VkVideoSessionCreateInfoKHR session = {.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_CREATE_INFO_KHR,
-                                           .pNext = &hs,
+                                           .pNext = e->codec == 1   ? (void *)&h265_session
+                                                    : e->codec == 2 ? (void *)&av1_session
+                                                                    : (void *)&hs,
                                            .queueFamilyIndex = v->video_family,
                                            .pVideoProfile = &e->profile,
                                            .pictureFormat = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
@@ -263,67 +309,71 @@ bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int d
                                                         .memorySize = alloc.allocationSize};
     }
     TRY(v->BindVideoSessionMemoryKHR(v->device, e->session, count, bindings));
-    StdVideoH264SequenceParameterSetVui vui = {.video_format = 5,
-                                               .colour_primaries = 1,
-                                               .transfer_characteristics = 1,
-                                               .matrix_coefficients = 1,
-                                               .num_units_in_tick = den,
-                                               .time_scale = num * 2,
-                                               .max_dec_frame_buffering = 1};
-    vui.flags.video_signal_type_present_flag = 1;
-    vui.flags.color_description_present_flag = 1;
-    vui.flags.timing_info_present_flag = 1;
-    vui.flags.fixed_frame_rate_flag = 1;
-    vui.flags.bitstream_restriction_flag = 1;
-    StdVideoH264SequenceParameterSet sps = {.profile_idc = STD_VIDEO_H264_PROFILE_IDC_BASELINE,
-                                            .level_idc = level,
-                                            .chroma_format_idc = STD_VIDEO_H264_CHROMA_FORMAT_IDC_420,
-                                            .log2_max_frame_num_minus4 = 8,
-                                            .pic_order_cnt_type = STD_VIDEO_H264_POC_TYPE_0,
-                                            .log2_max_pic_order_cnt_lsb_minus4 = 8,
-                                            .max_num_ref_frames = 1,
-                                            .pic_width_in_mbs_minus1 = (width + 15) / 16 - 1,
-                                            .pic_height_in_map_units_minus1 = (height + 15) / 16 - 1,
-                                            .frame_crop_right_offset = ((16 - width % 16) % 16) / 2,
-                                            .frame_crop_bottom_offset = ((16 - height % 16) % 16) / 2,
-                                            .pSequenceParameterSetVui = &vui};
-    sps.flags.constraint_set0_flag = 1;
-    sps.flags.constraint_set1_flag = 1;
-    sps.flags.frame_mbs_only_flag = 1;
-    sps.flags.direct_8x8_inference_flag = 1;
-    sps.flags.frame_cropping_flag = width % 16 || height % 16;
-    sps.flags.vui_parameters_present_flag = 1;
-    StdVideoH264PictureParameterSet pps = {0};
-    pps.flags.deblocking_filter_control_present_flag = 1;
-    VkVideoEncodeH264SessionParametersAddInfoKHR add = {
-        .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_ADD_INFO_KHR,
-        .stdSPSCount = 1,
-        .pStdSPSs = &sps,
-        .stdPPSCount = 1,
-        .pStdPPSs = &pps};
-    VkVideoEncodeH264SessionParametersCreateInfoKHR hp = {
-        .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_CREATE_INFO_KHR,
-        .maxStdSPSCount = 1,
-        .maxStdPPSCount = 1,
-        .pParametersAddInfo = &add};
-    VkVideoSessionParametersCreateInfoKHR pc = {
-        .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR, .pNext = &hp, .videoSession = e->session};
-    TRY(v->CreateVideoSessionParametersKHR(v->device, &pc, NULL, &e->parameters));
-    VkVideoEncodeH264SessionParametersGetInfoKHR hg = {
-        .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_GET_INFO_KHR,
-        .writeStdSPS = 1,
-        .writeStdPPS = 1};
-    VkVideoEncodeSessionParametersGetInfoKHR get = {.sType =
-                                                        VK_STRUCTURE_TYPE_VIDEO_ENCODE_SESSION_PARAMETERS_GET_INFO_KHR,
-                                                    .pNext = &hg,
-                                                    .videoSessionParameters = e->parameters};
-    TRY(v->GetEncodedVideoSessionParametersKHR(v->device, &get, NULL, &e->headers_size, NULL));
-    if (!e->headers_size || e->headers_size > 65536)
+    if (e->codec == 0) {
+        StdVideoH264SequenceParameterSetVui vui = {.video_format = 5,
+                                                   .colour_primaries = 1,
+                                                   .transfer_characteristics = 1,
+                                                   .matrix_coefficients = 1,
+                                                   .num_units_in_tick = den,
+                                                   .time_scale = num * 2,
+                                                   .max_dec_frame_buffering = 1};
+        vui.flags.video_signal_type_present_flag = 1;
+        vui.flags.color_description_present_flag = 1;
+        vui.flags.timing_info_present_flag = 1;
+        vui.flags.fixed_frame_rate_flag = 1;
+        vui.flags.bitstream_restriction_flag = 1;
+        StdVideoH264SequenceParameterSet sps = {.profile_idc = STD_VIDEO_H264_PROFILE_IDC_BASELINE,
+                                                .level_idc = level,
+                                                .chroma_format_idc = STD_VIDEO_H264_CHROMA_FORMAT_IDC_420,
+                                                .log2_max_frame_num_minus4 = 8,
+                                                .pic_order_cnt_type = STD_VIDEO_H264_POC_TYPE_0,
+                                                .log2_max_pic_order_cnt_lsb_minus4 = 8,
+                                                .max_num_ref_frames = 1,
+                                                .pic_width_in_mbs_minus1 = (width + 15) / 16 - 1,
+                                                .pic_height_in_map_units_minus1 = (height + 15) / 16 - 1,
+                                                .frame_crop_right_offset = ((16 - width % 16) % 16) / 2,
+                                                .frame_crop_bottom_offset = ((16 - height % 16) % 16) / 2,
+                                                .pSequenceParameterSetVui = &vui};
+        sps.flags.constraint_set0_flag = 1;
+        sps.flags.constraint_set1_flag = 1;
+        sps.flags.frame_mbs_only_flag = 1;
+        sps.flags.direct_8x8_inference_flag = 1;
+        sps.flags.frame_cropping_flag = width % 16 || height % 16;
+        sps.flags.vui_parameters_present_flag = 1;
+        StdVideoH264PictureParameterSet pps = {0};
+        pps.flags.deblocking_filter_control_present_flag = 1;
+        VkVideoEncodeH264SessionParametersAddInfoKHR add = {
+            .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_ADD_INFO_KHR,
+            .stdSPSCount = 1,
+            .pStdSPSs = &sps,
+            .stdPPSCount = 1,
+            .pStdPPSs = &pps};
+        VkVideoEncodeH264SessionParametersCreateInfoKHR hp = {
+            .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_CREATE_INFO_KHR,
+            .maxStdSPSCount = 1,
+            .maxStdPPSCount = 1,
+            .pParametersAddInfo = &add};
+        VkVideoSessionParametersCreateInfoKHR pc = {.sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR,
+                                                    .pNext = &hp,
+                                                    .videoSession = e->session};
+        TRY(v->CreateVideoSessionParametersKHR(v->device, &pc, NULL, &e->parameters));
+        VkVideoEncodeH264SessionParametersGetInfoKHR hg = {
+            .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_SESSION_PARAMETERS_GET_INFO_KHR,
+            .writeStdSPS = 1,
+            .writeStdPPS = 1};
+        VkVideoEncodeSessionParametersGetInfoKHR get = {
+            .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_SESSION_PARAMETERS_GET_INFO_KHR,
+            .pNext = &hg,
+            .videoSessionParameters = e->parameters};
+        TRY(v->GetEncodedVideoSessionParametersKHR(v->device, &get, NULL, &e->headers_size, NULL));
+        if (!e->headers_size || e->headers_size > 65536)
+            goto failed;
+        e->headers = malloc(e->headers_size);
+        if (!e->headers)
+            goto failed;
+        TRY(v->GetEncodedVideoSessionParametersKHR(v->device, &get, NULL, &e->headers_size, e->headers));
+    } else if (video_extra_parameters(e, num, den, error, capacity) < 0)
         goto failed;
-    e->headers = malloc(e->headers_size);
-    if (!e->headers)
-        goto failed;
-    TRY(v->GetEncodedVideoSessionParametersKHR(v->device, &get, NULL, &e->headers_size, e->headers));
     if (video_image_new(e, &e->input, VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_DST_BIT, error,
                         capacity) < 0)
         goto failed;
@@ -386,8 +436,24 @@ bk_vk_encoder *bk_vk_encoder_new(bk_vk *v, int width, int height, int num, int d
                                               .gopFrameCount = e->gop,
                                               .idrPeriod = e->gop,
                                               .temporalLayerCount = 1};
+    e->h265_rc =
+        (VkVideoEncodeH265RateControlInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_RATE_CONTROL_INFO_KHR,
+                                              .flags = VK_VIDEO_ENCODE_H265_RATE_CONTROL_REGULAR_GOP_BIT_KHR |
+                                                       VK_VIDEO_ENCODE_H265_RATE_CONTROL_REFERENCE_PATTERN_FLAT_BIT_KHR,
+                                              .gopFrameCount = e->gop,
+                                              .idrPeriod = e->gop,
+                                              .subLayerCount = 1};
+    e->av1_rc =
+        (VkVideoEncodeAV1RateControlInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_RATE_CONTROL_INFO_KHR,
+                                             .flags = VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REGULAR_GOP_BIT_KHR |
+                                                      VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REFERENCE_PATTERN_FLAT_BIT_KHR,
+                                             .gopFrameCount = e->gop,
+                                             .keyFramePeriod = e->gop,
+                                             .temporalLayerCount = 1};
     e->rc = (VkVideoEncodeRateControlInfoKHR){.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_RATE_CONTROL_INFO_KHR,
-                                              .pNext = &e->h264_rc,
+                                              .pNext = e->codec == 1   ? (void *)&e->h265_rc
+                                                       : e->codec == 2 ? (void *)&e->av1_rc
+                                                                       : (void *)&e->h264_rc,
                                               .rateControlMode = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_CBR_BIT_KHR,
                                               .layerCount = 1,
                                               .pLayers = &e->layer,
@@ -406,9 +472,11 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
     buffer upload = {0};
     VkFence fence = VK_NULL_HANDLE;
     int result = -1;
-    int direct=source_pixels && source_pixels->fourcc==0x3231564e;
-    video_image *input_picture=&e->input;
-    if(direct && !(input_picture=video_nv12_cached(e,source_pixels,error,capacity)))return 1;
+    int repeat = !source_pixels && !pixels && pixel_size == 0 && e->input_initialized;
+    int direct = source_pixels && source_pixels->fourcc == 0x3231564e;
+    video_image *input_picture = &e->input;
+    if (direct && !(input_picture = video_nv12_cached(e, source_pixels, error, capacity)))
+        return 1;
     *output = NULL;
     *output_size = 0;
     if (force || e->frame >= e->gop)
@@ -417,7 +485,7 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
     uint32_t current = e->slot, previous = current ^ 1;
     VkBuffer input;
     uint32_t pitch;
-    if (!direct) {
+    if (!direct && !repeat) {
     if (source_pixels) {
         converted =
             convert(v, source_pixels, e->aligned_width, e->aligned_height, e->width, e->height, 1, error, capacity);
@@ -531,6 +599,8 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
                                              .pNext = &dpb_info[1],
                                              .slotIndex = previous,
                                              .pPictureResource = &resources[1]}};
+    video_extra_picture extra;
+    video_extra_prepare(e,idr,previous,&extra,slots);
     VkVideoEncodeH264GopRemainingFrameInfoKHR remaining = {
         .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_GOP_REMAINING_FRAME_INFO_KHR,
         .useGopRemainingFrames = e->h264_caps.requiresGopRemainingFrames,
@@ -539,9 +609,9 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
     VkVideoEncodeH264RateControlInfoKHR begin_h264 = e->h264_rc;
     begin_h264.pNext = &remaining;
     VkVideoEncodeRateControlInfoKHR begin_rc = e->rc;
-    begin_rc.pNext = &begin_h264;
+    begin_rc.pNext = e->codec?extra.rate:(void *)&begin_h264;
     VkVideoBeginCodingInfoKHR start = {.sType = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR,
-                                       .pNext = e->initialized ? (void *)&begin_rc : (void *)&remaining,
+                                       .pNext = e->initialized ? (void *)&begin_rc : e->codec?extra.remaining:(void *)&remaining,
                                        .videoSession = e->session,
                                        .videoSessionParameters = e->parameters,
                                        .referenceSlotCount = idr ? 1 : 2,
@@ -577,7 +647,7 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
                                             .pStdPictureInfo = &picture};
     slots[0].slotIndex = current;
     VkVideoEncodeInfoKHR encode = {.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_INFO_KHR,
-                                   .pNext = &h264,
+                                   .pNext = e->codec?extra.picture:(void *)&h264,
                                    .dstBuffer = e->bitstream.buffer,
                                    .dstBufferRange = e->bitstream.size,
                                    .srcPictureResource = {.sType = VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR,
@@ -616,7 +686,7 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
     TRY(v->CreateFence(v->device, &fc, NULL, &fence));
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkSubmitInfo job = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                        .waitSemaphoreCount = direct?0:1,
+                        .waitSemaphoreCount = (direct || repeat)?0:1,
                         .pWaitSemaphores = &e->ready,
                         .pWaitDstStageMask = &wait_stage,
                         .commandBufferCount = 1,
@@ -643,7 +713,9 @@ int bk_vk_encoder_encode(bk_vk_encoder *e, const bk_vk_source *source_pixels, co
     if (prefix)
         memcpy(*output, e->headers, prefix);
     memcpy(*output + prefix, (uint8_t *)e->bitstream.mapped + feedback[0], feedback[1]);
-    e->previous = reconstructed;
+    if(e->codec==1)e->h265_previous=extra.h265_reconstructed;
+    else if(e->codec==2)e->av1_previous=extra.av1_reconstructed;
+    else e->previous = reconstructed;
     e->frame++;
     e->slot ^= 1;
     e->initialized = 1;

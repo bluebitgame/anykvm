@@ -35,8 +35,10 @@ func TestOptionalCodecPolicy(t *testing.T) {
 		} else if p.JPEG {
 			want = encJPEG
 		}
-		if got := c.chooseEncoding(defaultPixelFormat(), &frameData{format: capture.FormatJPEG}); got != want {
-			t.Fatalf("mask %d: JPEG selected %d, want %d", mask, got, want)
+		for _, format := range []capture.VideoFormat{capture.FormatRaw, capture.FormatJPEG} {
+			if got := c.chooseEncoding(defaultPixelFormat(), &frameData{format: format}); got != want {
+				t.Fatalf("mask %d format %v: selected %d, want %d", mask, format, got, want)
+			}
 		}
 		c.encodings = nil
 		if got := c.chooseEncoding(defaultPixelFormat(), &frameData{format: capture.FormatRaw}); got != encRaw {

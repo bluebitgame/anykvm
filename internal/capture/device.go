@@ -52,7 +52,7 @@ type fpsReporter interface {
 // wrapper: probes the capture card's supported formats (resolution/frame rate/
 // MJPEG capability) once at startup and caches the result; afterwards:
 //   - If the device outputs MJPEG natively, use the native backend (zero-transcode);
-//   - macOS encodes raw inputs with system ImageIO/VideoToolbox APIs;
+//   - macOS encodes raw inputs with the JPEG backend or VideoToolbox;
 //   - Other platforms try FFmpeg at the probed resolution/rate when needed.
 //
 // Probing does not start a capture session, so the device is not held, camera
@@ -140,14 +140,21 @@ type smartDevice struct {
 	native       Device
 	dev          Device // active underlying device (native or ffmpeg), set on Open
 
-	streamOptions *VideoStreamOptions
-	caps          deviceCaps
-	decodeImage   bool
-	jpegQuality   int    // locked MJPEG output quality (0 = default)
-	videoCodec    string // desired output codec: "" / "mjpeg" (default), "h264", or "rawvideo"
-	videoBitrate  int
-	videoChroma   string // H.264 chroma: "" / "420" or "422"
+	streamOptions          *VideoStreamOptions
+	caps                   deviceCaps
+	decodeImage            bool
+	jpegQuality            int    // locked MJPEG output quality (0 = default)
+	videoCodec             string // desired output codec: "" / "mjpeg" (default), "h264", or "rawvideo"
+	videoBitrate           int
+	videoChroma            string // H.264 chroma: "" / "420" or "422"
+	outputW, outputH       int
+	outputDownscaleOnly    bool
+	outputMaxW, outputMaxH int
 }
+
+func (s *smartDevice) SetOutputSize(w, h int)        { s.outputW, s.outputH = w, h }
+func (s *smartDevice) SetOutputDownscaleOnly(v bool) { s.outputDownscaleOnly = v }
+func (s *smartDevice) SetOutputSizeLimit(w, h int)   { s.outputMaxW, s.outputMaxH = w, h }
 
 func (s *smartDevice) Open() error {
 	return s.OpenWithFormat(0, 0, 30)
@@ -195,7 +202,7 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 		w, h, r = s.caps.width, s.caps.height, s.caps.fps
 		log.Printf("capture: device caps %dx%d@%d mjpeg=%v h264=%v", w, h, r, s.caps.mjpeg, s.caps.h264)
 	}
-	// AVFoundation plus ImageIO/VideoToolbox covers normal Mac inputs without
+	// AVFoundation plus the JPEG backend/VideoToolbox covers normal Mac inputs without
 	// FFmpeg. Try it first even when optional libraries are installed.
 	if runtime.GOOS == "darwin" && s.videoCodec != "av1" {
 		if err := s.openNativeMedia(w, h, r); err == nil {
@@ -349,6 +356,9 @@ func (s *smartDevice) openNativeMedia(width, height, fps int) error {
 		pe.enc.SetVideoStreamOptions(s.streamOptions)
 		pe.enc.SetVideoBitrate(s.videoBitrate)
 		pe.enc.scalableInput = !s.PreserveCaptureMode()
+		pe.enc.targetW, pe.enc.targetH = s.outputW, s.outputH
+		pe.enc.outputDownscaleOnly = s.outputDownscaleOnly
+		pe.enc.SetOutputSizeLimit(s.outputMaxW, s.outputMaxH)
 		pe.enc.variableInputRate = isIOSDevice(s.deviceID)
 		pe.SetDecodeImage(true)
 		if err := pe.OpenWithFormat(width, height, fps); err != nil {
@@ -383,6 +393,9 @@ func (s *smartDevice) openNativeMedia(width, height, fps int) error {
 // output codec. The bridge consults this before switching codecs, so an
 // unsupported codec never triggers a pointless capture reopen.
 func (s *smartDevice) SupportsVideoCodec(codec string) bool {
+	if codec == "hevc" {
+		return s.SupportsGameStreamHEVC()
+	}
 	if codec == "av1" {
 		return s.SupportsGameStreamAV1()
 	}
@@ -403,6 +416,15 @@ func (s *smartDevice) openFFmpegCodec(w, h, fps int, codec string) error {
 	ff := NewFFmpegDevice(s.captureID)
 	ff.SetDecodeImage(s.decodeImage && codec == "")
 	ff.SetJPEGQuality(s.jpegQuality)
+	if output, ok := ff.(OutputSizeConfigurer); ok {
+		output.SetOutputSize(s.outputW, s.outputH)
+	}
+	if policy, ok := ff.(OutputSizePolicyConfigurer); ok {
+		policy.SetOutputDownscaleOnly(s.outputDownscaleOnly)
+	}
+	if limit, ok := ff.(OutputSizeLimitConfigurer); ok {
+		limit.SetOutputSizeLimit(s.outputMaxW, s.outputMaxH)
+	}
 	if encoder, ok := ff.(VideoBitrateConfigurer); ok {
 		encoder.SetVideoBitrate(s.videoBitrate)
 	}

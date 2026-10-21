@@ -1,6 +1,7 @@
 package rdp
 
 import (
+	"errors"
 	"time"
 
 	"anykvm/internal/bridge"
@@ -11,29 +12,54 @@ func predictionCoded(format capture.VideoFormat) bool {
 	return format == capture.FormatH264 || format == capture.FormatHEVC || format == capture.FormatAV1
 }
 
-// Retain the final independent capture until its presentation slot, replacing
-// it with newer captures during the wait. Dropping an early capture outright
-// can leave the desktop stale forever when capture stops reporting changes.
-// Prediction-coded frames still pass through the decoder in input order.
-func (c *client) waitBitmapCapture(f bridge.Frame, w, h int, deadline time.Time) (bridge.Frame, bool) {
-	if predictionCoded(f.Format) || f.Width != w || f.Height != h || c.reset.Load() || !deadline.After(time.Now()) {
-		return f, true
-	}
-	timer := time.NewTimer(time.Until(deadline))
-	defer timer.Stop()
-	for {
+// Keep replacing independent captures while the client is busy. Releasing an
+// old GPU snapshot here also leaves capture pool space for a fresher snapshot.
+func (c *client) waitCaptureWindow(f bridge.Frame) (bridge.Frame, int, error) {
+	dropped := 0
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	for c.frameWindowFull() {
+		if timer == nil {
+			timer = time.NewTimer(5 * time.Second)
+		}
+		var newer <-chan bridge.Frame
+		if !predictionCoded(f.Format) {
+			newer = c.frames
+		}
 		select {
 		case <-c.done:
+			return f, dropped, nil
+		case <-c.ack:
+		case next := <-newer:
 			f.Release()
-			return bridge.Frame{}, false
+			f = next
+			dropped++
+		case <-timer.C:
+			return f, dropped, errors.New("graphics frame acknowledgment timed out")
+		}
+	}
+	f, extra := c.latestCapture(f)
+	return f, dropped + extra, nil
+}
+
+// Select the freshest independent capture after flow control permits output.
+// Stop at the first prediction-coded frame: its successors depend on it.
+// The caller owns the returned reference; superseded references are released.
+func (c *client) latestCapture(f bridge.Frame) (bridge.Frame, int) {
+	dropped := 0
+	for !predictionCoded(f.Format) {
+		select {
 		case next := <-c.frames:
 			f.Release()
 			f = next
-			if predictionCoded(f.Format) || f.Width != w || f.Height != h || c.reset.Load() {
-				return f, true
-			}
-		case <-timer.C:
-			return f, true
+			dropped++
+		default:
+			return f, dropped
 		}
 	}
+	return f, dropped
 }

@@ -131,3 +131,57 @@ func TestMacMediaWithoutFFmpeg(t *testing.T) {
 		})
 	}
 }
+
+func TestRDPCaptureCardHardwareOutputBounds(t *testing.T) {
+	if os.Getenv("ANYKVM_TEST_NATIVE_MEDIA") == "" {
+		t.Skip("set ANYKVM_TEST_NATIVE_MEDIA=1 to require hardware encoding")
+	}
+	for _, target := range [][2]int{{320, 240}, {1280, 960}} {
+		// Deliberately fit 16:9 input into a smaller 4:3 client canvas.
+		source := &nativeMediaSource{fakeRawSource: fakeRawSource{w: 640, h: 360}, rate: framerate.New(60, 1)}
+		dev := &smartDevice{native: source, caps: deviceCaps{width: 640, height: 360, fps: 60, ok: true}, videoCodec: "h264", videoBitrate: 2000}
+		dev.SetOutputDownscaleOnly(true)
+		dev.SetOutputSize(target[0], target[1])
+		if err := dev.OpenWithFormat(640, 360, 60); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = dev.Close() })
+		f := captureOne(t, dev, 5*time.Second)
+		w, h := BoundedOutputSize(640, 360, target[0], target[1])
+		if f.Format != FormatH264 || f.Width != w || f.Height != h || f.SourceWidth != 640 || f.SourceHeight != 360 {
+			t.Fatalf("target=%v incorrect dimensions: %+v", target, f)
+		}
+		if !dev.PreserveCaptureMode() || dev.CaptureFrameRate() != source.rate {
+			t.Fatal("output sizing changed capture mode or cadence")
+		}
+		f.Release()
+		if err := dev.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRDPCaptureCardHardwareTargetCeiling(t *testing.T) {
+	if os.Getenv("ANYKVM_TEST_NATIVE_MEDIA") == "" {
+		t.Skip("set ANYKVM_TEST_NATIVE_MEDIA=1 to require hardware encoding")
+	}
+	for _, limit := range [][2]int{{320, 240}, {321, 241}} {
+		source := &nativeMediaSource{fakeRawSource: fakeRawSource{w: 640, h: 360}, rate: framerate.New(60, 1)}
+		dev := &smartDevice{native: source, caps: deviceCaps{width: 640, height: 360, fps: 60, ok: true}, videoCodec: "h264", videoBitrate: 2000}
+		dev.SetOutputDownscaleOnly(true)
+		dev.SetOutputSize(1280, 960)
+		dev.SetOutputSizeLimit(limit[0], limit[1])
+		if err := dev.OpenWithFormat(640, 360, 60); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = dev.Close() })
+		f := captureOne(t, dev, 5*time.Second)
+		if f.Width != 320 || f.Height != 240 || f.SourceWidth != 640 || f.SourceHeight != 360 {
+			t.Fatalf("Target=%v failed to cap hardware output: %+v", limit, f)
+		}
+		f.Release()
+		if err := dev.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package gamestream
 
 import (
+	"anykvm/internal/netstats"
 	"context"
 	"net"
 	"time"
@@ -114,7 +115,9 @@ func (p *videoPacer) send(ctx context.Context, conn *net.UDPConn, peer *net.UDPA
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if _, err := conn.WriteToUDP(packet, peer); err != nil {
+			n, err := conn.WriteToUDP(packet, peer)
+			netstats.Add(n)
+			if err != nil {
 				return err
 			}
 			sent += len(packet)

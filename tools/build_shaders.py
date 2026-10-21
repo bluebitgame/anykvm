@@ -11,9 +11,15 @@ import cross_toolchain
 
 ROOT = Path(__file__).resolve().parent.parent
 JPEG_SOURCE = ROOT / "internal/jpegcodec/shaders/jpeg420.hlsl"
+JPEG_DECODE_SOURCE = ROOT / "internal/jpegcodec/shaders/jpeg_decode.hlsl"
+PROGRESSIVE_SOURCE = ROOT / "internal/rdp/shaders/progressive.hlsl"
+PROGRESSIVE_SURFACE_SOURCE = ROOT / "internal/rdp/shaders/progressive_surface.hlsl"
 SOURCES = (
     ROOT / "internal/gpuconv/shaders/desktop.hlsl",
     JPEG_SOURCE,
+    JPEG_DECODE_SOURCE,
+    PROGRESSIVE_SOURCE,
+    PROGRESSIVE_SURFACE_SOURCE,
 )
 GLSLANG_VERSION = "16.6.0"
 GLSLANG_PACKAGES = {
@@ -65,7 +71,7 @@ def current(source, entry="main"):
 
 def prepare(compiler=None, dry_run=False, allow_download=True):
     jobs = [(source, entry) for source in SOURCES
-            for entry in (("main", "encodeMCUs", "indexSegments", "packJPEG") if source == JPEG_SOURCE else ("main",))]
+            for entry in (("main", "encodeMCUs", "indexSegments", "packJPEG") if source == JPEG_SOURCE else ("main", "inverseDCT", "packNV12") if source == JPEG_DECODE_SOURCE else ("main", "encodeTiles", "indexSegments", "packSegments") if source == PROGRESSIVE_SOURCE else ("main",))]
     pending = [(source, entry) for source, entry in jobs if compiler is not None or not current(source, entry)]
     if not pending:
         return

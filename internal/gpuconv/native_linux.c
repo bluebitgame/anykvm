@@ -3,6 +3,7 @@
 #define VK_NO_PROTOTYPES
 #include "native_linux.h"
 #include "third_party/vulkan/vulkan_core.h"
+#include "drm_match_linux.h"
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -18,7 +19,7 @@
     X(DestroyInstance)                                                                                                 \
     X(EnumeratePhysicalDevices) X(GetPhysicalDeviceProperties2) X(GetPhysicalDeviceMemoryProperties) X(                \
         GetPhysicalDeviceQueueFamilyProperties2) X(EnumerateDeviceExtensionProperties)                                 \
-        X(GetPhysicalDeviceImageFormatProperties2)  X(                     \
+        X(GetPhysicalDeviceFeatures2) X(GetPhysicalDeviceImageFormatProperties2)  X(                     \
             GetPhysicalDeviceExternalFenceProperties) X(CreateDevice) X(DestroyDevice) X(GetDeviceQueue)               \
             X(CreateBuffer) X(DestroyBuffer) X(GetBufferMemoryRequirements) X(AllocateMemory) X(FreeMemory) X(         \
                 BindBufferMemory) X(MapMemory) X(UnmapMemory) X(InvalidateMappedMemoryRanges)                          \
@@ -56,12 +57,15 @@ struct bk_vk {
     VkDevice device;
     VkQueue queue;
     uint32_t family, video_family, major, minor;
+    int video_codec;
+    int borrowed_device; // Child compute context; the Converter lease owns the device/loader.
     VkQueue video_queue;
     VkPhysicalDeviceMemoryProperties memory;
     VkDescriptorSetLayout descriptor_layout;
     VkPipelineLayout layout;
     VkPipeline pipeline;
     VkPipeline jpeg_entropy, jpeg_index, jpeg_pack;
+    struct jpeg_buffers *jpeg_buffers;
     VkDescriptorPool descriptor_pool;
     VkDescriptorSet descriptor;
     VkCommandPool commands;
@@ -229,11 +233,14 @@ failed:
         v->DestroyFence(v->device, fence, NULL);
     return -1;
 }
+static void jpeg_buffers_free(bk_vk *v);
+
 void bk_vk_close(bk_vk *v) {
     if (!v)
         return;
     if (v->device) {
         v->DeviceWaitIdle(v->device);
+        jpeg_buffers_free(v);
         if (v->commands)
             v->DestroyCommandPool(v->device, v->commands, NULL);
         if (v->descriptor_pool)
@@ -249,7 +256,7 @@ void bk_vk_close(bk_vk *v) {
             v->DestroyPipelineLayout(v->device, v->layout, NULL);
         if (v->descriptor_layout)
             v->DestroyDescriptorSetLayout(v->device, v->descriptor_layout, NULL);
-        v->DestroyDevice(v->device, NULL);
+        if (!v->borrowed_device) v->DestroyDevice(v->device, NULL);
     }
     if (v->instance && v->DestroyInstance)
         v->DestroyInstance(v->instance, NULL);
@@ -259,11 +266,18 @@ void bk_vk_close(bk_vk *v) {
 }
 bk_vk *bk_vk_open(uint32_t major, uint32_t minor, const void *spirv, size_t size, int mode, char *error,
                   size_t capacity) {
-    int video = mode == BK_VK_VIDEO;
+    int query = mode == BK_VK_QUERY_HEVC || mode == BK_VK_QUERY_AV1;
+    int video = query || mode == BK_VK_VIDEO || mode == BK_VK_VIDEO_HEVC || mode == BK_VK_VIDEO_AV1;
+    int codec = mode == BK_VK_VIDEO_HEVC || mode == BK_VK_QUERY_HEVC ? 1 : mode == BK_VK_VIDEO_AV1 || mode == BK_VK_QUERY_AV1 ? 2 : 0;
+    VkVideoCodecOperationFlagBitsKHR operation = codec == 1   ? VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR
+                                                 : codec == 2 ? VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR
+                                                              : VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
     int jpeg = mode == BK_VK_JPEG;
+    int decode = mode == BK_VK_JPEG_DECODE || mode == BK_VK_PROGRESSIVE;
     bk_vk *v = calloc(1, sizeof(*v));
     if (!v)
         return NULL;
+    v->video_codec = codec;
     VkShaderModule shader = VK_NULL_HANDLE;
     v->library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!v->library) {
@@ -294,62 +308,87 @@ bk_vk *bk_vk_open(uint32_t major, uint32_t minor, const void *spirv, size_t size
         VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
         VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,    VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME};
     const char *video_extensions[] = {VK_KHR_VIDEO_QUEUE_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME,
-                                      VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME};
-    for (uint32_t i = 0; i < n; i++) {
-        if (video && !extensions(v, devices[i], video_extensions, 3))
-            continue;
-        if (!extensions(v, devices[i], required, sizeof(required) / sizeof(*required)))
-            continue;
-        VkPhysicalDeviceDrmPropertiesEXT drm = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT};
-        VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-                                                  .pNext = &drm};
-        v->GetPhysicalDeviceProperties2(devices[i], &properties);
-        if (jpeg && (properties.properties.limits.maxPerStageDescriptorStorageBuffers < 6 ||
-                     properties.properties.limits.maxDescriptorSetStorageBuffers < 6))
-            continue;
-        if (properties.properties.apiVersion < VK_API_VERSION_1_3 || !drm.hasPrimary ||
-            (major && (drm.primaryMajor != major || drm.primaryMinor != minor)))
-            continue;
-        uint32_t families = 0;
-        v->GetPhysicalDeviceQueueFamilyProperties2(devices[i], &families, NULL);
-        if (!families || families > 64)
-            continue;
-        VkQueueFamilyProperties2 queues[64] = {0};
-        VkQueueFamilyVideoPropertiesKHR codecs[64] = {0};
-        for (uint32_t j = 0; j < families; j++) {
-            queues[j].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
-            codecs[j].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR;
-            if (video)
-                queues[j].pNext = &codecs[j];
+                                      codec == 1   ? VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME
+                                      : codec == 2 ? VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME
+                                                   : VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME};
+    // Try exact matches first, regardless of Vulkan enumeration order. Only
+    // compute consumers may use the split vc4/v3d display/render topology.
+    for (int rank = 1; rank <= 2 && !v->physical; rank++) {
+        for (uint32_t i = 0; i < n; i++) {
+            if (video && !extensions(v, devices[i], video_extensions, 3))
+                continue;
+            if (video) {
+                VkPhysicalDeviceVideoEncodeAV1FeaturesKHR av1 = {
+                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_AV1_FEATURES_KHR};
+                VkPhysicalDeviceVulkan13Features sync = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+                    .pNext = codec == 2 ? &av1 : NULL};
+                VkPhysicalDeviceVulkan11Features yuv = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &sync};
+                VkPhysicalDeviceFeatures2 features = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &yuv};
+                v->GetPhysicalDeviceFeatures2(devices[i], &features);
+                if (!sync.synchronization2 || !yuv.samplerYcbcrConversion || (codec == 2 && !av1.videoEncodeAV1))
+                    continue;
+            }
+            if (!decode && !extensions(v, devices[i], required, sizeof(required) / sizeof(*required)))
+                continue;
+            VkPhysicalDeviceDrmPropertiesEXT drm = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT};
+            VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+                                                      .pNext = &drm};
+            v->GetPhysicalDeviceProperties2(devices[i], &properties);
+            if ((jpeg || decode) && (properties.properties.limits.maxPerStageDescriptorStorageBuffers < 6 ||
+                                     properties.properties.limits.maxDescriptorSetStorageBuffers < 6))
+                continue;
+            if (properties.properties.apiVersion < VK_API_VERSION_1_3 ||
+                (decode && properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) ||
+                (decode ? rank != 1 : bk_drm_match(major, minor, &drm, &properties.properties, !video) != rank))
+                continue;
+            uint32_t families = 0;
+            v->GetPhysicalDeviceQueueFamilyProperties2(devices[i], &families, NULL);
+            if (!families || families > 64)
+                continue;
+            VkQueueFamilyProperties2 queues[64] = {0};
+            VkQueueFamilyVideoPropertiesKHR codecs[64] = {0};
+            for (uint32_t j = 0; j < families; j++) {
+                queues[j].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+                codecs[j].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR;
+                if (video)
+                    queues[j].pNext = &codecs[j];
+            }
+            v->GetPhysicalDeviceQueueFamilyProperties2(devices[i], &families, queues);
+            uint32_t vf = UINT32_MAX;
+            for (uint32_t j = 0; j < families; j++)
+                if ((queues[j].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) &&
+                    (codecs[j].videoCodecOperations & operation)) {
+                    vf = j;
+                    break;
+                }
+            if (video && vf == UINT32_MAX)
+                continue;
+            v->video_family = video ? vf : UINT32_MAX;
+            for (uint32_t j = 0; j < families; j++)
+                if (queues[j].queueFamilyProperties.queueFlags & VK_QUEUE_COMPUTE_BIT) {
+                    v->physical = devices[i];
+                    v->family = j;
+                    v->major = drm.hasPrimary ? drm.primaryMajor : drm.renderMajor;
+                    v->minor = drm.hasPrimary ? drm.primaryMinor : drm.renderMinor;
+                    break;
+                }
+            if (v->physical)
+                break;
         }
-        v->GetPhysicalDeviceQueueFamilyProperties2(devices[i], &families, queues);
-        uint32_t vf = UINT32_MAX;
-        for (uint32_t j = 0; j < families; j++)
-            if ((queues[j].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) &&
-                (codecs[j].videoCodecOperations & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR)) {
-                vf = j;
-                break;
-            }
-        if (video && vf == UINT32_MAX)
-            continue;
-        v->video_family = video ? vf : UINT32_MAX;
-        for (uint32_t j = 0; j < families; j++)
-            if (queues[j].queueFamilyProperties.queueFlags & VK_QUEUE_COMPUTE_BIT) {
-                v->physical = devices[i];
-                v->family = j;
-                v->major = drm.primaryMajor;
-                v->minor = drm.primaryMinor;
-                break;
-            }
-        if (v->physical)
-            break;
     }
     if (!v->physical) {
-        snprintf(error, capacity,
-                 "no Vulkan 1.3 GPU matching DRM %u:%u supports DMA-BUF/modifier/foreign-queue/sync-file interop",
-                 major, minor);
+        if (decode)
+            snprintf(error, capacity, "no hardware Vulkan 1.3 GPU supports %s",
+                     mode == BK_VK_PROGRESSIVE ? "Progressive compute encoding" : "JPEG compute decoding");
+        else
+            snprintf(error, capacity,
+                     "no Vulkan 1.3 GPU associated with DRM %u:%u supports DMA-BUF/modifier/foreign-queue/sync-file interop",
+                     major, minor);
         goto failed;
     }
+    // Capability negotiation needs only instance/physical-device declarations.
+    // Do not create a device, shader pipeline or video session for this query.
+    if (query) return v;
     float priority = 1;
     VkDeviceQueueCreateInfo queues[2] = {{.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
                                           .queueFamilyIndex = v->family,
@@ -361,13 +400,16 @@ bk_vk *bk_vk_open(uint32_t major, uint32_t minor, const void *spirv, size_t size
                                           .pQueuePriorities = &priority}};
     const char *enabled[16];
     uint32_t extension_count = 0;
-    for (unsigned i = 0; i < sizeof(required) / sizeof(*required); i++)
+    for (unsigned i = 0; !decode && i < sizeof(required) / sizeof(*required); i++)
         enabled[extension_count++] = required[i];
     if (video)
         for (int i = 0; i < 3; i++)
             enabled[extension_count++] = video_extensions[i];
+    VkPhysicalDeviceVideoEncodeAV1FeaturesKHR av1_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_AV1_FEATURES_KHR, .videoEncodeAV1 = VK_TRUE};
     VkPhysicalDeviceVulkan13Features features = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-                                                 .synchronization2 = video};
+                                                 .synchronization2 = video,
+                                                 .pNext = video && codec == 2 ? &av1_features : NULL};
     VkPhysicalDeviceVulkan11Features features11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                                    .pNext = &features,
                                                    .samplerYcbcrConversion = video};
@@ -386,31 +428,28 @@ bk_vk *bk_vk_open(uint32_t major, uint32_t minor, const void *spirv, size_t size
                                             .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT};
     VkExternalFenceProperties fp = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_FENCE_PROPERTIES};
     v->GetPhysicalDeviceExternalFenceProperties(v->physical, &fi, &fp);
-    if (!(fp.externalFenceFeatures & VK_EXTERNAL_FENCE_FEATURE_EXPORTABLE_BIT)) {
+    if (!decode && !(fp.externalFenceFeatures & VK_EXTERNAL_FENCE_FEATURE_EXPORTABLE_BIT)) {
         snprintf(error, capacity, "Vulkan GPU cannot export sync-file fences");
         goto failed;
     }
-    VkDescriptorType descriptor_types[] = {
-        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_SAMPLER,
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-    };
-    VkDescriptorType jpeg_types[] = {
-        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
-    };
-    uint32_t binding_count = jpeg ? 8 : 4;
+    VkDescriptorType descriptor_types[] = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_SAMPLER,
+                                           VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER};
+    VkDescriptorType jpeg_types[] = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+    uint32_t binding_count = decode ? 6 : jpeg ? 8 : 4;
     VkDescriptorSetLayoutBinding bindings[8] = {0};
     VkDescriptorPoolSize sizes[8] = {0};
     for (uint32_t i = 0; i < binding_count; i++) {
-        VkDescriptorType type = jpeg ? jpeg_types[i] : descriptor_types[i];
-        bindings[i] = (VkDescriptorSetLayoutBinding){.binding = i, .descriptorType = type,
-            .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+        VkDescriptorType type = decode ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : jpeg ? jpeg_types[i] : descriptor_types[i];
+        bindings[i] = (VkDescriptorSetLayoutBinding){
+            .binding = i, .descriptorType = type, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
         sizes[i] = (VkDescriptorPoolSize){type, 1};
     }
-    VkDescriptorSetLayoutCreateInfo dl = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = binding_count, .pBindings = bindings};
+    VkDescriptorSetLayoutCreateInfo dl = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                          .bindingCount = binding_count,
+                                          .pBindings = bindings};
     TRY(v->CreateDescriptorSetLayout(v->device, &dl, NULL, &v->descriptor_layout));
     VkPipelineLayoutCreateInfo pl = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                      .setLayoutCount = 1,
@@ -470,6 +509,10 @@ failed:
         v->DestroyShaderModule(v->device, shader, NULL);
     bk_vk_close(v);
     return NULL;
+}
+void bk_vk_drm_device(bk_vk *v, uint32_t *major, uint32_t *minor) {
+    *major = v->major;
+    *minor = v->minor;
 }
 static void source_free(bk_vk *v, source *s) {
     if (s->view)
@@ -615,7 +658,7 @@ static bk_vk_image *convert(bk_vk *v, const bk_vk_source *f, int width, int heig
         goto failed;
     uint32_t p[16] = {f->width,      f->height,      width,       height, f->x,          f->y,
                       f->crop_width, f->crop_height, 0,           0,      visible_width, visible_height,
-                      out->pitch,    nv12,           f->rotation, 0};
+                      out->pitch,    nv12,           f->rotation, f->flip_y};
     uint32_t sw = f->rotation == 90 || f->rotation == 270 ? f->crop_height : f->crop_width,
              sh = f->rotation == 90 || f->rotation == 270 ? f->crop_width : f->crop_height;
     if (!sw || !sh) {
@@ -775,3 +818,6 @@ bk_vk_image *bk_vk_convert(bk_vk *v, const bk_vk_source *f, int width, int heigh
 }
 #include "jpeg_linux.inc"
 #include "video_linux.inc"
+
+#include "jpeg_decode_linux.inc"
+#include "progressive_linux.inc"

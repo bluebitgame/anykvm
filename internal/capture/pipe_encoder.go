@@ -154,7 +154,8 @@ func codecName(codec string) string {
 // pass through, so native MJPEG sources incur no extra encoding.
 type jpegEncodeDevice struct {
 	Device
-	quality int
+	quality   int
+	outputLog encodingLog
 
 	mu     sync.Mutex
 	decode bool
@@ -207,7 +208,18 @@ func (j *jpegEncodeDevice) Capture() (*Frame, error) {
 	}
 	out := *f
 	out.Data, out.Format, out.Buffer = data.Bytes(), FormatJPEG, data
+	j.mu.Lock()
+	j.outputLog.start("jpeg", jpegcodec.Backend())
+	j.mu.Unlock()
 	return &out, nil
+}
+
+func (j *jpegEncodeDevice) Close() error {
+	err := j.Device.Close()
+	j.mu.Lock()
+	j.outputLog = encodingLog{}
+	j.mu.Unlock()
+	return err
 }
 
 // bgraToJPEGBytes encodes BGRA pixels as JPEG.

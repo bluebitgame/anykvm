@@ -4,6 +4,7 @@
 #import <AppKit/AppKit.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "pixels_darwin.h"
 #include "../videoenc/reference_darwin.h"
 
@@ -87,36 +88,111 @@ void bk_screen_list_displays(char *out, int outlen) {
 }
 @end
 
+typedef struct {
+    CGRect rect;
+    long long acquired, submitted, completed;
+    int repeated;
+    long long present;
+    long long display;
+    // Worker-side boundaries. Readiness is CoreMedia data readiness, not a
+    // GPU fence. Import is the native handle handoff, not VT's opaque import.
+    long long readyStart, readyEnd, imported;
+} bk_screen_frame_context;
+
+static long long bk_screen_host_ns(void) {
+    return CMTimeConvertScale(CMClockGetTime(CMClockGetHostTimeClock()), NSEC_PER_SEC,
+                              kCMTimeRoundingMethod_Default).value;
+}
+
+// Sample PTS belongs to SCStream.synchronizationClock, not implicitly to the
+// host clock. Do not estimate an offset from callback arrival (that would
+// subtract the very capture delay being measured).
+static long long bk_screen_pts_host_ns(CMTime pts, CMClockOrTimebaseRef clock) {
+    if (!clock || !CMTIME_IS_NUMERIC(pts))
+        return 0;
+    CMTime host = CMSyncConvertTime(pts, clock, CMClockGetHostTimeClock());
+    if (!CMTIME_IS_NUMERIC(host))
+        return 0;
+    CMTime ns = CMTimeConvertScale(host, NSEC_PER_SEC, kCMTimeRoundingMethod_Default);
+    return CMTIME_IS_NUMERIC(ns) && ns.value > 0 ? ns.value : 0;
+}
+
+static bk_screen_frame_context bk_screen_sample_timing(CMSampleBufferRef sample,
+                                                       NSDictionary *info,
+                                                       CMClockOrTimebaseRef clock,
+                                                       long long acquired) {
+    bk_screen_frame_context timing = {0};
+    timing.acquired = acquired;
+    timing.present = bk_screen_pts_host_ns(CMSampleBufferGetPresentationTimeStamp(sample), clock);
+    // displayTime is documented in mach absolute units. It describes display,
+    // not capture start, and may be scheduled after the callback. Keep it
+    // separate so a future display timestamp never becomes capture latency.
+    NSNumber *display = info[SCStreamFrameInfoDisplayTime];
+    if ([display isKindOfClass:[NSNumber class]] && display.unsignedLongLongValue > 0) {
+        CMTime host = CMClockMakeHostTimeFromSystemUnits(display.unsignedLongLongValue);
+        timing.display = bk_screen_pts_host_ns(host, CMClockGetHostTimeClock());
+    }
+    return timing;
+}
+
 @interface BKScreen : NSObject <SCStreamOutput, SCStreamDelegate> {
   @public
     SCStream *stream;
     dispatch_queue_t queue;
+    dispatch_queue_t encodeQueue;
     VTCompressionSessionRef encoder;
+    CMSampleBufferRef pendingSample;
+    bk_screen_frame_context pendingTiming;
+    BOOL encodeWorkerScheduled, sourceAvailable;
     CVPixelBufferRef lastPixel;
     CGRect lastContentRect;
     CMTime lastPTS;
     dispatch_source_t idleTimer;
+    void (*frameReady)(uintptr_t);
+    uintptr_t frameReadyContext;
     NSLock *lock;
     NSMutableArray *frames;
     NSString *failure;
     NSMutableData *audio;
     NSString *audioFailure;
     BOOL audioEnabled;
-    BOOL closed, forceIDR, awaitingIDR, disableLowLatency;
+    BOOL closed, forceIDR, awaitingIDR, disableLowLatency, nativeCadence;
     BOOL rdpFullRange, rangeRejected, rangeVerified;
+    BOOL timingEnabled;
+    bk_screen_frame_context lastCaptureTiming;
     CMFormatDescriptionRef verifiedRangeFormat;
     int h264Profile, encoderBufferFrames;
     int width, height, sourceWidth, sourceHeight, codec, fps, inFlight;
     int lastStatus;
     unsigned long long callbacks, completeFrames, submitted, encoded, busyDrops, queueResets,
-        idleFrames, repeatedFrames;
+        idleFrames, repeatedFrames, pendingReplaced, notReadyDrops;
+    unsigned long long encodeCallCount, encodeCallTotalNS, encodeCallMaxNS;
 }
 - (void)shutdown;
 - (void)desktopResumed:(NSNotification *)notification;
 - (void)startIdleTimer;
 - (void)stopIdleTimer;
 - (void)encodePixel:(CVPixelBufferRef)pixel atTime:(CMTime)pts repeat:(BOOL)repeat;
+- (void)scheduleEncoderLocked;
+- (void)drainPending;
 @end
+
+// Called with the native lock held. The Go callback is a nonblocking wakeup;
+// it never reads native state or takes the Go device lock.
+static void bk_screen_notify_ready(BKScreen *s) {
+    if (s->frameReady)
+        s->frameReady(s->frameReadyContext);
+}
+
+void bk_screen_set_frame_ready(void *handle, void (*notify)(uintptr_t), uintptr_t context) {
+    BKScreen *s = handle;
+    [s->lock lock];
+    s->frameReady = notify;
+    s->frameReadyContext = context;
+    if (s->failure || s->frames.count)
+        bk_screen_notify_ready(s);
+    [s->lock unlock];
+}
 
 // Only RDP requests full-range encoder input.
 static OSType bk_screen_encoder_format(BKScreen *s) {
@@ -189,10 +265,20 @@ static CGRect bk_frame_content_rect(NSDictionary *info, CVPixelBufferRef pixel) 
 static void bk_encode_output(void *ref, void *frameRef, OSStatus status, VTEncodeInfoFlags flags,
                              CMSampleBufferRef sample) {
     @autoreleasepool {
-        NSValue *contentRect = [(NSValue *)frameRef autorelease];
+        NSValue *frameContext = [(NSValue *)frameRef autorelease];
         BKScreen *s = (BKScreen *)ref;
+        bk_screen_frame_context timing = {0};
+        NSValue *contentRect = frameContext;
+        if (s->timingEnabled) {
+            timing.completed = bk_screen_host_ns();
+            long long completed = timing.completed;
+            [frameContext getValue:&timing size:sizeof(timing)];
+            timing.completed = completed;
+            contentRect = [NSValue valueWithRect:timing.rect];
+        }
         [s->lock lock];
         s->inFlight--;
+        [s scheduleEncoderLocked];
         if (s->closed) {
             [s->lock unlock];
             return;
@@ -204,6 +290,7 @@ static void bk_encode_output(void *ref, void *frameRef, OSStatus status, VTEncod
             if (status && !s->failure)
                 s->failure = [[NSString
                     stringWithFormat:@"VideoToolbox callback failed: %d", (int)status] copy];
+            bk_screen_notify_ready(s);
             [s->lock unlock];
             return;
         }
@@ -217,6 +304,7 @@ static void bk_encode_output(void *ref, void *frameRef, OSStatus status, VTEncod
                 if (!s->failure)
                     s->failure = [@"VideoToolbox did not produce full-range BT.709 H.264" copy];
                 [s->frames removeAllObjects];
+                bk_screen_notify_ready(s);
                 [s->lock unlock];
                 return;
             }
@@ -236,7 +324,8 @@ static void bk_encode_output(void *ref, void *frameRef, OSStatus status, VTEncod
                                             kCMSampleAttachmentKey_NotSync);
         // Never discard a P frame and then deliver frames depending on it. On queue
         // overflow discard the chain and request a fresh IDR before resuming delivery.
-        if ([s->frames count] >= 4) {
+        int outputLimit = s->encoderBufferFrames > 0 ? s->encoderBufferFrames : (s->codec == 2 ? 4 : 2);
+        if ([s->frames count] >= MIN(4, outputLimit)) {
             s->queueResets++;
             [s->frames removeAllObjects];
             s->awaitingIDR = YES;
@@ -305,14 +394,21 @@ static void bk_encode_output(void *ref, void *frameRef, OSStatus status, VTEncod
                 s->failure = [@"VideoToolbox produced an invalid access unit" copy];
         } else {
             s->encoded++;
-            [s->frames addObject:@{
+            NSDictionary *entry = @{
                 @"data" : out,
                 @"rect" : contentRect ?: [NSValue valueWithRect:NSZeroRect],
                 @"pts" : @(CMTimeConvertScale(CMSampleBufferGetPresentationTimeStamp(sample),
                                               NSEC_PER_SEC, kCMTimeRoundingMethod_Default)
                                .value)
-            }];
+            };
+            if (s->timingEnabled) {
+                NSMutableDictionary *measured = [[entry mutableCopy] autorelease];
+                measured[@"timing"] = [NSValue valueWithBytes:&timing objCType:@encode(bk_screen_frame_context)];
+                entry = measured;
+            }
+            [s->frames addObject:entry];
         }
+        bk_screen_notify_ready(s);
         [s->lock unlock];
     }
 }
@@ -414,6 +510,7 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
         frames = [NSMutableArray new];
         audio = [NSMutableData new];
         queue = dispatch_queue_create("anykvm.screen", DISPATCH_QUEUE_SERIAL);
+        encodeQueue = dispatch_queue_create("anykvm.screen.encode", DISPATCH_QUEUE_SERIAL);
         forceIDR = YES;
         lastStatus = -1;
         lastPTS = kCMTimeInvalid;
@@ -444,6 +541,7 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
     if (!closed && !failure)
         failure = [[NSString
             stringWithFormat:@"desktop resumed (%@); restarting capture", notification.name] copy];
+    bk_screen_notify_ready(self);
     [lock unlock];
 }
 - (void)stream:(SCStream *)unused didStopWithError:(NSError *)error {
@@ -452,9 +550,10 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
         failure =
             [[NSString stringWithFormat:@"%@ (domain=%@ code=%ld)", error.localizedDescription,
                                         error.domain, (long)error.code] copy];
+    bk_screen_notify_ready(self);
     [lock unlock];
 }
-- (void)stream:(SCStream *)unused
+- (void)stream:(SCStream *)sourceStream
     didOutputSampleBuffer:(CMSampleBufferRef)sample
                    ofType:(SCStreamOutputType)type {
     @autoreleasepool {
@@ -466,6 +565,7 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
         }
         if (type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sample))
             return;
+        long long acquiredNS = timingEnabled ? bk_screen_host_ns() : 0;
         NSArray *a = (NSArray *)CMSampleBufferGetSampleAttachmentsArray(sample, false);
         NSNumber *status = a.count ? a[0][SCStreamFrameInfoStatus] : nil;
         [lock lock];
@@ -483,10 +583,13 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
             return;
         }
         if (status.integerValue != SCFrameStatusComplete) {
-            if (lastPixel) {
-                CVPixelBufferRelease(lastPixel);
-                lastPixel = NULL;
-            }
+            [lock lock];
+            sourceAvailable = NO;
+            CMSampleBufferRef stale = pendingSample;
+            pendingSample = NULL;
+            [lock unlock];
+            if (stale)
+                CFRelease(stale);
             return;
         }
         CVPixelBufferRef pixel = CMSampleBufferGetImageBuffer(sample);
@@ -499,6 +602,7 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
             if (!failure)
                 failure = [@"ScreenCaptureKit did not deliver full-range NV12" copy];
             [frames removeAllObjects];
+            bk_screen_notify_ready(self);
             [lock unlock];
             return;
         }
@@ -509,15 +613,36 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
         [lock unlock];
         if (stopped)
             return;
+        bk_screen_frame_context sourceTiming = {0};
+        if (timingEnabled) {
+            CMClockRef clock = NULL;
+            if (@available(macOS 13.0, *))
+                clock = sourceStream.synchronizationClock;
+            sourceTiming = bk_screen_sample_timing(sample, a[0], clock, acquiredNS);
+            sourceTiming.rect = contentRect;
+        }
         if (encoder) {
-            CVPixelBufferRetain(pixel);
-            if (lastPixel)
-                CVPixelBufferRelease(lastPixel);
-            lastPixel = pixel;
-            lastContentRect = contentRect;
-            [self encodePixel:pixel
-                       atTime:CMSampleBufferGetPresentationTimeStamp(sample)
-                       repeat:NO];
+            // Retain the original sample/IOSurface; never read or upload pixels.
+            // A single replaceable slot bounds both memory and input age while
+            // VT is synchronously blocking its independent worker queue.
+            sourceTiming.rect = contentRect;
+            CFRetain(sample);
+            [lock lock];
+            CMSampleBufferRef stale = pendingSample;
+            if (!closed && !failure) {
+                pendingSample = sample;
+                pendingTiming = sourceTiming;
+                sourceAvailable = YES;
+                if (stale)
+                    pendingReplaced++;
+                [self scheduleEncoderLocked];
+            } else {
+                CFRelease(sample);
+                stale = NULL;
+            }
+            [lock unlock];
+            if (stale)
+                CFRelease(stale);
         } else {
             if (CVPixelBufferGetWidth(pixel) != (size_t)width ||
                 CVPixelBufferGetHeight(pixel) != (size_t)height)
@@ -526,19 +651,78 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
             [lock lock];
             if (!closed) {
                 [frames removeAllObjects];
-                [frames addObject:@{
+                NSDictionary *entry = @{
                     @"pixel" : lease,
                     @"rect" : [NSValue valueWithRect:contentRect],
                     @"pts" : @(CMTimeConvertScale(CMSampleBufferGetPresentationTimeStamp(sample),
                                                   NSEC_PER_SEC, kCMTimeRoundingMethod_Default)
                                    .value)
-                }];
+                };
+                if (timingEnabled) {
+                    NSMutableDictionary *measured = [[entry mutableCopy] autorelease];
+                    measured[@"timing"] = [NSValue valueWithBytes:&sourceTiming objCType:@encode(bk_screen_frame_context)];
+                    entry = measured;
+                }
+                [frames addObject:entry];
+                bk_screen_notify_ready(self);
             }
             [lock unlock];
         }
     }
 }
-// Runs on the serial capture queue. The encoder retains submitted pixels.
+// lock must be held. At most one drain task exists, regardless of callback rate.
+- (void)scheduleEncoderLocked {
+    int limit = encoderBufferFrames > 0 ? encoderBufferFrames : (codec == 2 ? 4 : 2);
+    if (!closed && !failure && pendingSample && !encodeWorkerScheduled && inFlight < limit) {
+        encodeWorkerScheduled = YES;
+        dispatch_async(encodeQueue, ^{ [self drainPending]; });
+    }
+}
+- (void)drainPending {
+    for (;;) {
+        @autoreleasepool {
+            [lock lock];
+            int limit = encoderBufferFrames > 0 ? encoderBufferFrames : (codec == 2 ? 4 : 2);
+            if (closed || failure || !pendingSample || inFlight >= limit) {
+                encodeWorkerScheduled = NO;
+                [lock unlock];
+                return;
+            }
+            CMSampleBufferRef sample = pendingSample;
+            pendingSample = NULL; // transfer the slot's retain to this worker
+            bk_screen_frame_context timing = pendingTiming;
+            [lock unlock];
+            if (timingEnabled)
+                timing.readyStart = bk_screen_host_ns();
+            OSStatus readyStatus = noErr;
+            if (!CMSampleBufferDataIsReady(sample))
+                readyStatus = CMSampleBufferMakeDataReady(sample);
+            if (timingEnabled)
+                timing.readyEnd = bk_screen_host_ns();
+            if (readyStatus || !CMSampleBufferDataIsReady(sample)) {
+                [lock lock];
+                notReadyDrops++;
+                [lock unlock];
+                CFRelease(sample);
+                continue; // independent input; no encoded prediction was lost
+            }
+            CVPixelBufferRef pixel = CMSampleBufferGetImageBuffer(sample);
+            if (pixel) {
+                CVPixelBufferRetain(pixel);
+                if (lastPixel)
+                    CVPixelBufferRelease(lastPixel);
+                lastPixel = pixel;
+                lastContentRect = timing.rect;
+                if (timingEnabled)
+                    timing.imported = bk_screen_host_ns();
+                lastCaptureTiming = timing;
+                [self encodePixel:pixel atTime:CMSampleBufferGetPresentationTimeStamp(sample) repeat:NO];
+            }
+            CFRelease(sample);
+        }
+    }
+}
+// Runs only on encodeQueue. VT retains submitted pixels through completion.
 - (void)encodePixel:(CVPixelBufferRef)pixel atTime:(CMTime)pts repeat:(BOOL)repeat {
     [lock lock];
     if (closed || failure) {
@@ -571,9 +755,27 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
                                   dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC / fps),
                                   DISPATCH_TIME_FOREVER, NSEC_PER_MSEC);
     NSDictionary *props = key ? @{(id)kVTEncodeFrameOptionKey_ForceKeyFrame : @YES} : nil;
-    NSValue *contentRect = [[NSValue valueWithRect:lastContentRect] retain];
-    OSStatus status = VTCompressionSessionEncodeFrame(encoder, pixel, pts, CMTimeMake(1, fps),
+    bk_screen_frame_context timing = {0};
+    if (!repeat)
+        timing = lastCaptureTiming;
+    timing.rect = lastContentRect;
+    timing.repeated = repeat;
+    if (timingEnabled)
+        timing.submitted = bk_screen_host_ns();
+    NSValue *contentRect = [(timingEnabled
+        ? [NSValue valueWithBytes:&timing objCType:@encode(bk_screen_frame_context)]
+        : [NSValue valueWithRect:lastContentRect]) retain];
+    OSStatus status = VTCompressionSessionEncodeFrame(encoder, pixel, pts,
+                                                      nativeCadence ? kCMTimeInvalid : CMTimeMake(1, fps),
                                                       (CFDictionaryRef)props, contentRect, NULL);
+    if (timingEnabled) {
+        unsigned long long elapsed = bk_screen_host_ns() - timing.submitted;
+        [lock lock];
+        encodeCallCount++;
+        encodeCallTotalNS += elapsed;
+        encodeCallMaxNS = MAX(encodeCallMaxNS, elapsed);
+        [lock unlock];
+    }
     if (status) {
         [contentRect release];
         [lock lock];
@@ -583,17 +785,18 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
         if (!failure)
             failure =
                 [[NSString stringWithFormat:@"VideoToolbox encode failed: %d", (int)status] copy];
+        bk_screen_notify_ready(self);
         [lock unlock];
     }
 }
 - (void)startIdleTimer {
     if (!encoder || idleTimer)
         return;
-    idleTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    idleTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, encodeQueue);
     dispatch_source_set_event_handler(idleTimer, ^{
       @autoreleasepool {
           [lock lock];
-          BOOL active = !closed && !failure &&
+          BOOL active = !closed && !failure && sourceAvailable && !pendingSample &&
                         (lastStatus == SCFrameStatusComplete || lastStatus == SCFrameStatusIdle);
           [lock unlock];
           if (active && lastPixel)
@@ -621,7 +824,12 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
 - (void)shutdown {
     [lock lock];
     closed = YES;
+    frameReady = NULL;
+    CMSampleBufferRef stale = pendingSample;
+    pendingSample = NULL;
     [lock unlock];
+    if (stale)
+        CFRelease(stale);
     [[NSDistributedNotificationCenter defaultCenter] removeObserver:self];
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
     if (stream) {
@@ -635,7 +843,8 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
             if (audioEnabled)
                 [stream removeStreamOutput:self type:SCStreamOutputTypeAudio error:NULL];
     }
-    dispatch_sync(queue, ^{
+    dispatch_sync(queue, ^{}); // no more capture callbacks may enqueue input
+    dispatch_sync(encodeQueue, ^{
       [self stopIdleTimer];
       if (lastPixel) {
           CVPixelBufferRelease(lastPixel);
@@ -659,6 +868,7 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
     [frames release];
     [failure release];
     dispatch_release(queue);
+    dispatch_release(encodeQueue);
     [super dealloc];
 }
 @end
@@ -754,10 +964,36 @@ static void bk_prepare_encoder(BKScreen *s, int bitrate, NSString **message) {
     }
 }
 
+static CGSize bk_screen_output_size(int sw, int sh, int w, int h, int codec, BOOL downscaleOnly,
+                                    int maxW, int maxH) {
+    if (downscaleOnly) {
+        // AVC420 padding must fit even when the Target ceiling is odd.
+        if (codec == 1) { maxW &= ~1; maxH &= ~1; }
+        if (maxW > 0) sw = MIN(sw, maxW);
+        if (maxH > 0) sh = MIN(sh, maxH);
+    }
+    w = w > 0 ? w : sw;
+    h = h > 0 ? h : sh;
+    if (downscaleOnly && (w > sw || h > sh)) {
+        w = sw;
+        h = sh;
+    }
+    // Match the even RDP AVC420 canvas, retaining other formats' alignment.
+    if (codec == 1) {
+        w = (w + 1) & ~1;
+        h = (h + 1) & ~1;
+    } else if (codec) {
+        w &= ~1;
+        h &= ~1;
+    }
+    return CGSizeMake(w, h);
+}
+
 void *bk_screen_open(int index, unsigned int display_id, int w, int h, int fps, int codec,
                      int bitrate, int hide, int preserve_aspect, int disable_low_latency,
                      int h264_profile, int encoder_buffer_frames, int rdp_full_range,
-                     int capture_audio, char *error, int error_size) {
+                     int capture_audio, int downscale_only, int max_w, int max_h,
+                     char *error, int error_size) {
     @autoreleasepool {
         NSString *message = nil;
         if (@available(macOS 12.3, *)) {
@@ -792,7 +1028,12 @@ void *bk_screen_open(int index, unsigned int display_id, int w, int h, int fps, 
                 else {
                     BKScreen *s = [BKScreen new];
                     s->codec = codec;
-                    s->fps = fps;
+                    const char *timingFlag = getenv("ANYKVM_VIDEO_TIMING");
+                    s->timingEnabled = timingFlag && timingFlag[0] == '1' && timingFlag[1] == '\0';
+                    s->nativeCadence = fps == 0;
+                    // A nominal rate is needed for encoder hints and idle repeats.
+                    // Motion is driven directly by SCK callbacks, without this cap.
+                    s->fps = fps > 0 ? fps : 60;
                     s->rdpFullRange = rdp_full_range != 0 && codec == 1;
                     s->encoderBufferFrames = encoder_buffer_frames;
                     // CGDisplayPixelsWide/High report logical size on Retina. Preserve the
@@ -804,17 +1045,10 @@ void *bk_screen_open(int index, unsigned int display_id, int w, int h, int fps, 
                                            : (int)CGDisplayPixelsHigh(display.displayID);
                     if (mode)
                         CGDisplayModeRelease(mode);
-                    s->width = w > 0 ? w : s->sourceWidth;
-                    s->height = h > 0 ? h : s->sourceHeight;
-                    // Match the RDP AVC420 canvas when a client requests an odd height.
-                    // Round up so the native H.264 stream can be forwarded without conversion.
-                    if (codec == 1) {
-                        s->width = (s->width + 1) & ~1;
-                        s->height = (s->height + 1) & ~1;
-                    } else if (codec) {
-                        s->width &= ~1;
-                        s->height &= ~1;
-                    }
+                    CGSize output = bk_screen_output_size(s->sourceWidth, s->sourceHeight,
+                                                          w, h, codec, downscale_only, max_w, max_h);
+                    s->width = (int)output.width;
+                    s->height = (int)output.height;
                     if (s->width < 2 || s->height < 2 || s->width > 8192 || s->height > 8192)
                         message = @"unsupported output dimensions";
                     if ((codec == 1 || codec == 2) && !message) {
@@ -830,8 +1064,15 @@ void *bk_screen_open(int index, unsigned int display_id, int w, int h, int fps, 
                             [[[SCStreamConfiguration alloc] init] autorelease];
                         config.width = s->width;
                         config.height = s->height;
-                        config.minimumFrameInterval = CMTimeMake(1, fps);
+                        config.minimumFrameInterval = fps > 0 ? CMTimeMake(1, fps) : kCMTimeZero;
                         config.queueDepth = codec == 2 ? 6 : 3;
+                        if (codec == 1 || codec == 2) {
+                            int limit = encoder_buffer_frames > 0 ? encoder_buffer_frames : (codec == 2 ? 4 : 2);
+                            // Reserve IOSurfaces for in-flight encoding, the latest
+                            // pending sample and its replacement. Pending work is
+                            // still one slot; pool starvation must not block capture.
+                            config.queueDepth = MIN(8, MAX(3, limit + 2));
+                        }
                         config.pixelFormat = bk_screen_capture_format(s);
                         if (codec == 3 || s->rdpFullRange)
                             config.colorMatrix = kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
@@ -889,7 +1130,7 @@ void *bk_screen_open(int index, unsigned int display_id, int w, int h, int fps, 
                         }
                     }
                     if (!message) {
-                        dispatch_sync(s->queue, ^{
+                        dispatch_sync(s->encodeQueue, ^{
                           [s startIdleTimer];
                         });
                         return s;
@@ -955,6 +1196,36 @@ int bk_screen_take_geometry(void *handle, void **lease, void **data, void **pixe
 void bk_screen_release(void *lease) {
     [(id)lease release];
 }
+
+void bk_screen_lease_timing(void *lease, long long *present, long long *display, long long *acquired,
+                           long long *submitted, long long *completed, long long *now, int *repeated) {
+    NSDictionary *entry = lease;
+    bk_screen_frame_context timing = {0};
+    NSValue *value = entry[@"timing"];
+    if (value)
+        [value getValue:&timing size:sizeof(timing)];
+    // Never fall back to the encoder/playback PTS, which may have been advanced
+    // for decoder ordering or synthesized for an idle repeat.
+    *present = timing.present;
+    *display = timing.display;
+    *acquired = timing.acquired;
+    *submitted = timing.submitted;
+    *completed = timing.completed;
+    *repeated = timing.repeated;
+    *now = bk_screen_host_ns();
+}
+
+void bk_screen_lease_texture_timing(void *lease, long long *ready_start,
+                                  long long *ready_end, long long *imported) {
+    NSDictionary *entry = lease;
+    bk_screen_frame_context timing = {0};
+    NSValue *value = entry[@"timing"];
+    if (value)
+        [value getValue:&timing size:sizeof(timing)];
+    *ready_start = timing.readyStart;
+    *ready_end = timing.readyEnd;
+    *imported = timing.imported;
+}
 int bk_screen_copy_pixel(void *pixel, int nv12, uint8_t *dest, size_t size) {
     @autoreleasepool {
         int tag;
@@ -1006,14 +1277,23 @@ int bk_screen_idle_status(void *handle, char *detail, int size) {
         BKScreen *s = handle;
         [s->lock lock];
         int expected =
-            s->completeFrames > 0 && s->inFlight == 0 && !s->failure &&
+            s->completeFrames > 0 && s->inFlight == 0 && !s->pendingSample &&
+            !s->encodeWorkerScheduled && !s->failure &&
             (s->lastStatus == SCFrameStatusComplete || s->lastStatus == SCFrameStatusIdle);
         snprintf(
             detail, size,
-            "ScreenCaptureKit callbacks=%llu complete=%llu submitted=%llu encoded=%llu pending=%d queued=%lu busy_drops=%llu queue_resets=%llu idle=%llu repeated=%llu status=%d rdp_full_range=%d range_verified=%d",
+            "ScreenCaptureKit callbacks=%llu complete=%llu submitted=%llu encoded=%llu pending=%d queued=%lu busy_drops=%llu queue_resets=%llu idle=%llu repeated=%llu status=%d rdp_full_range=%d range_verified=%d pending_input=%d replaced_input=%llu not_ready_drops=%llu",
             s->callbacks, s->completeFrames, s->submitted, s->encoded, s->inFlight,
             (unsigned long)s->frames.count, s->busyDrops, s->queueResets, s->idleFrames,
-            s->repeatedFrames, s->lastStatus, s->rdpFullRange, s->rangeVerified);
+            s->repeatedFrames, s->lastStatus, s->rdpFullRange, s->rangeVerified,
+            s->pendingSample != NULL, s->pendingReplaced, s->notReadyDrops);
+        if (s->timingEnabled && s->encodeCallCount) {
+            size_t used = strlen(detail);
+            if (used < (size_t)size)
+                snprintf(detail + used, size - used, " encode_api_ms=%.3f/%.3f(mean/max)",
+                         (double)s->encodeCallTotalNS / s->encodeCallCount / NSEC_PER_MSEC,
+                         (double)s->encodeCallMaxNS / NSEC_PER_MSEC);
+        }
         [s->lock unlock];
         return expected;
     }
@@ -1030,41 +1310,17 @@ int bk_screen_request_keyframe(void *handle) {
     s->forceIDR = YES;
     [s->lock unlock];
     if (!alreadyRequested)
-        dispatch_async(s->queue, ^{
+        dispatch_async(s->encodeQueue, ^{
           @autoreleasepool {
               // A refresh must work even if the desktop remains completely unchanged.
-              if (s->lastPixel)
+              [s->lock lock];
+              BOOL active = s->sourceAvailable && !s->pendingSample && !s->closed && !s->failure;
+              [s->lock unlock];
+              if (s->lastPixel && active)
                   [s encodePixel:s->lastPixel
                           atTime:CMClockGetTime(CMClockGetHostTimeClock())
                           repeat:YES];
           }
         });
     return 1;
-}
-
-int bk_screen_supports_hevc(void) {
-    @autoreleasepool {
-        VTCompressionSessionRef session = NULL;
-        NSDictionary *spec =
-            @{(id)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder : @YES};
-        OSStatus status =
-            VTCompressionSessionCreate(NULL, 1280, 720, kCMVideoCodecType_HEVC,
-                                       (CFDictionaryRef)spec, NULL, NULL, NULL, NULL, &session);
-        if (!status)
-            status = VTSessionSetProperty(session, kVTCompressionPropertyKey_ProfileLevel,
-                                          kVTProfileLevel_HEVC_Main_AutoLevel);
-        if (!status)
-            status =
-                VTSessionSetProperty(session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
-        if (!status)
-            status = VTSessionSetProperty(session, kVTCompressionPropertyKey_AllowFrameReordering,
-                                          kCFBooleanFalse);
-        if (!status)
-            status = VTCompressionSessionPrepareToEncodeFrames(session);
-        if (session) {
-            VTCompressionSessionInvalidate(session);
-            CFRelease(session);
-        }
-        return status == noErr;
-    }
 }

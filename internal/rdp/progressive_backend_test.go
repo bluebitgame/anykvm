@@ -3,7 +3,6 @@ package rdp
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"math/rand"
 	"runtime"
 	"testing"
@@ -17,46 +16,6 @@ func (e *failedProgressiveCodec) encode([]byte, int, int, []bitmapRect, uint32, 
 func (e *failedProgressiveCodec) close()       { e.closed = true }
 func (e *failedProgressiveCodec) name() string { return "injected failure" }
 
-func BenchmarkProgressiveQuantization(b *testing.B) {
-	const w, h = 1280, 720
-	for _, pattern := range []string{"solid", "gradient", "noise"} {
-		pixels := progressivePixels(w, h, pattern)
-		rects := dirtyProgressiveRects(pixels, nil, w, h)
-		for _, factor := range []int{6, 7, 8} {
-			b.Run(fmt.Sprintf("%s/q%d", pattern, factor), func(b *testing.B) {
-				e, err := newProgressiveEncoder(factor)
-				if errors.Is(err, errProgressiveNativeUnavailable) || errors.Is(err, errProgressiveSIMDUnavailable) {
-					b.Skip(err)
-				}
-				if err != nil {
-					b.Fatal(err)
-				}
-				defer e.close()
-				b.Logf("encoder=%s quantization=%d", e.backend(), factor)
-				encode := func(frame uint32) int64 {
-					var encoded int64
-					for i := 0; i < len(rects); i += progressiveBatchRects {
-						out, err := e.encode(pixels, w, h, rects[i:min(i+progressiveBatchRects, len(rects))], frame)
-						if err != nil {
-							b.Fatal(err)
-						}
-						encoded += int64(len(out))
-					}
-					return encoded
-				}
-				encode(0)
-				b.SetBytes(int64(len(pixels)))
-				b.ReportAllocs()
-				b.ResetTimer()
-				var encoded int64
-				for frame := 0; frame < b.N; frame++ {
-					encoded += encode(uint32(frame))
-				}
-				b.ReportMetric(float64(encoded)/float64(b.N), "encoded-B/frame")
-			})
-		}
-	}
-}
 func TestProgressiveNativeFailure(t *testing.T) {
 	pixels := progressivePixels(64, 64, "gradient")
 	r := bitmapRect{0, 0, 64, 64}
@@ -232,52 +191,5 @@ func TestProgressiveBackendLifecycle(t *testing.T) {
 			t.Logf("%s selected %s", mode, e.backend())
 		}
 		e.close()
-	}
-}
-
-func BenchmarkProgressiveBackends(b *testing.B) {
-	const w, h = 1280, 720
-	for _, pattern := range []string{"solid", "gradient", "noise"} {
-		pixels := progressivePixels(w, h, pattern)
-		rects := dirtyProgressiveRects(pixels, nil, w, h)
-		backends := []string{"go", "native-scalar", "native-sse2", "native-avx2"}
-		if runtime.GOARCH != "amd64" {
-			backends = []string{"go", "native-scalar", "native"}
-		}
-		for _, backend := range backends {
-			b.Run(pattern+"/"+backend, func(b *testing.B) {
-				e := &progressiveEncoder{first: true, required: true, quantization: DefaultProgressiveQuantization}
-				if backend != "go" {
-					var err error
-					if e.native, err = newNativeProgressive(backend, DefaultProgressiveQuantization); err != nil {
-						if errors.Is(err, errProgressiveNativeUnavailable) || errors.Is(err, errProgressiveSIMDUnavailable) {
-							b.Skip(err)
-						}
-						b.Fatal(err)
-					}
-				}
-				defer e.close()
-				encode := func(frame uint32) int64 {
-					var encoded int64
-					for i := 0; i < len(rects); i += progressiveBatchRects {
-						out, err := e.encode(pixels, w, h, rects[i:min(i+progressiveBatchRects, len(rects))], frame)
-						if err != nil {
-							b.Fatal(err)
-						}
-						encoded += int64(len(out))
-					}
-					return encoded
-				}
-				encode(0) // Allocate persistent C scratch/output before timing.
-				b.SetBytes(int64(len(pixels)))
-				b.ReportAllocs()
-				b.ResetTimer()
-				var encoded int64
-				for frame := 0; frame < b.N; frame++ {
-					encoded += encode(uint32(frame))
-				}
-				b.ReportMetric(float64(encoded)/float64(b.N), "encoded-B/frame")
-			})
-		}
 	}
 }

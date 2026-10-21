@@ -41,10 +41,13 @@ type v4l2Device struct {
 	nativeLogged, fallbackLogged bool
 }
 
-func newNativeDevice(id string) Device        { return &v4l2Device{path: id} }
-func (*v4l2Device) UsesLocalCursor() bool     { return false }
-func (*v4l2Device) PreserveCaptureMode() bool { return true }
-func (*v4l2Device) CanRecoverCapture() bool   { return true }
+func newNativeDevice(id string) Device              { return &v4l2Device{path: id} }
+func (*v4l2Device) UsesLocalCursor() bool           { return false }
+func (*v4l2Device) PreserveCaptureMode() bool       { return true }
+func (d *v4l2Device) SetOutputSize(w, h int)        { d.enc.targetW, d.enc.targetH = w, h }
+func (d *v4l2Device) SetOutputSizeLimit(w, h int)   { d.enc.SetOutputSizeLimit(w, h) }
+func (d *v4l2Device) SetOutputDownscaleOnly(v bool) { d.enc.outputDownscaleOnly = v }
+func (*v4l2Device) CanRecoverCapture() bool         { return true }
 func (d *v4l2Device) SetCaptureMode(value string) error {
 	mode, err := ParseMode(value)
 	if err != nil {
@@ -68,12 +71,15 @@ func (d *v4l2Device) SetVideoStreamOptions(o *VideoStreamOptions) { d.enc.SetVid
 func (d *v4l2Device) CaptureFrameRate() framerate.Rate            { return d.rate }
 func (d *v4l2Device) CaptureFPS() int                             { return d.rate.Round() }
 func (d *v4l2Device) SupportsGameStreamAV1() bool                 { return videoenc.SupportsAV1() }
+func (d *v4l2Device) SupportsGameStreamHEVC() bool                { return videoenc.SupportsHEVC() }
 func (d *v4l2Device) SupportsVideoCodec(c string) bool {
 	switch c {
 	case "", "mjpeg", "rawvideo":
 		return true
 	case "h264":
 		return d.mode.PixelFormat == "h264" || videoenc.SupportsH264()
+	case "hevc":
+		return videoenc.SupportsHEVC()
 	case "av1":
 		return videoenc.SupportsAV1()
 	}
@@ -228,7 +234,12 @@ func (d *v4l2Device) Capture() (out *Frame, err error) {
 		if !d.enc.shouldDecode() && (d.codec() == "" || d.codec() == "mjpeg") {
 			f.Format = FormatJPEG
 			f.Buffer = framebuf.New(f.Data, nil)
+			d.enc.outputLog.start("jpeg", "passthrough")
 			return f, nil
+		}
+		if codec := d.codec(); codec == "h264" || codec == "hevc" || codec == "av1" {
+			f.Format = FormatJPEG
+			return d.enc.encodeMediaFrame(f)
 		}
 		pixels, w, h, err := jpegcodec.DecodeBGRA(f.Data)
 		if err != nil {
@@ -242,6 +253,7 @@ func (d *v4l2Device) Capture() (out *Frame, err error) {
 		if d.decoder == nil {
 			f.Format = FormatH264
 			f.Buffer = framebuf.New(f.Data, nil)
+			d.enc.outputLog.start("h264", "passthrough")
 			return f, nil
 		}
 		decoded, err := d.decoder.Decode(f.Data)

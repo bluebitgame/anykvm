@@ -161,7 +161,13 @@ func (c *client) cursorScale(cs *capture.CursorState) (float64, float64) {
 	c.input.mu.Lock()
 	w, h, rect := c.input.w, c.input.h, c.input.contentRect
 	c.input.mu.Unlock()
-	ow, oh := c.requestedOutputSize(w, h)
+	// Geometry of the frame actually sent wins over a pending client layout.
+	// The layout can exceed the source or precede capture reconfiguration.
+	ow, oh := w, h
+	if ow < 1 || oh < 1 {
+		tw, th := c.requestedOutputSize(cs.SourceWidth, cs.SourceHeight)
+		ow, oh = capture.BoundedOutputSize(cs.SourceWidth, cs.SourceHeight, tw, th)
+	}
 	if ow < 1 || oh < 1 {
 		return 1, 1
 	}

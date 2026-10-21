@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"anykvm/internal/bridge"
+	"anykvm/internal/capture"
 )
 
 func (c *client) requestedOutputSize(w, h int) (int, int) {
@@ -14,14 +15,32 @@ func (c *client) requestedOutputSize(w, h int) (int, int) {
 	return w, h
 }
 
-// Fixed capture sources retain their encoded dimensions. Reset the RDPGFX
+// Fixed capture sources within the Target ceiling retain their encoded dimensions. Reset the RDPGFX
 // canvas to that size instead of decoding a native AU just to rescale it.
 // Keep the client's requested layout separately for local-screen targets.
 func (c *client) videoOutputSize(f bridge.Frame) (int, int) {
-	if f.PreserveSource {
+	maxW, maxH := f.OutputMaxW&^1, f.OutputMaxH&^1
+	if c.scaledMapping {
+		return sourceEncodingSize(f.Width, f.Height, maxW, maxH)
+	}
+	withinLimit := (maxW <= 0 || f.Width <= maxW) && (maxH <= 0 || f.Height <= maxH)
+	if f.PreserveSource && predictionCoded(f.Format) && withinLimit {
 		return f.Width, f.Height
 	}
-	return c.requestedOutputSize(f.Width, f.Height)
+	if f.CaptureScalesOutput && f.SourceWidth > 0 && f.SourceHeight > 0 {
+		tw, th := c.requestedOutputSize(f.Width, f.Height)
+		return capture.LimitedOutputSize(f.SourceWidth, f.SourceHeight, tw, th, maxW, maxH)
+	}
+	tw, th := c.requestedOutputSize(f.Width, f.Height)
+	return capture.LimitedOutputSize(f.Width, f.Height, tw, th, maxW, maxH)
+}
+
+func (c *client) bitmapOutputSize(f bridge.Frame, w, h int) (int, int) {
+	if c.scaledMapping {
+		return sourceEncodingSize(w, h, f.OutputMaxW, f.OutputMaxH)
+	}
+	tw, th := c.requestedOutputSize(w, h)
+	return capture.LimitedOutputSize(w, h, tw, th, f.OutputMaxW, f.OutputMaxH)
 }
 
 func (c *client) setOutputSize(w, h int) {
@@ -124,4 +143,18 @@ func scaleBitmap(pixels []byte, f bridge.Frame, w, h int) ([]byte, bridge.Frame)
 	f.ContentRect = transformedContentRect(frameContentRect(f), f.Width, f.Height, fit)
 	f.Width, f.Height = w, h
 	return out, f
+}
+
+// Client scaling removes layout-driven resampling, while Target ceilings still
+// limit encoded dimensions. Keep the source aspect ratio when a ceiling applies.
+func sourceEncodingSize(w, h, maxW, maxH int) (int, int) {
+	bw, bh := w, h
+	if maxW > 0 {
+		bw = min(bw, maxW)
+	}
+	if maxH > 0 {
+		bh = min(bh, maxH)
+	}
+	fit := fittedFrameRect(w, h, bw, bh, false)
+	return fit.Dx(), fit.Dy()
 }

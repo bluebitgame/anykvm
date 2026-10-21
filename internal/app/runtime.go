@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"anykvm/internal/discovery"
 	"anykvm/internal/gamestream"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/netstats"
 	"anykvm/internal/pixelops"
 	"anykvm/internal/rdp"
 	"anykvm/internal/tlsconfig"
@@ -31,6 +33,8 @@ const (
 )
 
 func runConfiguredApplication(opts *serverOptions, configPath string, cfg Config) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	discovery.StartConfigDeviceDiscovery()
 	// Keep the persisted values separate from runtime TLS defaults. A settings
 	// save must not turn an omitted TLS path into a machine-specific path.
@@ -93,6 +97,7 @@ func runConfiguredApplication(opts *serverOptions, configPath string, cfg Config
 		}
 	}
 	b := bridge.NewBridge(machines, cfg.HotkeyMod, 0, 0, 0)
+	go netstats.Run(ctx, b.RemoteControlActive)
 	b.SetRDPBitrate(cfg.RDP.Bitrate)
 	b.SetWebBitrate(cfg.Web.Bitrate)
 	b.SetWebJPEGQuality(cfg.Web.JPEGQuality)

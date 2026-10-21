@@ -23,7 +23,10 @@ var jpegPackSPIRV []byte
 
 // VulkanEncoder uses the same full JPEG compute pipeline as D3D11.
 // The capture owner serializes EncodeSource and Close.
-type VulkanEncoder struct{ encoder *gpuconv.JPEGEncoder }
+type VulkanEncoder struct {
+	encoder    *gpuconv.JPEGEncoder
+	parameters jpegFrameParameters
+}
 
 func NewVulkanEncoder(major, minor uint32) (*VulkanEncoder, error) {
 	encoder, err := gpuconv.NewJPEGEncoder(major, minor, [4][]byte{jpegSPIRV, jpegEntropySPIRV, jpegIndexSPIRV, jpegPackSPIRV})
@@ -37,11 +40,10 @@ func (e *VulkanEncoder) EncodeSource(source dmabuf.Frame, width, height, quality
 	if e == nil || e.encoder == nil {
 		return nil, fmt.Errorf("Vulkan JPEG encoder closed")
 	}
-	quantization, huffman, header, err := gpuJPEGFrame(width, height, quality)
-	if err != nil {
+	if err := e.parameters.prepare(width, height, quality); err != nil {
 		return nil, err
 	}
-	return e.encoder.EncodeSource(source, width, height, quantization, huffman, header)
+	return e.encoder.EncodeSource(source, width, height, &e.parameters.quantization, &jpegPackedEntropyCodes, e.parameters.header)
 }
 
 func (e *VulkanEncoder) Close() {
@@ -49,4 +51,12 @@ func (e *VulkanEncoder) Close() {
 		e.encoder.Close()
 		e.encoder = nil
 	}
+}
+
+// DRMDevice returns the Vulkan renderer's DRM device, not the KMS source.
+func (e *VulkanEncoder) DRMDevice() (uint32, uint32) {
+	if e == nil || e.encoder == nil {
+		return 0, 0
+	}
+	return e.encoder.DRMDevice()
 }

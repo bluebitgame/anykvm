@@ -21,6 +21,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/gamestream/native"
+	"anykvm/internal/netstats"
 )
 
 type PairingRequest struct{ ClientName, Address string }
@@ -205,6 +206,8 @@ func (s *Server) Start() error {
 			secure.Close()
 			return fmt.Errorf("GameStream transport: %w", err)
 		}
+	}
+	if s.cfg.OnStreamStart != nil {
 		s.serveStreaming()
 	}
 	tlsCfg := &tls.Config{
@@ -213,7 +216,7 @@ func (s *Server) Start() error {
 		// uses exact paired certificates, not public CAs or caller uniqueid.
 		ClientAuth: tls.RequestClientCert,
 	}
-	for _, listener := range []net.Listener{plain, tls.NewListener(secure, tlsCfg)} {
+	for _, listener := range []net.Listener{netstats.WrapListener(plain), tls.NewListener(netstats.WrapListener(secure), tlsCfg)} {
 		srv := &http.Server{
 			Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
 			WriteTimeout: 150 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024,

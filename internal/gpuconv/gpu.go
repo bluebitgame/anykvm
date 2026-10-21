@@ -1,4 +1,4 @@
-// Package gpuconv converts Linux DMA-BUF images using Vulkan and shared HLSL.
+// Package gpuconv provides GPU image conversion and Progressive compute runtimes.
 package gpuconv
 
 import "errors"

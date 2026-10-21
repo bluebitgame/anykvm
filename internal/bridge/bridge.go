@@ -3,6 +3,7 @@ package bridge
 import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/framerate"
+	"anykvm/internal/gpuconv"
 	"anykvm/internal/hid"
 	"anykvm/internal/jpegcodec"
 	"anykvm/internal/videotiming"
@@ -11,6 +12,7 @@ import (
 	"image"
 	"log"
 	"math"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,12 +62,14 @@ type MachineSession struct {
 }
 
 type Frame struct {
-	Timing videotiming.Delivery
+	Surface *gpuconv.Surface // Immutable GPU snapshot, owned by Buffer; no CPU Data.
+	Timing  videotiming.Delivery
 	// Buffer owns immutable Data when non-nil. Frame copies borrow this reference.
 	Buffer                    *framebuf.Buffer
 	PreserveSource            bool
 	BufferH264Presentation    bool // explicit source opt-in, only for native H.264
-	CaptureScalesOutput       bool // backend implements capture.OutputSizeConfigurer
+	CaptureScalesOutput       bool // scalable backend follows output requests (not fixed-source AUs)
+	OutputMaxW, OutputMaxH    int  // configured Target ceiling; zero means source size
 	CaptureFPS                int
 	CaptureRate               framerate.Rate
 	CapturedAt                time.Time
@@ -138,6 +142,7 @@ type Bridge struct {
 	wantAV1        bool
 	wantHEVC       bool
 	wantNV12       bool // Planar prefers native subsampled pixels when available.
+	wantSurface    bool // Progressive compute can consume immutable GPU snapshots.
 	videoCodec     string
 	webJPEGQuality int // protected by captureMu; applied on future capture opens
 }
@@ -202,6 +207,17 @@ func (b *Bridge) SetClientActivityHandler(handler func(bool)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.clientActivity = handler
+}
+
+// RemoteControlActive excludes the local viewer and passive source listeners.
+func (b *Bridge) RemoteControlActive() bool {
+	b.mu.Lock()
+	active := b.consumers > 0
+	b.mu.Unlock()
+	b.sessionMu.Lock()
+	proto := b.activeProto
+	b.sessionMu.Unlock()
+	return active && proto != "" && proto != "viewer"
 }
 
 // setConsumersLocked keeps notifications ordered with session reservations.
@@ -294,6 +310,8 @@ func (b *Bridge) StartRDPWithDesktop(codec string, size capture.DesktopSize) {
 	b.codecMu.Lock()
 	b.wantH264, b.wantHEVC, b.wantAV1 = !needPixels, false, false
 	b.wantNV12 = codec == "planar"
+	mode := os.Getenv("ANYKVM_RDP_PROGRESSIVE_BACKEND")
+	b.wantSurface = codec == "progressive" && (mode == "gpu" || mode == "vulkan" || mode == "d3d11")
 	b.codecMu.Unlock()
 	b.mu.Lock()
 	b.videoCodec = ""
@@ -833,11 +851,6 @@ func (b *Bridge) claimSession(proto string) {
 func (b *Bridge) SetPixelNeed(need bool) {
 	b.needPixels.Store(need)
 	b.devSetDecodeImage(need)
-	if !need {
-		log.Printf("bridge: JPEG passthrough")
-	} else {
-		log.Printf("bridge: pixel decoding")
-	}
 	b.updateCodec()
 }
 
@@ -1000,17 +1013,10 @@ func (b *Bridge) updateCodecLocked() {
 	b.mu.Lock()
 	b.videoCodec = desired
 	b.mu.Unlock()
-	log.Printf("bridge: capture codec -> %q (reopen=%v)", codecLabel(desired), capturing)
+	log.Printf("bridge: capture reconfigured (reopen=%v)", capturing)
 	if capturing {
 		b.startCaptureLocked()
 	}
-}
-
-func codecLabel(c string) string {
-	if c == "" {
-		return "mjpeg"
-	}
-	return c
 }
 
 func (b *Bridge) Start() error {
@@ -1180,25 +1186,55 @@ func (b *Bridge) startCaptureLocked() {
 	// and would otherwise block the RDP reader during a slow display switch.
 	b.mu.Unlock()
 
+	if surface, ok := dev.(capture.GPUSurfaceConfigurer); ok {
+		b.sessionMu.Lock()
+		rdp := b.activeProto == "rdp"
+		b.sessionMu.Unlock()
+		b.codecMu.Lock()
+		want := b.wantSurface
+		b.codecMu.Unlock()
+		surface.SetGPUSurface(rdp && want)
+	}
 	if color, ok := dev.(capture.RDPAVC420Configurer); ok {
 		b.sessionMu.Lock()
 		rdp := b.activeProto == "rdp"
 		b.sessionMu.Unlock()
 		color.SetRDPAVC420(rdp && !b.needPixels.Load() && b.gsVideo == nil)
 	}
+	b.sessionMu.Lock()
+	rdpOutput := b.activeProto == "rdp"
+	b.sessionMu.Unlock()
+	if policy, ok := dev.(capture.OutputSizePolicyConfigurer); ok {
+		policy.SetOutputDownscaleOnly(rdpOutput)
+	}
+	if limit, ok := dev.(capture.OutputSizeLimitConfigurer); ok {
+		mw, mh := 0, 0
+		if rdpOutput {
+			mw, mh = m.CapW, m.CapH
+		}
+		limit.SetOutputSizeLimit(mw, mh)
+	}
+	var outputRequest *capture.DesktopSize
+	if b.desktopSize != nil {
+		size := *b.desktopSize
+		if rdpOutput && m.CapW > 0 && m.CapH > 0 {
+			size.Width, size.Height = capture.BoundedOutputSize(m.CapW, m.CapH, size.Width, size.Height)
+		}
+		outputRequest = &size
+	}
 	if scaled, ok := dev.(capture.OutputSizeConfigurer); ok {
 		ow, oh := 0, 0
 		b.sessionMu.Lock()
 		rdp := b.activeProto == "rdp"
 		b.sessionMu.Unlock()
-		if rdp && b.desktopSize != nil {
-			ow, oh = b.desktopSize.Width, b.desktopSize.Height
+		if rdp && outputRequest != nil {
+			ow, oh = outputRequest.Width, outputRequest.Height
 		}
 		scaled.SetOutputSize(ow, oh)
 	}
 	if desktop, ok := dev.(capture.DesktopConfigurer); ok {
-		if m.AutoResolution && b.desktopSize != nil {
-			request := *b.desktopSize
+		if m.AutoResolution && outputRequest != nil {
+			request := *outputRequest
 			if m.FPS > 0 {
 				request.RefreshRate = m.FPS
 			}
@@ -1206,9 +1242,9 @@ func (b *Bridge) startCaptureLocked() {
 			if err != nil {
 				log.Printf("bridge: desktop resize for %q: %v", m.Name, err)
 			}
-			// Scale during capture to the client's negotiated desktop size, even
-			// when the selected physical mode differs or selection fails.
-			w, h = b.desktopSize.Width, b.desktopSize.Height
+			// Request this output canvas after the physical mode switch. RDP's
+			// downscale-only policy bounds it to the actual mode on open.
+			w, h = outputRequest.Width, outputRequest.Height
 		}
 		if target, ok := m.HID.(interface{ SetDisplayID(uint32) }); ok {
 			if id := desktop.DesktopDisplayID(); id != 0 {
@@ -1425,14 +1461,16 @@ func (b *Bridge) pushFallbackLocked() {
 	}
 	pixels := solidBGRA(w, h, 0, 0, 0)
 	if b.needPixels.Load() {
-		b.push(capture.FormatRaw, pixels, w, h, nil)
+		b.pushFrame(Frame{Format: capture.FormatRaw, Data: pixels, Width: w, Height: h,
+			OutputMaxW: m.CapW, OutputMaxH: m.CapH}, nil)
 	} else {
 		data, err := jpegcodec.EncodeBGRA(pixels, w, h, 80)
 		if err != nil {
 			log.Printf("bridge: fallback JPEG: %v", err)
 			return
 		}
-		b.push(capture.FormatJPEG, data, w, h, nil)
+		b.pushFrame(Frame{Format: capture.FormatJPEG, Data: data, Width: w, Height: h,
+			OutputMaxW: m.CapW, OutputMaxH: m.CapH}, nil)
 	}
 }
 
@@ -1482,6 +1520,18 @@ func (b *Bridge) push(format capture.VideoFormat, data []byte, width, height int
 }
 
 func (b *Bridge) pushFrame(f Frame, stop <-chan struct{}) {
+	if f.Surface != nil {
+		// Surface capture is requested only for the exclusive Progressive GPU
+		// session. Byte-oriented viewers must never receive empty raw frames.
+		if b.rdpSrv != nil {
+			if srv, ok := b.rdpSrv.(interface{ PushFrameWithStop(Frame, <-chan struct{}) }); ok {
+				srv.PushFrameWithStop(f, stop)
+			} else {
+				b.rdpSrv.PushFrame(f)
+			}
+		}
+		return
+	}
 	b.viewerMu.RLock()
 	viewer := b.viewerSrv
 	b.viewerMu.RUnlock()
@@ -1558,7 +1608,7 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 			}
 			continue
 		}
-		if frame == nil || len(frame.Data) == 0 {
+		if frame == nil || (len(frame.Data) == 0 && frame.Surface == nil) {
 			frame.Release()
 			now := time.Now()
 			if idle.due(now) {
@@ -1587,7 +1637,7 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 					}
 				}
 			}
-			if !waitCapture(run.stop, 2*time.Millisecond) {
+			if !waitCaptureFrame(m.Capture, run.stop) {
 				return
 			}
 			continue
@@ -1630,17 +1680,19 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 			sourceRate = source.CaptureFrameRate()
 		}
 		_, scalesOutput := m.Capture.(capture.OutputSizeConfigurer)
+		// Fixed sources may pass compressed input through unchanged, or fit
+		// raw input before encoding. Their actual AU size is authoritative.
+		scalesOutput = scalesOutput && !preserve
 		bufferH264 := false
 		if source, ok := m.Capture.(interface{ BufferH264Presentation() bool }); ok && frame.Format == capture.FormatH264 {
 			bufferH264 = source.BufferH264Presentation()
 		}
-		b.pushFrame(Frame{Timing: videotiming.Delivery{Trace: frame.Timing}, BufferH264Presentation: bufferH264, PreserveSource: preserve, CaptureScalesOutput: scalesOutput, CaptureFPS: sourceFPS, CaptureRate: sourceRate, Buffer: frame.Buffer, CapturedAt: frame.CapturedAt, Format: frame.Format, PixFmt: frame.PixFmt, Data: frame.Data, Width: frame.Width, Height: frame.Height, Rotation: frame.Rotation, SourceWidth: frame.SourceWidth, SourceHeight: frame.SourceHeight, ContentRect: frame.ContentRect}, run.stop)
-		frame.Buffer.Release()
-		frame.Buffer = nil
+		b.pushFrame(Frame{Surface: frame.Surface, Timing: videotiming.Delivery{Trace: frame.Timing}, BufferH264Presentation: bufferH264, PreserveSource: preserve, CaptureScalesOutput: scalesOutput, OutputMaxW: m.CapW, OutputMaxH: m.CapH, CaptureFPS: sourceFPS, CaptureRate: sourceRate, Buffer: frame.Buffer, CapturedAt: frame.CapturedAt, Format: frame.Format, PixFmt: frame.PixFmt, Data: frame.Data, Width: frame.Width, Height: frame.Height, Rotation: frame.Rotation, SourceWidth: frame.SourceWidth, SourceHeight: frame.SourceHeight, ContentRect: frame.ContentRect}, run.stop)
+		frame.Release()
 		maxPush = max(maxPush, time.Since(pushStart))
 		frames++
 		if elapsed := time.Since(statsStart); elapsed >= 5*time.Second {
-			log.Printf("bridge: video codec=%s %.1f fps max_read=%.1fms max_push=%.1fms", frame.Format, float64(frames)/elapsed.Seconds(), float64(maxRead)/float64(time.Millisecond), float64(maxPush)/float64(time.Millisecond))
+			log.Printf("bridge: video %.1f fps max_read=%.1fms max_push=%.1fms", float64(frames)/elapsed.Seconds(), float64(maxRead)/float64(time.Millisecond), float64(maxPush)/float64(time.Millisecond))
 			statsStart, frames, maxRead, maxPush = time.Now(), 0, 0, 0
 		}
 	}
@@ -1671,7 +1723,7 @@ func (b *Bridge) closeFailedCapture(failed *captureRun) {
 	}
 }
 
-// SupportsGameStreamHEVC advertises only sources with a verified native encoder.
+// SupportsGameStreamHEVC uses the source or driver codec declaration.
 func (b *Bridge) SupportsGameStreamHEVC(index int) bool {
 	if index < 0 || index >= len(b.machines) {
 		return false
@@ -1691,6 +1743,9 @@ func (b *Bridge) SupportsGameStreamAV1(index int) bool {
 // Retain returns an independent reference suitable for an asynchronous queue.
 // Legacy reusable source data is copied once on entry to an owned queue.
 func (f Frame) Retain() Frame {
+	if f.Surface != nil && f.Buffer == nil {
+		panic("bridge: GPU surface has no lifetime owner")
+	}
 	if f.Buffer != nil {
 		f.Buffer = f.Buffer.Retain()
 	} else {
@@ -1704,5 +1759,6 @@ func (f *Frame) Release() {
 		f.Buffer.Release()
 		f.Buffer = nil
 		f.Data = nil
+		f.Surface = nil
 	}
 }

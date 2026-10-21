@@ -40,7 +40,7 @@ class WindowsBuildTagsTests(unittest.TestCase):
                 self.assertEqual("opus_dll.go" in files, not ffmpeg)
                 self.assertEqual("opus_native_other.go" in files, ffmpeg)
 
-    def test_vendor_backends_follow_ffmpeg_tag(self):
+    def test_vendor_encoding_tag_preserves_driver_capability_queries(self):
         for (arch, cgo, ffmpeg), packages in self.packages.items():
             with self.subTest(arch=arch, cgo=cgo, ffmpeg=ffmpeg):
                 package = packages["videoenc"]
@@ -49,13 +49,14 @@ class WindowsBuildTagsTests(unittest.TestCase):
                 tests = set(package.get("TestGoFiles", []))
                 flags = package.get("CgoLDFLAGS", [])
                 native, library = cgo == "1" and not ffmpeg, cgo == "1" and ffmpeg
-                self.assertEqual(VENDOR_C & c_files, VENDOR_C if native else set())
+                self.assertEqual(VENDOR_C & c_files, VENDOR_C if cgo == "1" else set())
                 self.assertEqual("encoder_vendor_windows.go" in go_files, native)
                 self.assertEqual("vendor_windows_test.go" in tests, native)
                 self.assertEqual("encoder_vendor_ffmpeg_windows.go" in go_files, library)
-                self.assertEqual("-ld3d11" in flags, native)
+                self.assertEqual("-ld3d11" in flags, cgo == "1")
                 self.assertEqual("mediafoundation_windows.c" in c_files, cgo == "1")
                 self.assertEqual("encoder_av.go" in go_files, library)
+                self.assertEqual("capability_windows.go" in go_files, cgo == "1")
 
 
 if __name__ == "__main__":

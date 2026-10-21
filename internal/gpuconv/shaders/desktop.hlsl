@@ -17,7 +17,7 @@ BIND(3) cbuffer Parameters : register(b0) {
     uint pitch;
     uint nv12;
     uint rotation; // clockwise degrees
-    uint reserved;
+    uint flipY;
 };
 float3 pixel(uint2 p) {
     if (any(p >= outputSize) || any(p < content.xy) || any(p >= content.xy + content.zw)) return 0.0;
@@ -25,6 +25,7 @@ float3 pixel(uint2 p) {
     if (rotation == 90) uv = float2(uv.y, 1.0 - uv.x);
     else if (rotation == 180) uv = 1.0 - uv;
     else if (rotation == 270) uv = float2(1.0 - uv.y, uv.x);
+    if (flipY != 0) uv.y = 1.0 - uv.y;
     uv = (float2(cropOrigin) + uv * float2(cropSize)) / float2(sourceSize);
     return sourceImage.SampleLevel(linearClamp, uv, 0).rgb;
 }

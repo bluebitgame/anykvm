@@ -12,7 +12,7 @@ import (
 
 // streamEncodedVideo forwards capture access units without decoding or re-encoding.
 func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketizer, epoch time.Time) (bridge.Frame, error) {
-	log.Printf("gamestream: direct %s capture %dx%d", x.options.codecName(), first.Width, first.Height)
+	x.logVideoEncoder(x.options.Codec, "passthrough")
 	if first.Width != x.options.Width || first.Height != x.options.Height {
 		log.Printf("gamestream: source is %dx%d, client requested %dx%d; preserving encoded source (match client resolution if decoding fails)", first.Width, first.Height, x.options.Width, x.options.Height)
 	}
@@ -129,10 +129,10 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 				waitingIDR = false
 				if idr {
 					if v.frame == 1 && refreshRequested.IsZero() {
-						log.Printf("gamestream: sent first recovery frame=%d codec=%s bytes=%d", v.frame, x.options.codecName(), len(current.Data))
+						log.Printf("gamestream: sent first recovery frame=%d bytes=%d", v.frame, len(current.Data))
 					}
 					if !refreshRequested.IsZero() {
-						log.Printf("gamestream: sent recovery frame=%d codec=%s bytes=%d after=%.1fms", v.frame, x.options.codecName(), len(current.Data), float64(time.Since(refreshRequested))/float64(time.Millisecond))
+						log.Printf("gamestream: sent recovery frame=%d bytes=%d after=%.1fms", v.frame, len(current.Data), float64(time.Since(refreshRequested))/float64(time.Millisecond))
 						refreshRequested = time.Time{}
 					}
 					// A naturally occurring IDR satisfies a pending refresh. Avoid

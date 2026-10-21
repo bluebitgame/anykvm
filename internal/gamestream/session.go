@@ -31,33 +31,44 @@ type streamOptions struct {
 }
 
 type streamSession struct {
-	server               *Server
-	owner, ip, id, ping  string
-	appID, machine       int
-	key                  []byte
-	keyID, connectData   uint32
-	rtspEncrypted        bool
-	gcm                  cipher.AEAD
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	done                 chan struct{}
-	stopOnce             sync.Once
-	startMu              sync.Mutex // serializes PLAY and teardown callbacks
-	mu                   sync.Mutex
-	options              streamOptions
-	announced, started   bool
-	setup                map[string]bool
-	videoPeer, audioPeer *net.UDPAddr
-	rtspIn, rtspOut      uint32
-	framePushMu          sync.Mutex
-	frames               chan bridge.Frame
-	audio                chan capture.AudioFrame
-	keyframe             chan struct{}
-	workers              sync.WaitGroup
-	lastControl          atomic.Int64
-	acceptFrames         atomic.Bool
-	input                inputState
-	client               ClientInfo // immutable snapshot, also supplied to the input mapper
+	server                               *Server
+	owner, ip, id, ping                  string
+	appID, machine                       int
+	key                                  []byte
+	keyID, connectData                   uint32
+	rtspEncrypted                        bool
+	gcm                                  cipher.AEAD
+	ctx                                  context.Context
+	cancel                               context.CancelFunc
+	done                                 chan struct{}
+	stopOnce                             sync.Once
+	startMu                              sync.Mutex // serializes PLAY and teardown callbacks
+	mu                                   sync.Mutex
+	options                              streamOptions
+	announced, started                   bool
+	setup                                map[string]bool
+	videoPeer, audioPeer                 *net.UDPAddr
+	rtspIn, rtspOut                      uint32
+	framePushMu                          sync.Mutex
+	frames                               chan bridge.Frame
+	audio                                chan capture.AudioFrame
+	keyframe                             chan struct{}
+	workers                              sync.WaitGroup
+	lastControl                          atomic.Int64
+	acceptFrames                         atomic.Bool
+	input                                inputState
+	client                               ClientInfo // immutable snapshot, also supplied to the input mapper
+	loggedVideoCodec, loggedVideoEncoder string     // video worker only; survives encoder rebuilds
+}
+
+func (x *streamSession) logVideoEncoder(codec, encoder string) {
+	if codec == "" {
+		codec = "h264"
+	}
+	if codec != x.loggedVideoCodec || encoder != x.loggedVideoEncoder {
+		log.Printf("gamestream: video codec=%s encoder=%q", codec, encoder)
+		x.loggedVideoCodec, x.loggedVideoEncoder = codec, encoder
+	}
 }
 
 func (s *Server) currentSession() *streamSession {
@@ -272,7 +283,7 @@ func (x *streamSession) play() error {
 			}
 		}
 	}()
-	log.Printf("gamestream: streaming %s %dx%d@%d %d kbps, audio enabled=%t", x.options.codecName(), x.options.Width, x.options.Height, x.options.FPS, x.options.Bitrate, x.audioEnabled())
+	log.Printf("gamestream: streaming %dx%d@%d %d kbps, audio enabled=%t", x.options.Width, x.options.Height, x.options.FPS, x.options.Bitrate, x.audioEnabled())
 	return nil
 }
 

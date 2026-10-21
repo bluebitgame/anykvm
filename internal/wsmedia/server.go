@@ -19,6 +19,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/framebuf"
+	"anykvm/internal/netstats"
 
 	"github.com/gorilla/websocket"
 )
@@ -339,7 +340,7 @@ func (s *Server) Start() error {
 		}
 		endpoints = append(endpoints, endpoint{
 			server:   &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second},
-			listener: ln,
+			listener: netstats.WrapListener(ln),
 		})
 	}
 	index := 0

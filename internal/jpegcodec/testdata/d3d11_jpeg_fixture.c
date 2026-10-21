@@ -22,10 +22,10 @@ int main(int argc, char **argv) {
     // Windows text-mode streams would corrupt binary pixel/coefficient data.
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
-    uint32_t geometry[5], quantization[128], huffman[1024], header_bytes;
+    uint32_t geometry[5], quantization[128], huffman[3072], header_bytes;
     if (fread(geometry, sizeof(uint32_t), 5, stdin) != 5 ||
         fread(quantization, sizeof(uint32_t), 128, stdin) != 128 ||
-        fread(huffman, sizeof(uint32_t), 1024, stdin) != 1024 ||
+        fread(huffman, sizeof(uint32_t), 3072, stdin) != 3072 ||
         fread(&header_bytes, sizeof(uint32_t), 1, stdin) != 1 || header_bytes > 1024 || header_bytes < 2) return 2;
     uint8_t header[1024];
     if (fread(header, 1, header_bytes, stdin) != header_bytes) return 2;
@@ -83,10 +83,14 @@ int main(int argc, char **argv) {
             .mcu_columns=(w+15)/16,.mcu_count=(UINT)(count/384),.header_bytes=header_bytes,
             .crop_size={sw,sh}
         };
-        memcpy(parameters.quantization,quantization,sizeof(quantization));
+        bk_jpeg_prepare_quantization(&parameters, quantization);
         memcpy(parameters.huffman,huffman,sizeof(huffman));
         TRY(prepare_frame(encoder,&parameters,header));
-        ID3D11DeviceContext_UpdateSubresource(encoder->context,(ID3D11Resource *)encoder->coefficients.buffer,0,NULL,coefficients,0,0);
+        uint32_t *packed = malloc(count * sizeof(int16_t));
+        if (!packed) goto cleanup;
+        for (size_t i = 0; i < count; i += 2) packed[i/2] = (uint16_t)coefficients[i] | ((uint32_t)(uint16_t)coefficients[i+1] << 16);
+        ID3D11DeviceContext_UpdateSubresource(encoder->context,(ID3D11Resource *)encoder->coefficients.buffer,0,NULL,packed,0,0);
+        free(packed);
         bind_frame(encoder);
         encode_scan(encoder,parameters.mcu_count);
         TRY(read_jpeg(encoder,&jpeg,&jpeg_bytes));

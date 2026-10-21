@@ -1,6 +1,7 @@
 package gamestream
 
 import (
+	"anykvm/internal/netstats"
 	"context"
 	"net"
 	"testing"
@@ -90,15 +91,22 @@ func TestLargeVideoFrameDoesNotStallFollowingFrames(t *testing.T) {
 	// The previous per-frame average-rate cap took >600ms for this IDR.
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
+	before := netstats.Total()
 	pacer := &videoPacer{}
 	start := time.Now()
 	if err := pacer.send(ctx, sender, peer.LocalAddr().(*net.UDPAddr), packets); err != nil {
 		t.Fatalf("large frame stalled stream: %v", err)
 	}
 	t.Logf("200-packet frame sent in %v", time.Since(start))
+	if n := netstats.Total() - before; n != 200*1024 {
+		t.Fatalf("datagram bytes not counted: %d", n)
+	}
 	cancel()
 	if err := pacer.send(ctx, sender, peer.LocalAddr().(*net.UDPAddr), packets); err != context.Canceled {
 		t.Fatalf("sender ignored cancellation: %v", err)
+	}
+	if netstats.Total()-before != 200*1024 {
+		t.Fatal("cancelled packets counted as transmitted")
 	}
 }
 

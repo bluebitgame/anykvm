@@ -51,13 +51,14 @@ func TestD3D11JPEGShader(t *testing.T) {
 		for i, value := range geometry {
 			dimensions[i] = uint32(value)
 		}
-		quantization, huffman, header, err := gpuJPEGFrame(geometry[3], geometry[4], quality)
-		if err != nil {
+		var parameters jpegFrameParameters
+		if err := parameters.prepare(geometry[3], geometry[4], quality); err != nil {
 			t.Fatal(err)
 		}
+		header := parameters.header
 		binary.Write(&input, binary.LittleEndian, dimensions)
-		binary.Write(&input, binary.LittleEndian, quantization)
-		binary.Write(&input, binary.LittleEndian, huffman)
+		binary.Write(&input, binary.LittleEndian, parameters.quantization)
+		binary.Write(&input, binary.LittleEndian, jpegPackedEntropyCodes)
 		binary.Write(&input, binary.LittleEndian, uint32(len(header)))
 		input.Write(header)
 		input.Write(payload)

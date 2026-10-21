@@ -20,6 +20,26 @@ type nativeProgressiveCodec interface {
 const progressiveBatchTiles = 8
 const progressiveBatchRects = progressiveBatchTiles
 
+// Bound foreground lookahead while giving each worker several full packets.
+const progressiveWindowTiles = 128
+
+func progressiveWindowEnd(rects []bitmapRect, start int) int {
+	end, tiles := start, 0
+	for end < len(rects) {
+		next := progressiveBatchEnd(rects, end)
+		n := 0
+		for _, r := range rects[end:next] {
+			n += progressiveRectTiles(r)
+		}
+		if end > start && tiles+n > progressiveWindowTiles {
+			break
+		}
+		tiles += n
+		end = next
+	}
+	return end
+}
+
 func progressiveRectTiles(r bitmapRect) int {
 	return ((r.w + 63) / 64) * ((r.h + 63) / 64)
 }
@@ -71,6 +91,11 @@ func newProgressiveEncoder(quantization int) (*progressiveEncoder, error) {
 	}
 	e := &progressiveEncoder{first: true, quantization: quantization}
 	mode := os.Getenv("ANYKVM_RDP_PROGRESSIVE_BACKEND")
+	if mode == "gpu" || mode == "vulkan" || mode == "d3d11" {
+		e.required = true
+		e.native, err = newGPUProgressive(mode, quantization)
+		return e, err
+	}
 	if mode == "go" {
 		return e, nil
 	}
@@ -106,10 +131,16 @@ func (e *progressiveEncoder) encode(pixels []byte, w, h int, rects []bitmapRect,
 }
 
 func (e *progressiveEncoder) encodeFormat(pixels []byte, w, h int, rects []bitmapRect, frame uint32, format progressivePixelFormat) ([]byte, error) {
+	if g, ok := e.native.(*gpuProgressiveCodec); ok {
+		g.surfaceActive = false
+	}
+	return e.encodePrepared(pixels, w, h, rects, frame, format, false)
+}
+func (e *progressiveEncoder) encodePrepared(pixels []byte, w, h int, rects []bitmapRect, frame uint32, format progressivePixelFormat, surface bool) ([]byte, error) {
 	if e.closed {
 		return nil, errors.New("Progressive encoder closed")
 	}
-	if w < 1 || h < 1 || w > 8192 || h > 8192 || len(pixels) != progressivePixelBytes(w, h, format) || len(rects) > progressiveBatchRects {
+	if w < 1 || h < 1 || w > 8192 || h > 8192 || (!surface && len(pixels) != progressivePixelBytes(w, h, format)) || len(rects) > progressiveBatchRects {
 		return nil, errors.New("invalid Progressive frame")
 	}
 	tiles := 0
@@ -130,7 +161,7 @@ func (e *progressiveEncoder) encodeFormat(pixels []byte, w, h int, rects []bitma
 		e.first, e.w, e.h = true, w, h
 		e.initRefinement(w, h)
 	}
-	if len(e.coefficients) != 0 {
+	if len(e.pending) != 0 {
 		out, err := e.encodeLayered(pixels, rects, frame, format, false)
 		if err == nil {
 			for _, r := range rects {
@@ -162,4 +193,63 @@ func (e *progressiveEncoder) encodeFormat(pixels []byte, w, h int, rects []bitma
 	out := encodeProgressiveRectsFormat(pixels, w, h, rects, frame, e.first, e.quantization, format)
 	e.first = false
 	return out, nil
+}
+
+// encodeWindow returns packets in their original rectangle order. Pending state
+// commits after all workers have finished writing their disjoint cache entries.
+// A failed, unsent window can be recomputed without changing FIRST ordering.
+func (e *progressiveEncoder) encodeWindow(pixels []byte, w, h int, rects []bitmapRect, frame uint32, format progressivePixelFormat) ([][]byte, error) {
+	if e.closed {
+		return nil, errors.New("Progressive encoder closed")
+	}
+	if len(rects) == 0 {
+		return nil, nil
+	}
+	if len(rects) > progressiveWindowTiles {
+		return nil, errors.New("Progressive window exceeds rectangle limit")
+	}
+	if pool, ok := e.native.(*parallelProgressive); ok {
+		if w < 1 || h < 1 || w > 8192 || h > 8192 {
+			return nil, errors.New("invalid Progressive frame")
+		}
+		if w != e.w || h != e.h {
+			e.first, e.w, e.h = true, w, h
+			e.initRefinement(w, h)
+		}
+		bits := 0
+		if len(e.pending) != 0 {
+			bits = e.refineBits
+		}
+		output, err := pool.encodeBatches(pixels, w, h, rects, frame, e.first, format, bits, e.coefficients)
+		if err == nil {
+			if bits != 0 {
+				for _, r := range rects {
+					for y := r.y; y < r.y+r.h; y += 64 {
+						for x := r.x; x < r.x+r.w; x += 64 {
+							e.pending[progressiveTileIndex(w, x, y)] = true
+						}
+					}
+				}
+			}
+			e.first = false
+			return output, nil
+		}
+		if e.required {
+			return nil, err
+		}
+		log.Printf("rdp: Progressive window failed, switching to Go: %v", err)
+		pool.close()
+		e.native = nil
+	}
+	var output [][]byte
+	for i := 0; i < len(rects); {
+		end := progressiveBatchEnd(rects, i)
+		data, err := e.encodeFormat(pixels, w, h, rects[i:end], frame, format)
+		if err != nil {
+			return nil, err
+		}
+		output = append(output, data)
+		i = end
+	}
+	return output, nil
 }

@@ -8,6 +8,38 @@ import (
 
 var mfStartCode = []byte{0, 0, 0, 1}
 
+// Preserve parameter sets from actual output instead of sending startup frames
+// to harvest them. Some drivers only emit them with the first recovery picture.
+func mediaFoundationParameterSets(data []byte, codec string) []byte {
+	if codec != "h264" && codec != "hevc" {
+		return nil
+	}
+	units, err := mediaFoundationUnits(data, 4)
+	if err != nil {
+		return nil
+	}
+	var header []byte
+	present := make(map[byte]bool)
+	for _, unit := range units {
+		tag := unit[0] & 31
+		parameter := tag == 7 || tag == 8
+		if codec == "hevc" {
+			tag = unit[0] >> 1 & 63
+			parameter = tag >= 32 && tag <= 34
+		}
+		if parameter {
+			present[tag] = true
+			header = append(header, mfStartCode...)
+			header = append(header, unit...)
+		}
+	}
+	if codec == "hevc" && (!present[32] || !present[33] || !present[34]) ||
+		codec == "h264" && (!present[7] || !present[8]) {
+		return nil
+	}
+	return header
+}
+
 // Shared by native Windows and Raspberry Pi backends. Drivers
 // can return Annex-B or length-prefixed NAL units.
 // Recovery pictures include missing parameter sets from the negotiated type.
@@ -78,6 +110,9 @@ func mediaFoundationPacket(data, header []byte, codec string) ([]byte, error) {
 		}
 		if codec == "h264" && (!present[7] || !present[8]) {
 			return nil, fmt.Errorf("native video recovery picture lacks SPS/PPS")
+		}
+		if codec == "hevc" && (!present[32] || !present[33] || !present[34]) {
+			return nil, fmt.Errorf("native video recovery picture lacks VPS/SPS/PPS")
 		}
 	}
 	for _, unit := range units {

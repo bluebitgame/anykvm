@@ -15,6 +15,7 @@ import (
 	"anykvm/internal/rdp"
 	"anykvm/internal/rtsp"
 	"anykvm/internal/scrcpy"
+	"anykvm/internal/spice"
 	"anykvm/internal/vnc"
 	"anykvm/internal/wol"
 
@@ -142,6 +143,7 @@ type TargetConfig struct {
 	CoreDevice coredevice.Options `yaml:"coredevice,omitempty"`
 	AirPlay    airplay.Options    `yaml:"airplay,omitempty"`
 	RTSP       rtsp.Options       `yaml:"rtsp,omitempty"`
+	SPICE      spice.Options      `yaml:"spice,omitempty"`
 	RDP        rdp.SourceOptions  `yaml:"rdp,omitempty"`
 }
 
@@ -425,6 +427,9 @@ func validateConfig(cfg Config) error {
 		if err := rtsp.ValidateSource(machine.Video.Source, machine.RTSP); err != nil {
 			return fmt.Errorf("target %q: %w", machine.Name, err)
 		}
+		if err := spice.ValidateSource(machine.Video.Source, machine.SPICE); err != nil {
+			return fmt.Errorf("target %q: %w", machine.Name, err)
+		}
 		if err := rdp.ValidateSource(machine.Video.Source, machine.RDP); err != nil {
 			return fmt.Errorf("target %q: %w", machine.Name, err)
 		}
@@ -465,7 +470,7 @@ func saveConfigData(path string, cfg Config, data []byte) error {
 		mode = 0600
 	}
 	for _, m := range cfg.Targets {
-		if m.ARD.Password != "" || m.RTSP.Password != "" || m.RDP.Password != "" || sourceHasPassword(m.Video.Source) {
+		if m.ARD.Password != "" || m.RTSP.Password != "" || m.RDP.Password != "" || m.SPICE.Password != "" || sourceHasPassword(m.Video.Source) {
 			mode = 0600
 		}
 	}

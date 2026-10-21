@@ -218,12 +218,41 @@ func TestRestartJPEGGoldenScan(t *testing.T) {
 }
 
 func TestGPUJPEGFrameBounds(t *testing.T) {
-	if _, _, _, err := gpuJPEGFrame(3840, 2160, 80); err != nil {
+	var parameters jpegFrameParameters
+	if err := parameters.prepare(3840, 2160, 80); err != nil {
 		t.Fatal(err)
 	}
 	for _, size := range [][2]int{{0, 16}, {16, -1}, {8192, 8192}, {8193, 16}} {
-		if _, _, _, err := gpuJPEGFrame(size[0], size[1], 80); err == nil {
+		if err := parameters.prepare(size[0], size[1], 80); err == nil {
 			t.Fatalf("accepted unbounded frame %v", size)
+		}
+	}
+}
+
+func TestJPEGFrameParameterCache(t *testing.T) {
+	var parameters jpegFrameParameters
+	for _, frame := range [][3]int{{32, 16, 80}, {48, 16, 80}, {48, 32, 80}, {48, 32, 20}, {48, 32, 100}, {48, 32, 200}, {48, 32, 0}, {48, 32, -10}} {
+		width, height, quality := frame[0], frame[1], frame[2]
+		previousHeader := parameters.header
+		reuse := parameters.width == width && parameters.height == height && parameters.quality == min(100, max(1, quality))
+		if err := parameters.prepare(width, height, quality); err != nil {
+			t.Fatal(err)
+		}
+		if reuse && &parameters.header[0] != &previousHeader[0] {
+			t.Fatalf("equivalent quality rebuilt the JPEG header for %v", frame)
+		}
+		if !bytes.Equal(parameters.header, jpegHeader420(width, height, quality, true)) ||
+			parameters.quantization != quantization420(quality) {
+			t.Fatalf("stale JPEG parameters for %v", frame)
+		}
+		header := parameters.header
+		allocations := testing.AllocsPerRun(100, func() {
+			if err := parameters.prepare(width, height, quality); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if allocations != 0 || &parameters.header[0] != &header[0] {
+			t.Fatalf("cache hit rebuilt parameters for %v: %v allocations", frame, allocations)
 		}
 	}
 }

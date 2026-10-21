@@ -6,6 +6,7 @@ typedef struct bm_session bm_session;
 typedef struct bm_media bm_media;
 bm_media *bm_media_alloc(void);
 int bm_media_available(void);
+int bm_has_encoder(const char *);
 int bm_media_open(bm_media*,const char*,char*,size_t);
 int bm_media_read(bm_media*,uint8_t**,int*,int*,int*,int*,int64_t*,int64_t*,uint8_t**,int*,int*,int*,char*,size_t);
 int64_t bm_media_duration(bm_media*);

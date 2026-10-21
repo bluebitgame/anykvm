@@ -19,6 +19,7 @@ type videoPipeline struct {
 	decoder                   *avmedia.Session
 	decodeCodec               string
 	encoder                   videoenc.Encoder
+	loggedEncoder             string // connection-local path; no per-frame metadata
 	options                   videoenc.Options
 	sps, pps                  []byte
 	direct, waiting, forceIDR bool
@@ -26,8 +27,8 @@ type videoPipeline struct {
 }
 
 // captureFPS follows the active target's capture cadence. RDP has no separate
-// frame-rate setting, so both its bitmap pacing and H.264 conversion use this
-// per-frame value. Older or synthetic frame sources may omit it.
+// frame-rate setting. H.264 conversion needs a nominal encoder rate when the
+// source omits it; this fallback must not throttle source-driven bitmap frames.
 func captureFPS(f bridge.Frame) int {
 	if f.CaptureFPS >= 1 && f.CaptureFPS <= 240 {
 		return f.CaptureFPS
@@ -41,6 +42,13 @@ func (v *videoPipeline) close() {
 	}
 	if v.encoder != nil {
 		v.encoder.Close()
+	}
+}
+
+func (v *videoPipeline) logEncoder(name string) {
+	if name != v.loggedEncoder {
+		log.Printf("rdp: video codec=h264 encoder=%q", name)
+		v.loggedEncoder = name
 	}
 }
 
@@ -158,6 +166,9 @@ func (v *videoPipeline) waitingForCaptureSize(f bridge.Frame) bool {
 }
 
 func (v *videoPipeline) frame(f bridge.Frame, bitrate, fps int) ([]byte, int, int, error) {
+	if f.OutputMaxW > 0 && f.OutputMaxW < 2 || f.OutputMaxH > 0 && f.OutputMaxH < 2 {
+		return nil, 0, 0, errors.New("Target resolution limit is too small for AVC420")
+	}
 	if f.Width < 2 || f.Height < 2 || f.Width > 8192 || f.Height > 8192 {
 		return nil, 0, 0, errors.New("invalid video dimensions")
 	}
@@ -195,6 +206,7 @@ func (v *videoPipeline) frame(f bridge.Frame, bitrate, fps int) ([]byte, int, in
 			f.Data = join([]byte{0, 0, 0, 1}, v.sps, []byte{0, 0, 0, 1}, v.pps, f.Data)
 		}
 		if v.direct && (v.outputW == 0 || (v.outputW+1)&^1 == f.Width && (v.outputH+1)&^1 == f.Height) {
+			v.logEncoder("passthrough")
 			return f.Data, f.Width, f.Height, nil
 		}
 	}
@@ -221,6 +233,7 @@ func (v *videoPipeline) frame(f bridge.Frame, bitrate, fps int) ([]byte, int, in
 	encoded, err := videoenc.EncodePixels(v.encoder, v.options, data, w, h, pixfmt, v.forceIDR)
 	if err == nil && len(encoded) != 0 {
 		v.forceIDR = false
+		v.logEncoder(v.encoder.Name())
 	}
 	return encoded, outputW, outputH, err
 }
@@ -284,11 +297,12 @@ func (c *client) videoLoop() error {
 	v := videoPipeline{waiting: true, forceIDR: true}
 	defer v.close()
 	w, h := 0, 0
+	var layoutRequestW, layoutRequestH int
 	started := time.Now()
 	statsStarted := started
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	var received, frames, skipped, payload int64
+	var received, frames, skipped int64
 	var processTotal, sendTotal, ackTotal, processMax, sendMax, ackMax time.Duration
 	var held bridge.Frame
 	defer func() { held.Release() }()
@@ -302,19 +316,44 @@ func (c *client) videoLoop() error {
 			c.ackMu.Lock()
 			pending, suspended := c.sent-c.acknowledged, c.suspendAck
 			c.ackMu.Unlock()
-			log.Printf("rdp: %s: video codec=h264 input=%.1f fps output=%.1f fps skipped=%d graphics=%.1f Mbps process_ms=%.1f/%.1f send_ms=%.1f/%.1f ack_wait_ms=%.1f/%.1f pending=%d ack_suspended=%t queued=%d (mean/max)",
-				c.conn.RemoteAddr(), float64(received)/elapsed, float64(frames)/elapsed, skipped, float64(payload)*8/elapsed/1e6,
+			log.Printf("rdp: %s: video input=%.1f fps output=%.1f fps skipped=%d process_ms=%.1f/%.1f send_ms=%.1f/%.1f ack_wait_ms=%.1f/%.1f pending=%d ack_suspended=%t queued=%d (mean/max)",
+				c.conn.RemoteAddr(), float64(received)/elapsed, float64(frames)/elapsed, skipped,
 				float64(processTotal)/float64(max(received, 1))/float64(time.Millisecond), float64(processMax)/float64(time.Millisecond),
 				float64(sendTotal)/float64(max(frames, 1))/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond),
 				float64(ackTotal)/float64(max(frames, 1))/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond), pending, suspended, len(c.frames))
 			statsStarted = time.Now()
-			received, frames, skipped, payload = 0, 0, 0, 0
+			received, frames, skipped = 0, 0, 0
 			processTotal, sendTotal, ackTotal, processMax, sendMax, ackMax = 0, 0, 0, 0, 0, 0
 		case f := <-c.frames:
 			received++
 			held = f
+			var frameAckWait time.Duration
+			if !predictionCoded(f.Format) {
+				ackStarted := time.Now()
+				next, dropped, err := c.waitCaptureWindow(f)
+				f, held = next, next
+				if err != nil {
+					return err
+				}
+				ackEnded := time.Now()
+				waited := ackEnded.Sub(ackStarted)
+				frameAckWait += f.Timing.Waited(ackStarted, ackEnded)
+				ackTotal, ackMax = ackTotal+waited, max(ackMax, waited)
+				received, skipped = received+int64(dropped), skipped+int64(dropped)
+			}
+			select {
+			case <-c.done:
+				return nil
+			default:
+			}
+			requestedW, requestedH := c.requestedOutputSize(f.Width, f.Height)
 			v.outputW, v.outputH = c.videoOutputSize(f)
-			if c.reset.Swap(false) {
+			refresh := c.reset.Swap(false)
+			if c.scaledMapping && (requestedW != layoutRequestW || requestedH != layoutRequestH) {
+				refresh = true
+			}
+			layoutRequestW, layoutRequestH = requestedW, requestedH
+			if refresh {
 				v.waiting, v.forceIDR = true, true
 				compressed := f.Format == capture.FormatH264 || f.Format == capture.FormatHEVC || f.Format == capture.FormatAV1
 				if compressed && c.s.cfg.OnKeyframe != nil && !v.waitingForCaptureSize(f) {
@@ -332,25 +371,30 @@ func (c *client) videoLoop() error {
 				skipped++
 				continue
 			}
-			ackStarted := time.Now()
-			if err := c.waitWindow(); err != nil {
-				return err
+			if predictionCoded(f.Format) {
+				ackStarted := time.Now()
+				if err := c.waitWindow(); err != nil {
+					return err
+				}
+				ackEnded := time.Now()
+				waited := ackEnded.Sub(ackStarted)
+				frameAckWait += f.Timing.Waited(ackStarted, ackEnded)
+				ackTotal, ackMax = ackTotal+waited, max(ackMax, waited)
 			}
-			waited := time.Since(ackStarted)
-			ackTotal, ackMax = ackTotal+waited, max(ackMax, waited)
 			select {
 			case <-c.done:
 				return nil
 			default:
 			}
-			if width != w || height != h {
-				if err := c.ensureGraphicsSize(width, height); err != nil {
+			layout := makeGraphicsLayout(width, height, requestedW, requestedH, c.scaledMapping)
+			if width != w || height != h || c.graphics != layout {
+				if err := c.ensureGraphicsLayout(layout); err != nil {
 					return err
 				}
 				w, h = width, height
 			}
 			f.ContentRect = frameContentRect(f)
-			c.input.frameGeometry(f, w, h)
+			c.frameGeometry(f, w, h)
 			c.ackMu.Lock()
 			c.sent++
 			id := c.sent
@@ -360,11 +404,10 @@ func (c *client) videoLoop() error {
 			if err := c.sendGFX(packet); err != nil {
 				return err
 			}
-			f.Timing.Sent("rdp-gfx", sendStarted)
 			sent := time.Since(sendStarted)
+			f.Timing.SentRDP("rdp-gfx", sendStarted, processed, sent, frameAckWait)
 			sendTotal, sendMax = sendTotal+sent, max(sendMax, sent)
 			frames++
-			payload += int64(len(packet))
 		}
 	}
 }

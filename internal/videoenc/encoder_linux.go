@@ -9,7 +9,7 @@ import (
 )
 
 func newPlatformEncoder(o Options) (Encoder, error) {
-	if o.Codec != "h264" && o.Codec != "av1" {
+	if o.Codec != "h264" && o.Codec != "hevc" && o.Codec != "av1" {
 		return nil, ErrUnavailable
 	}
 	// Native-only builds use Vulkan Video directly, without library GPU backends.

@@ -96,7 +96,21 @@ AVC420 waits for an IDR with SPS/PPS at startup and refresh. Compatible profile,
 level, chroma, bit depth and output geometry are checked before passthrough.
 Prediction frames remain ordered. Capture backends with output scaling can
 restart at client size and resume with a new IDR; other inputs are converted
-and fitted with aspect-preserving black borders. H.264 output sizes are even.
+and fitted with aspect-preserving black borders. Downscaling is allowed. Explicit
+Target `video.mode` dimensions are an output ceiling, including after a client
+resize or Target switch. Intersect that ceiling with the actual source size;
+requests exceeding either edge use that bounded canvas. For example,
+`1440x900@60` cannot produce `2560x1440` for a larger client. Omitting dimensions
+(including `auto` and `@60`) adds no configured ceiling. In `auto`, a physical desktop mode change is attempted
+first. Raw capture-card input can be reduced during encoding; device-compressed
+H.264 passthrough keeps its encoded dimensions when within the Target ceiling;
+larger compressed sources require conversion. H.264 output sizes are even and
+alignment must also fit the configured ceiling.
+
+On Retina displays, the source geometry records backing pixels: a desktop that
+looks like 1440x900 can have a 2880x1800 rendering buffer at 2x. This is separate
+from the panel's native resolution. Target output limits are encoded pixels;
+an explicit 1440x900 limit is not multiplied by the Retina scale factor.
 
 Bitmap codecs request pixels, compare a 64x64 grid and skip unchanged blocks.
 ClearCodec/Planar coalesce fully dirty 128x128 groups; Progressive keeps 64x64
@@ -104,18 +118,23 @@ tiles. NV12 checks both Y and UV. Pixel snapshots can be replaced by newer ones;
 compressed reference frames must be decoded in order. Refresh and resize reset
 codec state and repaint static sources. Graphics transfers are bounded, with
 a two-frame ACK window and five-second write/ACK timeout.
+Output follows capture availability. Uncompressed updates may be replaced by
+newer frames while waiting for the client; compressed frames remain ordered.
 
-RDP output and pointer coordinates follow the client's requested desktop size.
+Clients supporting scaled surface mapping receive source-sized surfaces within
+Target limits, fitted to the requested desktop with matching pointer coordinates.
+Other clients retain server-side sizing.
 Display Control supports single-monitor updates; capture dimensions remain a
 source preference. Local Mac desktop switching follows the
 [automatic capture-mode policy](capture.md#macos-local-screens). RDP supplies
-no refresh rate; FPS comes from the target's video setting. Multiple monitors
+no refresh rate; capture follows the target's video setting or native cadence. Multiple monitors
 and physical display rotation are unsupported.
 
 `rdp.buffer_frames` limits native macOS H.264 captures submitted but incomplete:
 0/omitted keeps two frames; explicit values are 1..8. The value survives RDP
 resize/restart, and other capture backends currently ignore it. This is separate
 from the graphics ACK window and [Web display buffering](viewing.md#buffering-and-diagnostics).
+If the encoded-output queue overflows, playback resumes from a new keyframe.
 
 ## Input and cursor
 
@@ -226,28 +245,29 @@ Replacement, refresh and resize invalidate stale refinements. Coefficient
 caches are bounded to 128 MiB per connection; oversized grids use SIMPLE.
 Temporal sub-band differences are not implemented.
 
-CGO builds use AnyKVM's C encoder, selecting AVX2/SSE2 on AMD64 or NEON on ARM64;
-Go remains the fallback. `ANYKVM_RDP_PROGRESSIVE_BACKEND` accepts `auto`, `go`,
-`native`, `native-scalar`, and AMD64-only `native-sse2`/`native-avx2`. Forced
-backends still enforce CPU/OS support. `GOAMD64=v1` remains supported.
-Both BGRA and packed limited-range BT.709 NV12 have direct paths. NV12 retains
-its original 4:2:0 detail; conversion cannot recover missing chroma.
+CGO builds use parallel SIMD encoding (AVX2/SSE2 on AMD64, NEON on ARM64),
+with Go as the fallback. `ANYKVM_RDP_PROGRESSIVE_BACKEND` selects `auto`, `go`,
+`native`, `native-scalar`, or AMD64-only `native-sse2`/`native-avx2`.
 
-After preparing build inputs, compare encoding cost and bytes:
+Experimental GPU encoding supports SIMPLE, FIRST and UPGRADE on Windows
+(D3D11 feature level 11.0) and Linux (Vulkan 1.3). Set
+`ANYKVM_RDP_PROGRESSIVE_BACKEND=gpu`, or explicitly `d3d11`/`vulkan`.
+Forced GPU backends end the session on failure; `auto` uses CPU encoding.
+macOS and builds without CGO use CPU backends.
+
+Windows DXGI and Linux KMS sources can keep capture pixels on the GPU through
+scaling, dirty detection and encoding. Other sources upload CPU pixels.
+Performance and client compatibility still need validation on the target GPU.
+After [build preparation](build.md#direct-go-builds), run:
 
 ```sh
-go test ./internal/rdp -run '^$' -bench '^BenchmarkProgressive(Backends|Quantization|Refinement|DirtyTiles|NV12Input)$' -benchtime=1s -count=3 -benchmem
-go test ./internal/rdp -run '^$' -bench 'Benchmark(BitmapCodecs|Planar420VsClear)' -benchtime=300ms -count=3 -benchmem
+ANYKVM_TEST_RDP_GPU=1 go test ./internal/rdp -run '^TestProgressiveGPUWireParity$' -count=1 -v
+ANYKVM_TEST_RDP_GPU_SURFACE=1 go test ./internal/rdp -run '^TestProgressiveGPUSurfaceHardware$' -count=1 -v
 ```
 
-Benchmark results exclude capture, network and client display. FIRST/UPGRADE can
-reduce initial bandwidth while increasing total encoding work. Compare fresh
-content FPS and quality at the target bandwidth rather than counting refinements
-as new captured frames. Unit tests cover Go/native wire equivalence, quantization,
-refinement state, odd edges, bounded allocation and fallback. Maintainer hardware
-testing confirms functional correctness of the ARM64 NEON pixel, Planar and
-Progressive paths. ARM64 performance measurements have not been run and remain
-in [TODO](../TODO.md#server-protocols-rdp).
+The surface test requires desktop capture access and uses `screen`; override it
+with `ANYKVM_TEST_RDP_GPU_SOURCE=screen:N`. Compare visible quality and fresh
+frame rate on the client, not just encoder throughput or refinement counts.
 
 ## Shared pixel operations
 
@@ -277,8 +297,10 @@ current advertisement. Inspect logged versions/flags and confirmed codec.
 Known version 8.1 needs AVC420_ENABLED; ordinary version 10 sets must not set
 AVC_DISABLED. Unknown versions are not selected.
 
-Bitmap logs report output FPS, graphics Mbps, changed tiles and maximum
+Bitmap logs report output FPS, changed tiles and maximum
 encoding/send/ACK waits. Progressive refinements have separate FPS counters.
+The application-wide `AnyKVM: uplink=… Mbps` log reports total outgoing traffic
+across all output protocols every five seconds, including RDP socket writes.
 Idle desktops send few updates. Measure client display FPS separately from
 source capture FPS and encoder throughput.
 

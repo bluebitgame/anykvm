@@ -6,14 +6,15 @@ package capture
 #cgo LDFLAGS: -framework ScreenCaptureKit -framework VideoToolbox
 #include <stdlib.h>
 void bk_screen_list_displays(char *out, int outlen);
-void *bk_screen_open(int index, unsigned int display_id, int width, int height, int fps, int codec, int bitrate, int hide, int preserve_aspect, int disable_low_latency, int h264_profile, int encoder_buffer_frames, int rdp_full_range, int capture_audio, char *error, int error_size);
+void *bk_screen_open(int index, unsigned int display_id, int width, int height, int fps, int codec, int bitrate, int hide, int preserve_aspect, int disable_low_latency, int h264_profile, int encoder_buffer_frames, int rdp_full_range, int capture_audio, int downscale_only, int max_w, int max_h, char *error, int error_size);
 int bk_screen_audio_read(void *screen, void *out, int capacity, char *error, int error_size);
 int bk_screen_take_geometry(void *screen, void **lease, void **data, void **pixel, int *size, int *w, int *h, int *sw, int *sh, int *content_rect, long long *age_ns, char *error, int error_size);
 void bk_screen_release(void *lease);
+void bk_screen_lease_timing(void *lease, long long *present, long long *display, long long *acquired, long long *submitted, long long *completed, long long *now, int *repeated);
+void bk_screen_lease_texture_timing(void *lease, long long *ready_start, long long *ready_end, long long *imported);
 int bk_screen_copy_pixel(void *pixel, int nv12, unsigned char *dest, size_t size);
 void bk_screen_close(void *screen);
 int bk_screen_request_keyframe(void *screen);
-int bk_screen_supports_hevc(void);
 int bk_screen_idle_status(void *screen, char *detail, int size);
 */
 import "C"
@@ -21,6 +22,8 @@ import "C"
 import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/videoenc"
+	"anykvm/internal/videotiming"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -39,6 +42,8 @@ type screenDevice struct {
 	mu                      sync.Mutex // protects the native handle against Capture/Close races
 	index                   int
 	session                 unsafe.Pointer
+	ready                   chan struct{}
+	notification            uintptr
 	hideCursor, decodeImage bool
 	codec                   string
 	encoderBufferFrames     int
@@ -51,6 +56,8 @@ type screenDevice struct {
 	preserveAspect          bool
 	contentRect             image.Rectangle
 	outputW, outputH        int
+	outputDownscaleOnly     bool
+	outputMaxW, outputMaxH  int
 	statsAt                 time.Time
 	rdpAVC420               bool
 	fullRangeDisabled       bool // retain a failed full-range negotiation across recovery opens
@@ -119,12 +126,25 @@ func (d *screenDevice) SetOutputSize(w, h int) {
 	defer d.mu.Unlock()
 	d.outputW, d.outputH = w, h
 }
+func (d *screenDevice) SetOutputDownscaleOnly(v bool) {
+	d.mu.Lock()
+	d.outputDownscaleOnly = v
+	d.mu.Unlock()
+}
+func (d *screenDevice) SetOutputSizeLimit(w, h int) {
+	d.mu.Lock()
+	d.outputMaxW, d.outputMaxH = w, h
+	d.mu.Unlock()
+}
 func (d *screenDevice) SupportsVideoCodec(s string) bool {
+	if s == "hevc" {
+		return d.SupportsGameStreamHEVC()
+	}
 	return s == "" || s == "mjpeg" || s == "rawvideo" || s == "nv12" || s == "h264" || s == "hevc"
 }
 func (d *screenDevice) CaptureFPS() int         { return d.fps }
 func (d *screenDevice) CanRecoverCapture() bool { return true }
-func (d *screenDevice) Open() error             { return d.OpenWithFormat(0, 0, 30) }
+func (d *screenDevice) Open() error             { return d.OpenWithFormat(0, 0, 0) }
 
 // AudioDevice shares the screen's SCStream, rather than opening a microphone.
 // It is selected before Open only for Audio: Auto. Reopens retain the request.
@@ -229,10 +249,11 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 	if !d.SupportsVideoCodec(d.codec) {
 		return fmt.Errorf("unsupported screen codec %q", d.codec)
 	}
-	if fps <= 0 {
-		fps = 30
+	if d.outputDownscaleOnly && (d.codec == "h264" || d.codec == "hevc") &&
+		(d.outputMaxW > 0 && d.outputMaxW < 2 || d.outputMaxH > 0 && d.outputMaxH < 2) {
+		return fmt.Errorf("ScreenCaptureKit: Target resolution limit is too small for video encoding")
 	}
-	if w < 0 || h < 0 || w > 8192 || h > 8192 || fps > 240 || bitrate < 0 {
+	if w < 0 || h < 0 || w > 8192 || h > 8192 || fps < 0 || fps > 240 || bitrate < 0 {
 		return fmt.Errorf("ScreenCaptureKit: invalid dimensions, frame rate or bitrate")
 	}
 	// The native API accepts a signed 32-bit kbps value. Do not impose a
@@ -290,7 +311,11 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 		if d.audioRequested {
 			audio = 1
 		}
-		return C.bk_screen_open(C.int(d.index), C.uint(screenDisplayID(d.display)), C.int(w), C.int(h), C.int(fps), C.int(codec), C.int(bitrate), C.int(hide), C.int(preserveAspect), disableLowLatency, profileIndex, C.int(encoderFrames), full, audio, &message[0], C.int(len(message)))
+		downscaleOnly := C.int(0)
+		if d.outputDownscaleOnly {
+			downscaleOnly = 1
+		}
+		return C.bk_screen_open(C.int(d.index), C.uint(screenDisplayID(d.display)), C.int(w), C.int(h), C.int(fps), C.int(codec), C.int(bitrate), C.int(hide), C.int(preserveAspect), disableLowLatency, profileIndex, C.int(encoderFrames), full, audio, downscaleOnly, C.int(d.outputMaxW), C.int(d.outputMaxH), &message[0], C.int(len(message)))
 	}
 	d.session = open(fullRange)
 	if d.session == nil && fullRange != 0 {
@@ -303,6 +328,7 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 	if d.session == nil {
 		return fmt.Errorf("ScreenCaptureKit: %s", C.GoString(&message[0]))
 	}
+	d.attachFrameReadyLocked()
 	d.preserveAspect = preserveAspect != 0
 	d.contentRect = image.Rectangle{}
 	d.fps = fps
@@ -310,12 +336,23 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 		log.Printf("capture: native buffer_frames=%d (configured=%d)", encoderFrames, d.encoderBufferFrames)
 	}
 	d.statsAt = time.Now()
-	log.Printf("capture: ScreenCaptureKit screen:%d codec=%s fps=%d (native VideoToolbox for H.264/HEVC)", d.index, d.codec, fps)
+	encoder := jpegcodec.Backend()
+	switch d.codec {
+	case "h264", "hevc":
+		encoder = "VideoToolbox (hardware)"
+	case "rawvideo", "nv12":
+		encoder = "none (pixels)"
+	}
+	cadence := "native"
+	if fps > 0 {
+		cadence = strconv.Itoa(fps)
+	}
+	log.Printf("capture: ScreenCaptureKit screen:%d codec=%s encoder=%q fps=%s", d.index, d.codec, encoder, cadence)
 	if d.codec == "h264" {
 		if bitrate == 0 {
-			log.Printf("capture: VideoToolbox H.264 bitrate=auto lowdelay=%t profile=%s", disableLowLatency == 0, profile)
+			log.Printf("capture: encoder bitrate=auto lowdelay=%t profile=%s", disableLowLatency == 0, profile)
 		} else {
-			log.Printf("capture: VideoToolbox H.264 bitrate=%d kbps lowdelay=%t profile=%s", bitrate, disableLowLatency == 0, profile)
+			log.Printf("capture: encoder bitrate=%d kbps lowdelay=%t profile=%s", bitrate, disableLowLatency == 0, profile)
 		}
 	}
 	return nil
@@ -363,6 +400,30 @@ func (d *screenDevice) Capture() (*Frame, error) {
 		return nil, fmt.Errorf("ScreenCaptureKit: invalid frame size")
 	}
 	f := &Frame{CapturedAt: capturedAt, Width: int(w), Height: int(h), SourceWidth: int(sw), SourceHeight: int(sh), Format: FormatRaw}
+	if videotiming.Sample() {
+		var present, display, acquired, submitted, completed, now C.longlong
+		var readyStart, readyEnd, imported C.longlong
+		var repeated C.int
+		C.bk_screen_lease_texture_timing(lease, &readyStart, &readyEnd, &imported)
+		C.bk_screen_lease_timing(lease, &present, &display, &acquired, &submitted, &completed, &now, &repeated)
+		anchor := time.Now()
+		mapTime := func(ns C.longlong) time.Time {
+			if ns == 0 {
+				return time.Time{}
+			}
+			return anchor.Add(time.Duration(ns - now))
+		}
+		path := "ScreenCaptureKit/pixels"
+		if d.codec == "h264" || d.codec == "hevc" {
+			path = "ScreenCaptureKit/VideoToolbox/" + d.codec
+		}
+		trace := &videotiming.Trace{Present: mapTime(present), Display: mapTime(display), SourceClock: "SCStream.synchronizationClock", Acquired: mapTime(acquired), TextureReadyStart: mapTime(readyStart), TextureReadyEnd: mapTime(readyEnd), TextureImported: mapTime(imported), EncodeSubmit: mapTime(submitted), EncodeComplete: mapTime(completed), Path: path, Repeated: repeated != 0}
+		defer func() {
+			trace.Ready = time.Now()
+			f.Timing = trace
+			trace.Capture()
+		}()
+	}
 	f.ContentRect = image.Rect(int(rect[0]), int(rect[1]), int(rect[0]+rect[2]), int(rect[1]+rect[3]))
 	actualContent := !f.ContentRect.Empty()
 	if !actualContent {
@@ -416,6 +477,7 @@ func (d *screenDevice) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.session != nil {
+		d.detachFrameReadyLocked()
 		C.bk_screen_close(d.session)
 		d.session = nil
 	}
@@ -430,7 +492,7 @@ func (d *screenDevice) CaptureIdleStatus() (bool, string) {
 	if d.session == nil {
 		return false, "ScreenCaptureKit closed"
 	}
-	var detail [512]C.char
+	var detail [1024]C.char
 	expected := C.bk_screen_idle_status(d.session, &detail[0], C.int(len(detail)))
 	return expected != 0, C.GoString(&detail[0])
 }
@@ -444,18 +506,12 @@ func (d *screenDevice) RequestKeyframe() error {
 	return nil
 }
 
-var hevcProbe struct {
-	sync.Once
-	supported bool
-}
-
-// Probe without opening screen capture, and require a hardware HEVC encoder.
+// Query the system hardware declaration without creating a capture/encode session.
 func (d *screenDevice) SupportsGameStreamHEVC() bool {
-	hevcProbe.Do(func() { hevcProbe.supported = C.bk_screen_supports_hevc() != 0 })
-	return hevcProbe.supported
+	return videoenc.SupportsHEVC()
 }
 
-// AVFoundation inputs share the screen encoder and its HEVC hardware probe.
+// AVFoundation inputs share the system HEVC hardware declaration.
 func (s *smartDevice) SupportsGameStreamHEVC() bool {
 	return (&screenDevice{}).SupportsGameStreamHEVC()
 }

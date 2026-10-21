@@ -35,28 +35,3 @@ func TestOwnedJPEGSurvivesOtherEncodes(t *testing.T) {
 		t.Fatalf("held JPEG decode: %v", err)
 	}
 }
-
-func BenchmarkJPEGOutputOwnership(b *testing.B) {
-	pixels := make([]byte, 1920*1080*4)
-	for i := range pixels {
-		pixels[i] = byte(i * 7)
-	}
-	for _, owned := range []bool{false, true} {
-		b.Run(map[bool]string{false: "GoBytes", true: "owned"}[owned], func(b *testing.B) {
-			b.ReportAllocs()
-			for range b.N {
-				if owned {
-					data, err := EncodeBGRAOwned(pixels, 1920, 1080, 80)
-					if err != nil {
-						b.Fatal(err)
-					}
-					data.Release()
-				} else {
-					if _, err := EncodeBGRA(pixels, 1920, 1080, 80); err != nil {
-						b.Fatal(err)
-					}
-				}
-			}
-		})
-	}
-}

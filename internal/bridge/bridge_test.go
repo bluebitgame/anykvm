@@ -679,3 +679,83 @@ func TestBrowserAV1Fallback(t *testing.T) {
 		}
 	}
 }
+
+type hevcProbeCapture struct {
+	blockingCapture
+	supported bool
+	probes    int
+}
+
+func (d *hevcProbeCapture) SupportsVideoCodec(codec string) bool {
+	if codec == "hevc" {
+		d.probes++
+		return d.supported
+	}
+	return true
+}
+
+func TestBrowserHEVCProbeAndFallback(t *testing.T) {
+	for _, hardware := range []bool{false, true} {
+		dev := &hevcProbeCapture{supported: hardware}
+		b := NewBridge([]*MachineSession{{Capture: dev}}, "alt", 30, 0, 0)
+		b.SetVideoCodecs(true, false, false)
+		if dev.probes != 0 || b.videoCodec != "h264" {
+			t.Fatal("disabled HEVC probed hardware or changed H.264")
+		}
+		b.SetVideoCodecs(true, true, false)
+		if dev.probes != 1 || (b.videoCodec == "hevc") != hardware || (!hardware && b.videoCodec != "h264") {
+			t.Fatalf("hardware=%v probes=%d codec=%s", hardware, dev.probes, b.videoCodec)
+		}
+	}
+}
+
+type optionalCodecProbeCapture struct {
+	blockingCapture
+	available bool
+	probes    map[string]int
+}
+
+func (d *optionalCodecProbeCapture) SupportsVideoCodec(codec string) bool {
+	if codec == "hevc" || codec == "av1" {
+		d.probes[codec]++
+		return d.available
+	}
+	return true
+}
+
+func (d *optionalCodecProbeCapture) SupportsGameStreamAV1() bool {
+	d.probes["av1"]++
+	return d.available
+}
+
+func TestBrowserOptionalCodecProbesFollowWants(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		for _, hevc := range []bool{false, true} {
+			for _, av1 := range []bool{false, true} {
+				dev := &optionalCodecProbeCapture{available: available, probes: make(map[string]int)}
+				b := NewBridge([]*MachineSession{{Capture: dev}}, "alt", 30, 0, 0)
+				if len(dev.probes) != 0 {
+					t.Fatal("bridge startup probed optional codecs")
+				}
+				b.SetVideoCodecs(true, hevc, av1)
+				if !hevc && dev.probes["hevc"] != 0 || !av1 && dev.probes["av1"] != 0 {
+					t.Fatalf("disabled codec probed: hevc=%v av1=%v probes=%v", hevc, av1, dev.probes)
+				}
+				want := "h264"
+				if available && av1 {
+					want = "av1"
+				} else if available && hevc {
+					want = "hevc"
+				}
+				if b.videoCodec != want {
+					t.Fatalf("available=%v hevc=%v av1=%v codec=%s want=%s", available, hevc, av1, b.videoCodec, want)
+				}
+				clear(dev.probes)
+				b.SetVideoCodecs(true, false, false)
+				if len(dev.probes) != 0 || b.videoCodec != "h264" {
+					t.Fatal("cleared optional codec wants still probed hardware")
+				}
+			}
+		}
+	}
+}

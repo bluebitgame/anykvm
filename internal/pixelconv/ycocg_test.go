@@ -2,7 +2,6 @@ package pixelconv
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand"
 	"testing"
 )
@@ -86,31 +85,5 @@ func TestYCoCg420PublicBuffers(t *testing.T) {
 			}()
 			fn()
 		}()
-	}
-}
-
-func BenchmarkYCoCg420(b *testing.B) {
-	for _, impl := range testImplementations() {
-		for _, size := range [][2]int{{128, 128}, {1280, 720}} {
-			w, h := size[0], size[1]
-			for _, nv12 := range []bool{false, true} {
-				b.Run(fmt.Sprintf("%s/%dx%d/nv12=%t", impl.name, w, h, nv12), func(b *testing.B) {
-					fs, ss := w*4, 2*((w+1)/2)
-					if nv12 {
-						fs = w
-					}
-					first, uv, dst := make([]byte, fs*h), make([]byte, ss*((h+1)/2)), make([]byte, Size420(w, h))
-					rng := rand.New(rand.NewSource(52))
-					rng.Read(first)
-					rng.Read(uv)
-					b.SetBytes(int64(fs * h))
-					b.ReportAllocs()
-					b.ResetTimer()
-					for i := 0; i < b.N; i++ {
-						impl.convert(dst, first, uv, fs, ss, w, h, nv12)
-					}
-				})
-			}
-		}
 	}
 }

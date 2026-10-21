@@ -284,6 +284,7 @@ func webConfigView(cfg Config) Config {
 	for i := range cfg.Targets {
 		cfg.Targets[i].ARD.Password = redactedSecret(cfg.Targets[i].ARD.Password)
 		cfg.Targets[i].RTSP.Password = redactedSecret(cfg.Targets[i].RTSP.Password)
+		cfg.Targets[i].SPICE.Password = redactedSecret(cfg.Targets[i].SPICE.Password)
 		cfg.Targets[i].RDP.Password = redactedSecret(cfg.Targets[i].RDP.Password)
 		cfg.Targets[i].Video.Source = redactSourceURL(cfg.Targets[i].Video.Source)
 	}
@@ -304,12 +305,14 @@ func (cfg *Config) restoreRetainedSecrets(previous Config) {
 	cfg.RDP.Password = restoreSecret(cfg.RDP.Password, previous.RDP.Password)
 	previousARDPasswords := make(map[string]string, len(previous.Targets))
 	previousRTSPPasswords := make(map[string]string, len(previous.Targets))
+	previousSPICEPasswords := make(map[string]string, len(previous.Targets))
 	previousRDPPasswords := make(map[string]string, len(previous.Targets))
 	previousSources := make(map[string]string, len(previous.Targets))
 	for _, target := range previous.Targets {
 		if target.Name != "" {
 			previousARDPasswords[target.Name] = target.ARD.Password
 			previousRTSPPasswords[target.Name] = target.RTSP.Password
+			previousSPICEPasswords[target.Name] = target.SPICE.Password
 			previousRDPPasswords[target.Name] = target.RDP.Password
 			previousSources[target.Name] = target.Video.Source
 		}
@@ -318,6 +321,7 @@ func (cfg *Config) restoreRetainedSecrets(previous Config) {
 		name := cfg.Targets[i].Name
 		cfg.Targets[i].Video.Source = restoreSourceURL(cfg.Targets[i].Video.Source, previousSources[name])
 		cfg.Targets[i].RTSP.Password = restoreSecret(cfg.Targets[i].RTSP.Password, previousRTSPPasswords[name])
+		cfg.Targets[i].SPICE.Password = restoreSecret(cfg.Targets[i].SPICE.Password, previousSPICEPasswords[name])
 		cfg.Targets[i].RDP.Password = restoreSecret(cfg.Targets[i].RDP.Password, previousRDPPasswords[name])
 		if previous, ok := previousARDPasswords[cfg.Targets[i].Name]; ok {
 			cfg.Targets[i].ARD.Password = restoreSecret(cfg.Targets[i].ARD.Password, previous)

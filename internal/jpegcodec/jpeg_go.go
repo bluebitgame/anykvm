@@ -1,4 +1,4 @@
-//go:build !cgo || (!darwin && !linux && !windows)
+//go:build !cgo || (!darwin && !linux && !windows) || ((linux || windows || anykvm_jpeg_simd) && !amd64 && !386 && !arm64)
 
 package jpegcodec
 

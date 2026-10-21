@@ -1,4 +1,4 @@
-//go:build windows && cgo && !ffmpeg
+//go:build windows && cgo
 
 #define BK_VENDOR_IMPLEMENTATION
 #include "vendor_windows.h"
@@ -107,7 +107,21 @@ int bk_vendor_copy(const void *data, size_t size, uint8_t **output, size_t *leng
     return 0;
 }
 
-// Native SDK calls, D3D11 and COM releases stay on the owning MTA thread.
+// Capability queries never initialize an encoder or submit pictures.
+int bk_vendor_supports(int vendor, int codec) {
+    if (vendor < 0 || vendor > 2 || (codec != 1 && codec != 2))
+        return 0;
+    HRESULT com = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(com) && com != RPC_E_CHANGED_MODE)
+        return 0;
+    int (*queries[])(int) = {bk_nvenc_supports, bk_amf_supports, bk_qsv_supports};
+    int supported = queries[vendor](codec);
+    if (SUCCEEDED(com))
+        CoUninitialize();
+    return supported;
+}
+
+// Encoding, D3D11 and COM releases stay on the owning MTA thread.
 static DWORD WINAPI bk_vendor_worker(void *opaque) {
     bk_vendor_encoder *e = opaque;
     HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -115,20 +129,23 @@ static DWORD WINAPI bk_vendor_worker(void *opaque) {
     if (SUCCEEDED(hr)) {
         e->backend = e->api->open(&e->options, e->error, sizeof(e->error));
         if (e->backend) {
-            size_t size = (size_t)e->options.width * e->options.height * 3 / 2;
-            uint8_t *frame = malloc(size);
-            if (frame) {
-                memset(frame, 16, size * 2 / 3);
-                memset(frame + size * 2 / 3, 128, size / 3);
-                e->result = e->api->encode(e->backend, frame, 1, &e->output, &e->output_size,
-                                           e->error, sizeof(e->error));
-                free(frame);
-            } else
-                snprintf(e->error, sizeof(e->error), "out of memory");
+            e->result = 0;
+            if (e->options.codec == 0) {
+                e->result = -1;
+                size_t size = (size_t)e->options.width * e->options.height * 3 / 2;
+                uint8_t *frame = malloc(size);
+                if (frame) {
+                    memset(frame, 16, size * 2 / 3);
+                    memset(frame + size * 2 / 3, 128, size / 3);
+                    e->result =
+                        e->api->encode(e->backend, frame, 1, &e->output, &e->output_size, e->error, sizeof(e->error));
+                    free(frame);
+                } else
+                    snprintf(e->error, sizeof(e->error), "out of memory");
+            }
         }
     } else
-        snprintf(e->error, sizeof(e->error), "COM initialization failed: 0x%08lx",
-                 (unsigned long)hr);
+        snprintf(e->error, sizeof(e->error), "COM initialization failed: 0x%08lx", (unsigned long)hr);
     SetEvent(e->done);
     if (e->result == 0) {
         for (;;) {
@@ -137,13 +154,12 @@ static DWORD WINAPI bk_vendor_worker(void *opaque) {
                 break;
             if (e->texture_handle) {
                 e->result = e->api->encode_texture
-                                ? e->api->encode_texture(e->backend, e->texture_handle, e->rotation,
-                                                         e->force, &e->output, &e->output_size,
-                                                         e->error, sizeof(e->error))
+                                ? e->api->encode_texture(e->backend, e->texture_handle, e->rotation, e->force,
+                                                         &e->output, &e->output_size, e->error, sizeof(e->error))
                                 : 1;
             } else
-                e->result = e->api->encode(e->backend, e->input, e->force, &e->output,
-                                           &e->output_size, e->error, sizeof(e->error));
+                e->result = e->api->encode(e->backend, e->input, e->force, &e->output, &e->output_size, e->error,
+                                           sizeof(e->error));
             SetEvent(e->done);
         }
     }
@@ -158,7 +174,7 @@ bk_vendor_encoder *bk_vendor_open(int vendor, int width, int height, int num, in
                                   int codec, int adapter_set, uint64_t luid, int timing, char *error, size_t capacity) {
     if (vendor < 0 || vendor > 2 || width < 2 || height < 2 || width > 8192 || height > 8192 ||
         width % 2 || height % 2 || num <= 0 || den <= 0 || bitrate <= 0 || bitrate > 1000000 ||
-        (codec != 0 && codec != 2)) {
+        (codec != 0 && codec != 1 && codec != 2)) {
         snprintf(error, capacity, "invalid native encoder options");
         return NULL;
     }
@@ -197,7 +213,7 @@ int bk_vendor_encode(bk_vendor_encoder *e, const uint8_t *input, size_t size, in
         snprintf(error, capacity, "invalid native NV12 input size");
         return -1;
     }
-    // Discard the startup probe before the first real picture.
+    // Discard H.264 startup output before the first real picture.
     free(e->output);
     e->output = NULL;
     e->output_size = 0;
