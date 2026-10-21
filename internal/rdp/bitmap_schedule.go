@@ -35,6 +35,7 @@ func (c *client) waitCaptureWindow(f bridge.Frame) (bridge.Frame, int, error) {
 			return f, dropped, nil
 		case <-c.ack:
 		case next := <-newer:
+			next = mergeProgressiveDamage(f, next)
 			f.Release()
 			f = next
 			dropped++
@@ -54,6 +55,7 @@ func (c *client) latestCapture(f bridge.Frame) (bridge.Frame, int) {
 	for !predictionCoded(f.Format) {
 		select {
 		case next := <-c.frames:
+			next = mergeProgressiveDamage(f, next)
 			f.Release()
 			f = next
 			dropped++

@@ -2,10 +2,11 @@ package videotiming
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"sync"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 var sampleFile struct {
@@ -56,7 +57,7 @@ func writeSample(label string, values map[string]time.Duration, trace *Trace, no
 			var err error
 			sampleFile.file, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 			if err != nil {
-				log.Printf("video-timing: sample file: %v", err)
+				logging.Debugf("video-timing: sample file: %v", err)
 			}
 		}
 	})

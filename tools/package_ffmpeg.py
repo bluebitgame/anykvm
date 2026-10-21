@@ -85,10 +85,17 @@ def stage(source, destination, dependency_dirs=()):
         raise ValueError("missing FFmpeg 9 libraries: " + ", ".join(missing))
     if windows:
         files = sorted(p for p in source.iterdir() if p.is_file() and p.suffix.lower() == ".dll")
+    return stage_libraries(files, destination, [source, *dependency_dirs], source / "licenses")
+
+
+def stage_libraries(files, destination, search_dirs=(), licenses=None):
+    """Stage a shared-library graph, including relocatable macOS dependencies."""
+    destination = destination.resolve()
+    macos = any(p.suffix == ".dylib" for p in files)
     if macos and sys.platform != "darwin":
         raise ValueError("macOS dylib packaging requires otool, install_name_tool and codesign on macOS")
     # Resolve the complete graph before writing anything into the destination.
-    staged = macos_libraries(files, [source, *dependency_dirs]) if macos else {p.name: p.resolve() for p in files}
+    staged = macos_libraries(files, search_dirs) if macos else {p.name: p.resolve() for p in files}
     if any(path.parent == destination for path in staged.values()):
         raise ValueError("destination must not contain source dependencies")
     destination.mkdir(parents=True, exist_ok=True)
@@ -112,8 +119,8 @@ def stage(source, destination, dependency_dirs=()):
                     command.extend(["-change", dependency, "@loader_path/" + basename])
             subprocess.run([*command, str(target)], check=True)
             subprocess.run(["codesign", "--force", "--sign", "-", str(target)], check=True)
-    if (source / "licenses").is_dir():
-        shutil.copytree(source / "licenses", destination / "licenses", dirs_exist_ok=True)
+    if licenses is not None and licenses.is_dir():
+        shutil.copytree(licenses, destination / "licenses", dirs_exist_ok=True)
     return len(staged)
 
 

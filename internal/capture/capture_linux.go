@@ -13,10 +13,10 @@ import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/framerate"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"syscall"
 	"time"
@@ -121,7 +121,7 @@ func (d *v4l2Device) OpenWithFormat(w, h, fps int) error {
 	// Some drivers cannot enumerate while the streaming handle is active.
 	// A missing optional metadata ioctl must not prevent manually configured input.
 	if _, err := ListVideoModes(d.path); err != nil {
-		log.Printf("capture: V4L2 mode discovery %q: %v", d.path, err)
+		logging.Infof("capture: V4L2 mode discovery %q: %v", d.path, err)
 	}
 	linuxModes.use(d.path, 1)
 	var msg [512]C.char
@@ -149,7 +149,7 @@ func (d *v4l2Device) OpenWithFormat(w, h, fps int) error {
 	d.enc.reqFPS = d.rate.Round()
 	d.enc.scalableInput = false
 	d.enc.closed.Store(false)
-	log.Printf("capture: V4L2 %q %dx%d input_format=%s rate=%d/%d", d.path, d.width, d.height, d.inputFormat, d.rate.Num, d.rate.Den)
+	logging.Infof("capture: V4L2 %q %dx%d input_format=%s rate=%d/%d", d.path, d.width, d.height, d.inputFormat, d.rate.Num, d.rate.Den)
 	return nil
 }
 func (d *v4l2Device) RequestKeyframe() error {
@@ -309,7 +309,7 @@ func (f *v4l2Frame) EncodeTexture(e videoenc.Encoder, key bool) ([]byte, bool, e
 		data, handled, err := gpu.EncodeDMABUF(source, key)
 		if handled {
 			if err == nil && !d.nativeLogged {
-				log.Printf("capture: V4L2 NV12 DMA-BUF -> %s (no pixel copy/conversion)", e.Name())
+				logging.Infof("capture: V4L2 NV12 DMA-BUF -> %s (no pixel copy/conversion)", e.Name())
 				d.nativeLogged = true
 			}
 			return data, handled, err
@@ -323,7 +323,7 @@ func (f *v4l2Frame) EncodeTexture(e videoenc.Encoder, key bool) ([]byte, bool, e
 		return nil, false, nil
 	}
 	if !d.fallbackLogged {
-		log.Printf("capture: V4L2 borrowed NV12 -> %s (no BGRA conversion; encoder may upload pixels)", e.Name())
+		logging.Infof("capture: V4L2 borrowed NV12 -> %s (no BGRA conversion; encoder may upload pixels)", e.Name())
 		d.fallbackLogged = true
 	}
 	data, err := e.Encode(f.data[:d.width*d.height*3/2], key)
@@ -332,7 +332,7 @@ func (f *v4l2Frame) EncodeTexture(e videoenc.Encoder, key bool) ([]byte, bool, e
 func (f *v4l2Frame) Materialize(out *Frame) error {
 	d := f.device
 	if !d.fallbackLogged {
-		log.Printf("capture: V4L2 padded NV12 rows packed for encoder (no BGRA conversion)")
+		logging.Infof("capture: V4L2 padded NV12 rows packed for encoder (no BGRA conversion)")
 		d.fallbackLogged = true
 	}
 	out.Data = make([]byte, d.width*d.height*3/2)

@@ -65,6 +65,8 @@ func TestD3D11JPEGShader(t *testing.T) {
 		args := []string{shader}
 		if coefficientsOnly {
 			args = append(args, "coefficients")
+		} else if geometry == ([5]int{129, 131, 0, 129, 131}) {
+			args = append(args, "incremental")
 		}
 		command := exec.Command(executable, args...)
 		command.Stdin = &input
@@ -76,7 +78,7 @@ func TestD3D11JPEGShader(t *testing.T) {
 		}
 		return output
 	}
-	for _, geometry := range [][5]int{{1, 1, 0, 1, 1}, {19, 17, 0, 19, 17}, {40, 32, 0, 21, 15}, {19, 17, 90, 17, 19}, {19, 17, 180, 19, 17}, {19, 17, 270, 17, 19}} {
+	for _, geometry := range [][5]int{{1, 1, 0, 1, 1}, {19, 17, 0, 19, 17}, {40, 32, 0, 21, 15}, {19, 17, 90, 17, 19}, {19, 17, 180, 19, 17}, {19, 17, 270, 17, 19}, {129, 131, 0, 129, 131}} {
 		for _, quality := range []int{20, 80, 100} {
 			sw, sh, rotation, width, height := geometry[0], geometry[1], geometry[2], geometry[3], geometry[4]
 			pixels := jpegTestPixels(sw, sh)

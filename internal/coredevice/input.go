@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/danielpaulus/go-ios/ios/xpc"
+
+	"anykvm/internal/logging"
 )
 
 const keyboardServiceID uint64 = 1025
@@ -198,7 +199,7 @@ func (i *inputState) updateDisplayRotation() {
 		i.contact = false
 	}
 	i.rotation = rotation
-	log.Printf("coredevice: USB touch mapping rotation=%d source=%dx%d", rotation, i.viewWidth, i.viewHeight)
+	logging.Infof("coredevice: USB touch mapping rotation=%d source=%dx%d", rotation, i.viewWidth, i.viewHeight)
 }
 func (i *inputState) close() {
 	i.mu.Lock()

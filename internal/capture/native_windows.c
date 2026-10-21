@@ -46,7 +46,10 @@ typedef struct {
     int audio, stop;
     HRESULT status;
 } reader_callback;
+static volatile LONG64 desktop_stream_counter;
 struct bk_win_capture {
+    uint64_t stream, sequence;
+    LONG collect_damage;
     int audio, screen, width, height, rotation, hide, rate_num, rate_den, kind;
     IMFMediaSource *source;
     IMFSourceReader *reader;
@@ -65,6 +68,9 @@ struct bk_win_capture {
     int64_t last_present;
 };
 struct bk_win_frame {
+    bk_win_damage damage;
+    bk_win_rect *damage_rects;
+    bk_win_move *damage_moves;
     bk_win_timing timing;
     int width, height, rotation, kind;
     IMFMediaBuffer *borrowed;
@@ -727,6 +733,55 @@ const char *bk_win_input_format(bk_win_capture *c) {
     return c->screen ? "bgra" : c->input_format;
 }
 
+// Metadata is advisory: failure or malformed bounds disable filtering for this
+// frame, while capture itself continues. The current texture is still copied.
+static int damage_add(bk_win_frame *f, RECT r, UINT width, UINT height) {
+    if (r.left < 0 || r.top < 0 || r.right <= r.left || r.bottom <= r.top ||
+        (uint32_t)r.right > width || (uint32_t)r.bottom > height) return 0;
+    f->damage_rects[f->damage.count++] = (bk_win_rect){r.left,r.top,r.right,r.bottom};
+    return 1;
+}
+static void desktop_damage(bk_win_capture *c, bk_win_frame *f, const DXGI_OUTDUPL_FRAME_INFO *info,
+                           UINT width, UINT height) {
+    f->damage.width = width; f->damage.height = height;
+    UINT total = info->TotalMetadataBufferSize, moves = 0, dirties = 0;
+    if (!total || total > 8u*1024*1024) return;
+    uint8_t *metadata = malloc(total);
+    if (!metadata) return;
+    HRESULT hr = IDXGIOutputDuplication_GetFrameMoveRects(c->duplication,total,(DXGI_OUTDUPL_MOVE_RECT *)metadata,&moves);
+    if (FAILED(hr) || moves > total || moves % sizeof(DXGI_OUTDUPL_MOVE_RECT)) goto done;
+    hr = IDXGIOutputDuplication_GetFrameDirtyRects(c->duplication,total-moves,(RECT *)(metadata+moves),&dirties);
+    if (FAILED(hr) || dirties > total-moves || dirties % sizeof(RECT)) goto done;
+    size_t count = 2*(moves/sizeof(DXGI_OUTDUPL_MOVE_RECT)) + dirties/sizeof(RECT);
+    if (!count) goto done;
+    f->damage_rects = malloc(count*sizeof(*f->damage_rects));
+    if (!f->damage_rects) goto done;
+    if (moves) {
+        f->damage_moves = malloc((moves/sizeof(DXGI_OUTDUPL_MOVE_RECT))*sizeof(*f->damage_moves));
+        if (!f->damage_moves) goto done;
+    }
+    const DXGI_OUTDUPL_MOVE_RECT *move = (const void *)metadata;
+    for (UINT i=0;i<moves/sizeof(*move);i++) {
+        RECT dst=move[i].DestinationRect;
+        if (!damage_add(f,dst,width,height)) goto done;
+        int64_t right=(int64_t)move[i].SourcePoint.x+dst.right-dst.left;
+        int64_t bottom=(int64_t)move[i].SourcePoint.y+dst.bottom-dst.top;
+        if(right>INT_MAX || bottom>INT_MAX || right<INT_MIN || bottom<INT_MIN) goto done;
+        RECT src={move[i].SourcePoint.x,move[i].SourcePoint.y,(LONG)right,(LONG)bottom};
+        if (!damage_add(f,src,width,height)) goto done;
+        f->damage_moves[f->damage.move_count++] = (bk_win_move){
+            {src.left,src.top,src.right,src.bottom}, {dst.left,dst.top,dst.right,dst.bottom}};
+    }
+    const RECT *dirty=(const void *)(metadata+moves);
+    for (UINT i=0;i<dirties/sizeof(*dirty);i++) if (!damage_add(f,dirty[i],width,height)) goto done;
+    f->damage.moves=f->damage_moves;
+    f->damage.rects=f->damage_rects;
+    f->damage.valid=1;
+done:
+    if (!f->damage.valid) {free(f->damage_rects);f->damage_rects=NULL;f->damage.count=0;free(f->damage_moves);f->damage_moves=NULL;f->damage.move_count=0;}
+    free(metadata);
+}
+
 bk_win_frame *bk_win_next(bk_win_capture *c, int timeout, char *error, size_t capacity) {
     HRESULT hr = S_OK;
     bk_win_frame *f = calloc(1, sizeof(*f));
@@ -801,6 +856,10 @@ bk_win_frame *bk_win_next(bk_win_capture *c, int timeout, char *error, size_t ca
         free(f);
         return NULL;
     }
+    if (!c->stream) c->stream=(uint64_t)InterlockedIncrement64(&desktop_stream_counter);
+    f->damage.stream=c->stream;
+    f->damage.previous=c->sequence;
+    f->damage.sequence=++c->sequence;
     c->last_present = info.LastPresentTime.QuadPart;
     f->timing.present = c->last_present;
     f->timing.accumulated_frames = info.AccumulatedFrames;
@@ -809,6 +868,9 @@ bk_win_frame *bk_win_next(bk_win_capture *c, int timeout, char *error, size_t ca
     ID3D11Texture2D_GetDesc(texture, &desc);
     DXGI_OUTDUPL_DESC dupdesc;
     IDXGIOutputDuplication_GetDesc(c->duplication, &dupdesc);
+    // Read move/dirty metadata while this duplication frame is still owned.
+    f->damage.width=desc.Width; f->damage.height=desc.Height;
+    if (InterlockedCompareExchange(&c->collect_damage,0,0)) desktop_damage(c,f,&info,desc.Width,desc.Height);
     if (c->shared) {
         D3D11_TEXTURE2D_DESC old;
         ID3D11Texture2D_GetDesc(c->shared, &old);
@@ -888,6 +950,11 @@ bk_win_frame *bk_win_repeat(bk_win_capture *c) {
     // No AcquireNextFrame or desktop copy occurred for this recovery picture.
     f->timing.acquired = clock.QuadPart;
     f->timing.repeated = 1;
+    f->damage.stream=c->stream;
+    f->damage.previous=f->damage.sequence=c->sequence;
+    f->damage.valid=1;
+    f->damage.width=(c->rotation==90||c->rotation==270)?c->height:c->width;
+    f->damage.height=(c->rotation==90||c->rotation==270)?c->width:c->height;
     f->texture = c->shared;
     ID3D11Texture2D_AddRef(f->texture);
     f->device = c->device;
@@ -900,6 +967,8 @@ bk_win_frame *bk_win_repeat(bk_win_capture *c) {
     f->rotation = c->rotation;
     return f;
 }
+
+void bk_win_frame_damage(bk_win_frame *f, bk_win_damage *damage) { *damage=f->damage; }
 
 void bk_win_frame_timing(bk_win_frame *f, bk_win_timing *timing) {
     *timing = f->timing;
@@ -1117,6 +1186,8 @@ void bk_win_frame_free(bk_win_frame *f) {
         IMF2DBuffer_Unlock2D(f->borrowed2d);
     if (f->borrow_lock == 1)
         IMFMediaBuffer_Unlock(f->borrowed);
+    free(f->damage_rects);
+    free(f->damage_moves);
     DROP(IMF2DBuffer, f->borrowed2d);
     DROP(IMFMediaBuffer, f->borrowed);
     DROP(IMFSample, f->sample);
@@ -1125,6 +1196,8 @@ void bk_win_frame_free(bk_win_frame *f) {
     DROP(ID3D11Device, f->device);
     free(f);
 }
+void bk_win_collect_damage(bk_win_capture *c, int enabled) { if(c) InterlockedExchange(&c->collect_damage, enabled != 0); }
+
 void bk_win_close(bk_win_capture *c) {
     if (!c)
         return;

@@ -4,6 +4,18 @@
 #include <stddef.h>
 typedef struct bk_win_capture bk_win_capture;
 typedef struct bk_win_frame bk_win_frame;
+typedef struct { int32_t left, top, right, bottom; } bk_win_rect;
+typedef struct { bk_win_rect source, destination; } bk_win_move;
+typedef struct {
+    const bk_win_move *moves;
+    size_t move_count;
+    const bk_win_rect *rects;
+    size_t count;
+    uint64_t stream, previous, sequence;
+    int width, height, valid;
+} bk_win_damage;
+void bk_win_frame_damage(bk_win_frame *, bk_win_damage *);
+
 typedef struct {
     int64_t present, acquire_start, acquired, copy_submitted, now, frequency;
     int repeated;
@@ -17,6 +29,7 @@ char *bk_win_modes(const char *, char *, size_t);
 const char *bk_win_input_format(bk_win_capture *);
 bk_win_frame *bk_win_next(bk_win_capture *, int, char *, size_t);
 bk_win_frame *bk_win_repeat(bk_win_capture *);
+void bk_win_collect_damage(bk_win_capture *, int);
 void bk_win_close(bk_win_capture *);
 void bk_win_frame_free(bk_win_frame *);
 bk_win_frame *bk_win_frame_snapshot(bk_win_frame *,char *,size_t);

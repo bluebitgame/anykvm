@@ -10,8 +10,8 @@ package videoenc
 import "C"
 import (
 	"anykvm/internal/framebuf"
+	"anykvm/internal/logging"
 	"fmt"
-	"log"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -57,7 +57,7 @@ func openNative(o Options, backend, device string) (Encoder, error) {
 		return nil, fmt.Errorf("%s: %s", backend, C.GoString(&msg[0]))
 	}
 	if hevc == 0 {
-		log.Printf("videoenc: VideoToolbox H.264 lowdelay=%t profile=%s", !o.DisableLowLatencyRateControl, profile)
+		logging.Infof("videoenc: VideoToolbox H.264 lowdelay=%t profile=%s", !o.DisableLowLatencyRateControl, profile)
 	}
 	return &nativeEncoder{ptr: p, options: o, name: backend}, nil
 }

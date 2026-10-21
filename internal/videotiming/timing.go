@@ -4,7 +4,6 @@ package videotiming
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 var Enabled = os.Getenv("ANYKVM_VIDEO_TIMING") == "1"
@@ -235,7 +236,7 @@ func observe(label string, values map[string]time.Duration, trace *Trace) {
 		sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
 		fields = append(fields, fmt.Sprintf("%s_ms=%.3f/%.3f/%.3f(n=%d)", name, ms(quantile(v, 50)), ms(quantile(v, 95)), ms(quantile(v, 99)), len(v)))
 	}
-	log.Printf("video-timing: %s p50/p95/p99 %s (sample=1/%d; host CPU clock)", label, strings.Join(fields, " "), sampleEvery)
+	logging.Debugf("video-timing: %s p50/p95/p99 %s (sample=1/%d; host CPU clock)", label, strings.Join(fields, " "), sampleEvery)
 }
 
 func quantile(sorted []time.Duration, percent int) time.Duration {

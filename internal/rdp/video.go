@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"image/jpeg"
-	"log"
 	"time"
 
 	"anykvm/internal/avmedia"
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 )
 
@@ -47,7 +47,7 @@ func (v *videoPipeline) close() {
 
 func (v *videoPipeline) logEncoder(name string) {
 	if name != v.loggedEncoder {
-		log.Printf("rdp: video codec=h264 encoder=%q", name)
+		logging.Infof("rdp: video codec=h264 encoder=%q", name)
 		v.loggedEncoder = name
 	}
 }
@@ -316,7 +316,7 @@ func (c *client) videoLoop() error {
 			c.ackMu.Lock()
 			pending, suspended := c.sent-c.acknowledged, c.suspendAck
 			c.ackMu.Unlock()
-			log.Printf("rdp: %s: video input=%.1f fps output=%.1f fps skipped=%d process_ms=%.1f/%.1f send_ms=%.1f/%.1f ack_wait_ms=%.1f/%.1f pending=%d ack_suspended=%t queued=%d (mean/max)",
+			logging.Debugf("rdp: %s: video input=%.1f fps output=%.1f fps skipped=%d process_ms=%.1f/%.1f send_ms=%.1f/%.1f ack_wait_ms=%.1f/%.1f pending=%d ack_suspended=%t queued=%d (mean/max)",
 				c.conn.RemoteAddr(), float64(received)/elapsed, float64(frames)/elapsed, skipped,
 				float64(processTotal)/float64(max(received, 1))/float64(time.Millisecond), float64(processMax)/float64(time.Millisecond),
 				float64(sendTotal)/float64(max(frames, 1))/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond),

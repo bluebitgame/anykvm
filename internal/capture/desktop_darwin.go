@@ -10,9 +10,10 @@ import "C"
 
 import (
 	"fmt"
-	"log"
 	"time"
 	"unsafe"
+
+	"anykvm/internal/logging"
 )
 
 func modeFromNative(m C.bk_display_mode, index int) displayMode {
@@ -55,7 +56,7 @@ func (d *screenDevice) SetDesktopSize(size DesktopSize) (DesktopSize, error) {
 	if actual.Width != current.pixelWidth || actual.Height != current.pixelHeight || int(native.width) != current.width || int(native.height) != current.height || float64(native.refresh_rate) != current.refreshRate || (size.ScalePercent > 0 && requestChanged) {
 		fit := min(float64(size.Width)/float64(native.pixel_width), float64(size.Height)/float64(native.pixel_height))
 		effectiveScale := fit * float64(native.pixel_width) / float64(native.width) * 100
-		log.Printf("capture: screen:%d desktop requested=%dx%d@%d scale=%d%% selected=%dx%d@%.3f logical=%dx%d native_scale=%d%% effective_scale=%.1f%% mode_switch=%.1fms", d.index, size.Width, size.Height, size.RefreshRate, size.ScalePercent, actual.Width, actual.Height, float64(native.refresh_rate), int(native.width), int(native.height), actual.ScalePercent, effectiveScale, float64(time.Since(switchStarted))/float64(time.Millisecond))
+		logging.Infof("capture: screen:%d desktop requested=%dx%d@%d scale=%d%% selected=%dx%d@%.3f logical=%dx%d native_scale=%d%% effective_scale=%.1f%% mode_switch=%.1fms", d.index, size.Width, size.Height, size.RefreshRate, size.ScalePercent, actual.Width, actual.Height, float64(native.refresh_rate), int(native.width), int(native.height), actual.ScalePercent, effectiveScale, float64(time.Since(switchStarted))/float64(time.Millisecond))
 	}
 	return actual, nil
 }

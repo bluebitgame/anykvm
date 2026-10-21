@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 const gfxChannel = 1
@@ -370,7 +371,7 @@ func (c *client) handleGFX(p []byte) error {
 				allowed = *runtime.AllowedCodecs
 			}
 			version, flags, codec, err := graphicsCapabilityWithReport(body, runtime.Codec, func(advertised string) {
-				log.Printf("rdp: %s: RDPGFX capabilities advertised: [%s]", c.conn.RemoteAddr(), advertised)
+				logging.Infof("rdp: %s: RDPGFX capabilities advertised: [%s]", c.conn.RemoteAddr(), advertised)
 			}, runtime.AllowedCodecs)
 			if err != nil {
 				return err
@@ -378,7 +379,7 @@ func (c *client) handleGFX(p []byte) error {
 			if err := c.sendGFX(gfxCapabilityConfirm(version, flags)); err != nil {
 				return err
 			}
-			log.Printf("rdp: %s: RDPGFX capability confirmed version=0x%08x flags=0x%08x codec=%s allowed=[%s]", c.conn.RemoteAddr(), version, flags, codec, allowed)
+			logging.Infof("rdp: %s: RDPGFX capability confirmed version=0x%08x flags=0x%08x codec=%s allowed=[%s]", c.conn.RemoteAddr(), version, flags, codec, allowed)
 			c.codec = codec
 			c.scaledMapping = graphicsSupportsScaledMapping(version, flags)
 			if err := c.activate(); err != nil {

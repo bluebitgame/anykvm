@@ -98,6 +98,7 @@ const (
 	// Tight compression control byte.
 	// JpegCompression: bit7=1, bits7-4 = 1001b => 0x90. No filter byte follows.
 	tightJPEG = 0x90
+	tightFill = 0x80 // FillCompression, followed by one TPIXEL and no length.
 
 	// defaultJPEGQuality is used when the client does not advertise a JPEG
 	// Quality Level pseudo-encoding.

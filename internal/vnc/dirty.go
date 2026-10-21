@@ -19,6 +19,10 @@ type rectangle struct {
 // If prev is nil or its dimensions differ from cur, a single full-frame
 // rectangle is returned (full refresh).
 func computeDirtyRects(prev, cur []byte, width, height, tol int) []rectangle {
+	return computeDirtyRectsCandidates(prev, cur, width, height, tol, nil, false)
+}
+
+func computeDirtyRectsCandidates(prev, cur []byte, width, height, tol int, candidates []uint32, filtered bool) []rectangle {
 	const tileSize = pixelops.BlockSize
 	if prev == nil || len(prev) != len(cur) || len(cur) != width*height*4 {
 		return []rectangle{{0, 0, width, height}}
@@ -28,13 +32,26 @@ func computeDirtyRects(prev, cur []byte, width, height, tol int) []rectangle {
 	rows := (height + tileSize - 1) / tileSize
 	// dirty[r*cols+col] marks a changed tile.
 	dirty := make([]bool, rows*cols)
-	blocks := pixelops.DirtyBlocks(prev, cur, width, height, tol)
+	var blocks []pixelops.Block
+	if filtered {
+		blocks = pixelops.DirtyBlocksCandidates(prev, cur, width, height, tol, candidates)
+	} else {
+		blocks = pixelops.DirtyBlocks(prev, cur, width, height, tol)
+	}
 	for _, b := range blocks {
 		dirty[(b.Y/tileSize)*cols+b.X/tileSize] = true
 	}
 	if len(blocks) == 0 {
 		return nil
 	}
+
+	return mergeDirtyGrid(dirty, width, height)
+}
+
+// mergeDirtyGrid is shared by pixel and compressed-MCU comparisons.
+func mergeDirtyGrid(dirty []bool, width, height int) []rectangle {
+	const tileSize = pixelops.BlockSize
+	cols, rows := (width+tileSize-1)/tileSize, (height+tileSize-1)/tileSize
 
 	// Merge horizontally within each tile-row into runs.
 	type run struct{ tx0, tx1, ty int } // tile columns [tx0,tx1), tile row ty

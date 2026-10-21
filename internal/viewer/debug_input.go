@@ -2,7 +2,7 @@
 
 package viewer
 
-import "log"
+import "anykvm/internal/logging"
 
 // debugInput wraps an InputSender and logs each HID event to stderr.
 type debugInput struct {
@@ -18,22 +18,22 @@ func WrapDebugInput(inner InputSender) InputSender {
 }
 
 func (d *debugInput) KeyDown(code uint8) error {
-	log.Printf("input-debug: key down  0x%02x", code)
+	logging.Debugf("input-debug: key down  0x%02x", code)
 	return d.inner.KeyDown(code)
 }
 
 func (d *debugInput) KeyUp() error {
-	log.Printf("input-debug: key up (clear all)")
+	logging.Debugf("input-debug: key up (clear all)")
 	return d.inner.KeyUp()
 }
 
 func (d *debugInput) KeyRelease(code uint8) error {
-	log.Printf("input-debug: key release 0x%02x", code)
+	logging.Debugf("input-debug: key release 0x%02x", code)
 	return d.inner.KeyRelease(code)
 }
 
 func (d *debugInput) MouseMove(x, y int) error {
-	log.Printf("input-debug: mouse abs (%d, %d)", x, y)
+	logging.Debugf("input-debug: mouse abs (%d, %d)", x, y)
 	return d.inner.MouseMove(x, y)
 }
 
@@ -44,10 +44,10 @@ func (d *debugInput) MouseMoveRel(dx, dy int) error {
 
 func (d *debugInput) logMouseRel(source string, dx, dy int) {
 	if source != "" {
-		log.Printf("input-debug: mouse rel %s (%d, %d)", source, dx, dy)
+		logging.Debugf("input-debug: mouse rel %s (%d, %d)", source, dx, dy)
 		return
 	}
-	log.Printf("input-debug: mouse rel (%d, %d)", dx, dy)
+	logging.Debugf("input-debug: mouse rel (%d, %d)", dx, dy)
 }
 
 func (d *debugInput) MouseButton(button int, down bool) error {
@@ -55,11 +55,11 @@ func (d *debugInput) MouseButton(button int, down bool) error {
 	if down {
 		state = "down"
 	}
-	log.Printf("input-debug: mouse btn %d %s", button, state)
+	logging.Debugf("input-debug: mouse btn %d %s", button, state)
 	return d.inner.MouseButton(button, down)
 }
 
 func (d *debugInput) MouseWheel(delta int) error {
-	log.Printf("input-debug: mouse wheel %d", delta)
+	logging.Debugf("input-debug: mouse wheel %d", delta)
 	return d.inner.MouseWheel(delta)
 }

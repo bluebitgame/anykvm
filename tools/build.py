@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build AnyKVM for macOS, Linux and Windows (amd64 and arm64).
 
-Requires Go. Missing cross toolchains and target libraries are prepared locally.
-macOS builds require the Apple SDK; Windows ARM64 SDL2 preparation requires CMake.
+Requires Go. Missing cross toolchains and target/runtime libraries are prepared locally.
+macOS builds require the Apple SDK; macOS FFmpeg also needs Make and pkg-config.
 Run without arguments to choose platform, architecture, viewer support and FFmpeg support.
 FFmpeg is excluded by default; --tags ffmpeg enables its optional media backend.
 Target-specific environment overrides use ANYKVM_BUILD_<OS>_<ARCH>_<VARIABLE>,
@@ -22,9 +22,9 @@ import sys
 import tempfile
 
 import cross_toolchain
-import package_opus
 import build_shaders
 import prepare_sources
+import prepare_runtime
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,6 +99,14 @@ def target_environment(target, host, native_cc):
 
 
 def build_target(target, output, env, dry_run=False, runtime_files=(), tags=""):
+    runtime_map = {}
+    for source, relative in runtime_files:
+        if relative in runtime_map:
+            if cross_toolchain.digest(source) != cross_toolchain.digest(runtime_map[relative]):
+                raise ValueError(f"Conflicting runtime libraries for {relative}")
+        else:
+            runtime_map[relative] = source
+    runtime_files = [(source, relative) for relative, source in runtime_map.items()]
     destination = output / target.replace("/", "-")
     suffix = ".exe" if target.startswith("windows/") else ""
     print(f"\n[{target}] CC={env['CC']}", flush=True)
@@ -138,14 +146,45 @@ def build_target(target, output, env, dry_run=False, runtime_files=(), tags=""):
         for source, relative in runtime_files:
             target_file = staging / relative
             target_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target_file)
+            # Keep sibling SONAME aliases instead of duplicating large binaries.
+            link = os.readlink(source) if source.is_symlink() else ""
+            if link and Path(link).name == link:
+                target_file.symlink_to(link)
+            else:
+                shutil.copy2(source, target_file)
+        manifest = destination / ".runtime-files.json"
+        previous = json.loads(manifest.read_text()) if manifest.is_file() else []
+        current = sorted({relative.as_posix() for _, relative in runtime_files})
         destination.mkdir(parents=True, exist_ok=True)
         name = f"anykvm{suffix}"
         os.replace(staging / name, destination / name)
-        for _, relative in runtime_files:
+        for relative_name in current:
+            relative = Path(relative_name)
             (destination / relative).parent.mkdir(parents=True, exist_ok=True)
             os.replace(staging / relative, destination / relative)
+        # Remove only files owned by an earlier build; preserve user-added files.
+        for relative_name in set(previous) - set(current):
+            relative = Path(relative_name)
+            if not relative.is_absolute() and ".." not in relative.parts:
+                (destination / relative).unlink(missing_ok=True)
+        manifest.write_text(json.dumps(current, indent=2) + "\n")
     print(f"  Built {destination}", flush=True)
+
+
+def prepare_windows_cross_headers(host, targets, dry_run=False):
+    if host.startswith("windows/") or not any(t.startswith("windows/") for t in targets):
+        return
+    # ENet uses Windows SDK casing; MinGW headers use lowercase names on
+    # case-sensitive cross-build hosts. Source preparation restores upstream
+    # contents before this target-specific adjustment on each build.
+    if dry_run:
+        print("  Would normalize ENet's Windows header include for cross-compilation.")
+        return
+    header = ROOT / "internal/gamestream/native/third_party/enet/include/enet/win32.h"
+    data = header.read_bytes()
+    updated = data.replace(b"#include <Ws2tcpip.h>", b"#include <ws2tcpip.h>")
+    if updated != data:
+        header.write_bytes(updated)
 
 
 def main(argv=None):
@@ -200,6 +239,7 @@ def main(argv=None):
         prepare_sources.prepare(platforms={target.split('/')[0] for target in targets},
                                 ffmpeg="ffmpeg" in args.tags.replace(",", " ").split(),
                                 allow_download=not args.no_bootstrap, dry_run=args.dry_run)
+        prepare_windows_cross_headers(host, targets, args.dry_run)
         if any(target.startswith("linux/") for target in targets):
             build_shaders.prepare(dry_run=args.dry_run, allow_download=not args.no_bootstrap)
         output = args.output.resolve()
@@ -212,9 +252,14 @@ def main(argv=None):
                 env = target_environment(target, host, info["CC"])
                 runtime_files = []
                 if not args.no_bootstrap:
+                    if target == "windows/arm64" and "viewer" in args.tags.replace(",", " ").split() and not args.dry_run:
+                        for tool_name in ("cmake", "ninja"):
+                            executable = prepare_runtime.build_tool(tool_name, True)
+                            os.environ["PATH"] = str(Path(executable).parent) + os.pathsep + os.environ.get("PATH", "")
+                        env["PATH"] = os.environ["PATH"]
                     runtime_files = cross_toolchain.prepare(target, host, env, "viewer" in args.tags.replace(",", " ").split(), args.dry_run)
-                runtime_files += package_opus.runtime_files(target, args.tags, args.dry_run,
-                                                           allow_download=not args.no_bootstrap)
+                runtime_files += prepare_runtime.prepare(target, host, env, args.tags, args.dry_run,
+                                                          allow_download=not args.no_bootstrap)
                 if not args.dry_run:
                     runtime_files += prepare_sources.notice_files(
                         {target.split('/')[0]}, "ffmpeg" in args.tags.replace(",", " ").split())

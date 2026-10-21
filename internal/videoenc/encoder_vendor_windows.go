@@ -9,9 +9,9 @@ package videoenc
 import "C"
 
 import (
+	"anykvm/internal/logging"
 	"anykvm/internal/videotiming"
 	"fmt"
-	"log"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -150,7 +150,7 @@ func (e *vendorEncoder) EncodeD3D11Texture(handle uintptr, rotation int, forceID
 	if result > 0 {
 		e.gpuUnavailable = true
 		if !e.fallbackLogged {
-			log.Printf("videoenc: %s GPU texture unavailable (%s); using CPU readback", e.name, C.GoString(&msg[0]))
+			logging.Infof("videoenc: %s GPU texture unavailable (%s); using CPU readback", e.name, C.GoString(&msg[0]))
 			e.fallbackLogged = true
 		}
 		return nil, false, nil
@@ -161,7 +161,7 @@ func (e *vendorEncoder) EncodeD3D11Texture(handle uintptr, rotation int, forceID
 	}
 	defer C.free(unsafe.Pointer(output))
 	if !e.gpuLogged {
-		log.Printf("videoenc: %s D3D11 shared texture -> GPU NV12 -> hardware encoder (no desktop pixel readback)", e.name)
+		logging.Infof("videoenc: %s D3D11 shared texture -> GPU NV12 -> hardware encoder (no desktop pixel readback)", e.name)
 		e.gpuLogged = true
 	}
 	data, err := e.packet(output, size, force != 0)

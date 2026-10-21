@@ -5,9 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
 	"strings"
 	"sync"
+
+	"anykvm/internal/logging"
 )
 
 // One reader owns stdin for the process lifetime. Cancelling a request must
@@ -36,7 +37,7 @@ func TerminalPIN(input io.Reader) func(context.Context, PairingRequest) (string,
 				}
 			}()
 		})
-		log.Printf("GameStream pairing from %q (%s). Enter the four-digit PIN shown in the client, then press Enter:", request.ClientName, request.Address)
+		logging.Infof("GameStream pairing from %q (%s). Enter the four-digit PIN shown in the client, then press Enter:", request.ClientName, request.Address)
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()

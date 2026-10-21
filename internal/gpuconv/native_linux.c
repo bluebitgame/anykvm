@@ -7,7 +7,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/dma-buf.h>
+#include "dma_buf_compat_linux.h"
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +31,7 @@
                             AllocateDescriptorSets) X(UpdateDescriptorSets) X(CreateCommandPool) X(DestroyCommandPool) \
                             X(AllocateCommandBuffers) X(ResetCommandPool) X(BeginCommandBuffer) X(EndCommandBuffer) X( \
                                 CmdPipelineBarrier) X(CmdBindPipeline) X(CmdBindDescriptorSets) X(CmdDispatch)         \
-                                X(CmdDispatchIndirect) X(CmdCopyBuffer) X(CmdCopyBufferToImage) X(CreateFence) X(DestroyFence) X(QueueSubmit) \
+                                X(CmdDispatchIndirect) X(CmdFillBuffer) X(CmdCopyBuffer) X(CmdCopyBufferToImage) X(CreateFence) X(DestroyFence) X(QueueSubmit) \
                                     X(WaitForFences) X(QueueWaitIdle) X(DeviceWaitIdle)               \
                                         X(GetMemoryFdPropertiesKHR) X(GetFenceFdKHR)                                   \
                                             X(GetPhysicalDeviceVideoCapabilitiesKHR) X(                                \
@@ -64,7 +64,8 @@ struct bk_vk {
     VkDescriptorSetLayout descriptor_layout;
     VkPipelineLayout layout;
     VkPipeline pipeline;
-    VkPipeline jpeg_entropy, jpeg_index, jpeg_pack;
+    VkPipeline jpeg_entropy, jpeg_index, jpeg_pack, jpeg_compare, jpeg_work, jpeg_select_entropy, jpeg_prepare_entropy;
+    VkPipeline jpeg_scan_groups, jpeg_add_offsets;
     struct jpeg_buffers *jpeg_buffers;
     VkDescriptorPool descriptor_pool;
     VkDescriptorSet descriptor;
@@ -249,8 +250,14 @@ void bk_vk_close(bk_vk *v) {
             v->DestroySampler(v->device, v->sampler, NULL);
         if (v->pipeline)
             v->DestroyPipeline(v->device, v->pipeline, NULL);
+        if (v->jpeg_select_entropy) v->DestroyPipeline(v->device, v->jpeg_select_entropy, NULL);
+        if (v->jpeg_prepare_entropy) v->DestroyPipeline(v->device, v->jpeg_prepare_entropy, NULL);
+        if (v->jpeg_work) v->DestroyPipeline(v->device, v->jpeg_work, NULL);
+        if (v->jpeg_compare) v->DestroyPipeline(v->device, v->jpeg_compare, NULL);
         if (v->jpeg_entropy) v->DestroyPipeline(v->device, v->jpeg_entropy, NULL);
         if (v->jpeg_index) v->DestroyPipeline(v->device, v->jpeg_index, NULL);
+        if (v->jpeg_scan_groups) v->DestroyPipeline(v->device, v->jpeg_scan_groups, NULL);
+        if (v->jpeg_add_offsets) v->DestroyPipeline(v->device, v->jpeg_add_offsets, NULL);
         if (v->jpeg_pack) v->DestroyPipeline(v->device, v->jpeg_pack, NULL);
         if (v->layout)
             v->DestroyPipelineLayout(v->device, v->layout, NULL);
@@ -437,10 +444,11 @@ bk_vk *bk_vk_open(uint32_t major, uint32_t minor, const void *spirv, size_t size
     VkDescriptorType jpeg_types[] = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                      VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
-    uint32_t binding_count = decode ? 6 : jpeg ? 8 : 4;
-    VkDescriptorSetLayoutBinding bindings[8] = {0};
-    VkDescriptorPoolSize sizes[8] = {0};
+    uint32_t binding_count = decode ? 6 : jpeg ? 10 : 4;
+    VkDescriptorSetLayoutBinding bindings[10] = {0};
+    VkDescriptorPoolSize sizes[10] = {0};
     for (uint32_t i = 0; i < binding_count; i++) {
         VkDescriptorType type = decode ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : jpeg ? jpeg_types[i] : descriptor_types[i];
         bindings[i] = (VkDescriptorSetLayoutBinding){

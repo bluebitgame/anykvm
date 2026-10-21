@@ -2,8 +2,8 @@ package wsmedia
 
 import (
 	"anykvm/internal/framebuf"
+	"anykvm/internal/logging"
 	"anykvm/internal/videotiming"
-	"log"
 	"sync"
 	"time"
 
@@ -198,7 +198,7 @@ func (c *wsClient) writeOutbound(msg *outboundMessage) bool {
 	if kind := msg.kind(); kind == msgJPEG || kind == msgH264 || kind == msgHEVC || kind == msgAV1 {
 		if kind := msg.kind(); kind != c.loggedVideoKind {
 			codec := map[byte]string{msgJPEG: "jpeg", msgH264: "h264", msgHEVC: "hevc", msgAV1: "av1"}[kind]
-			log.Printf("wsmedia: %s: video codec=%s encoder=passthrough", c.conn.RemoteAddr(), codec)
+			logging.Infof("wsmedia: %s: video codec=%s encoder=passthrough", c.conn.RemoteAddr(), codec)
 			c.loggedVideoKind = kind
 		}
 	}

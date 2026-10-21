@@ -1,8 +1,8 @@
-//go:build darwin && cgo && (amd64 || anykvm_jpeg_simd)
+//go:build darwin && cgo
 
 #import <Foundation/Foundation.h>
 #import <CoreImage/CoreImage.h>
-#include "pixel_simd_darwin.h"
+#include "pixel_bgra_darwin.h"
 
 CVPixelBufferRef bk_jpeg_pixel_lock_bgra(CVPixelBufferRef input) {
     @autoreleasepool {

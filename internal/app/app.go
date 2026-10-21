@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"anykvm/internal/discovery"
+	"anykvm/internal/logging"
 )
 
 // Run starts AnyKVM using the command-line arguments. The caller must keep
@@ -13,6 +14,7 @@ import (
 func Run() {
 	opts := registerServerFlags(flag.CommandLine)
 	flag.Parse()
+	logging.Configure(opts.info, opts.debug)
 	if flag.NArg() != 0 {
 		log.Fatal("unexpected arguments; configure services and devices in YAML")
 	}

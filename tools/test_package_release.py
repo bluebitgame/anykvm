@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 import tarfile
 import tempfile
@@ -50,6 +51,24 @@ class ReleasePackagingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing executable"):
                 package_release.package("windows/amd64", root, root / "dist")
             self.assertFalse((root / "dist").exists())
+
+    @unittest.skipIf(os.name == "nt", "Unix library symlinks")
+    def test_unix_archives_preserve_shared_library_aliases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "binary"
+            (source / "lib").mkdir(parents=True)
+            (source / "anykvm").write_bytes(b"executable")
+            (source / "lib/libcodec.so.1.0").write_bytes(b"shared library")
+            (source / "lib/libcodec.so.1").symlink_to("libcodec.so.1.0")
+            (root / "LICENSE").touch()
+            (root / "README.md").touch()
+            (root / "docs").mkdir()
+            archive = package_release.package("linux/amd64", source, root / "dist", root)
+            with tarfile.open(archive) as bundle:
+                alias = bundle.getmember("anykvm-linux-amd64/lib/libcodec.so.1")
+                self.assertTrue(alias.issym())
+                self.assertEqual(alias.linkname, "libcodec.so.1.0")
 
 
 if __name__ == "__main__":

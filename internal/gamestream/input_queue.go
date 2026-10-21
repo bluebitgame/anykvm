@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"log"
 	"sync"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 type queuedInput struct {
@@ -110,7 +111,7 @@ func (q *inputQueue) run(ctx context.Context, handle func([]byte) error) {
 		start := time.Now()
 		maxWait = max(maxWait, start.Sub(p.received))
 		if err := handle(p.data); err != nil {
-			log.Printf("gamestream: input: %v", err)
+			logging.Infof("gamestream: input: %v", err)
 		}
 		now := time.Now()
 		maxDispatch = max(maxDispatch, now.Sub(start))
@@ -119,7 +120,7 @@ func (q *inputQueue) run(ctx context.Context, handle func([]byte) error) {
 			received, merged, gap, depth := q.received, q.merged, q.maxGap, len(q.packets)
 			q.started, q.received, q.merged, q.maxGap = now, 0, 0, 0
 			q.mu.Unlock()
-			log.Printf("gamestream: input %.1f packets/s merged=%d queued=%d max_arrival_gap=%.1fms max_queue_wait=%.1fms max_dispatch=%.1fms", float64(received)/elapsed.Seconds(), merged, depth, float64(gap)/float64(time.Millisecond), float64(maxWait)/float64(time.Millisecond), float64(maxDispatch)/float64(time.Millisecond))
+			logging.Debugf("gamestream: input %.1f packets/s merged=%d queued=%d max_arrival_gap=%.1fms max_queue_wait=%.1fms max_dispatch=%.1fms", float64(received)/elapsed.Seconds(), merged, depth, float64(gap)/float64(time.Millisecond), float64(maxWait)/float64(time.Millisecond), float64(maxDispatch)/float64(time.Millisecond))
 			maxWait, maxDispatch = 0, 0
 		} else {
 			q.mu.Unlock()

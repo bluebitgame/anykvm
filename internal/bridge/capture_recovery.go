@@ -2,7 +2,7 @@ package bridge
 
 import (
 	"anykvm/internal/capture"
-	"log"
+	"anykvm/internal/logging"
 	"time"
 )
 
@@ -37,7 +37,7 @@ func (r *captureRecovery) frame(now time.Time) {
 func recoverCapture(dev capture.Device, run *captureRun, recovery *captureRecovery, reason string) bool {
 	for {
 		delay := recovery.retryDelay()
-		log.Printf("bridge: capture recovery in %s: %s", delay, reason)
+		logging.Infof("bridge: capture recovery in %s: %s", delay, reason)
 		if !waitCapture(run.stop, delay) {
 			return false
 		}
@@ -52,7 +52,7 @@ func recoverCapture(dev capture.Device, run *captureRun, recovery *captureRecove
 		err := dev.OpenWithFormat(run.width, run.height, run.fps)
 		run.reopenMu.Unlock()
 		if err == nil {
-			log.Printf("bridge: capture reopened, waiting for first frame")
+			logging.Infof("bridge: capture reopened, waiting for first frame")
 			return true
 		}
 		reason = err.Error()

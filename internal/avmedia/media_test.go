@@ -10,6 +10,36 @@ import (
 	"testing"
 )
 
+func TestLibraryJPEGEncoder(t *testing.T) {
+	if os.Getenv("ANYKVM_TEST_AVMEDIA") == "" {
+		t.Skip("set ANYKVM_TEST_AVMEDIA and ANYKVM_FFMPEG_LIBDIR")
+	}
+	for _, size := range [][2]int{{1, 1}, {37, 25}, {64, 48}} {
+		for _, quality := range []int{1, 80, 100} {
+			w, h := size[0], size[1]
+			encoder, err := NewJPEGEncoder(w, h, quality)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pixels := make([]byte, w*h*4)
+			for i := range pixels {
+				pixels[i] = byte(i * 13)
+			}
+			packet, err := encoder.EncodeOwned(pixels, w, h, "bgra", false)
+			encoder.Close()
+			if err != nil || packet == nil {
+				t.Fatalf("JPEG %dx%d quality %d: %v", w, h, quality, err)
+			}
+			// Output must survive closing the encoder and preserve odd dimensions.
+			config, err := jpeg.DecodeConfig(bytes.NewReader(packet.Bytes()))
+			packet.Release()
+			if err != nil || config.Width != w || config.Height != h {
+				t.Fatalf("JPEG dimensions %dx%d: %+v, %v", w, h, config, err)
+			}
+		}
+	}
+}
+
 func TestLibraryJPEGFullRange(t *testing.T) {
 	if os.Getenv("ANYKVM_TEST_AVMEDIA") == "" {
 		t.Skip("set ANYKVM_TEST_AVMEDIA and ANYKVM_FFMPEG_LIBDIR")

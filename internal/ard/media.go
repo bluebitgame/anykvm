@@ -2,12 +2,12 @@ package ard
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"time"
 
 	"anykvm/internal/avmedia"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 func (s *session) bindPorts(body []byte) error {
@@ -119,7 +119,7 @@ func (s *session) mediaLoop() {
 				return nil
 			}
 			if info != lastInfo {
-				log.Printf("ard: HEVC SPS profile=%d level=%d chroma_idc=%d bit_depth=%d/%d picture=%dx%d decoder=libav software", info.Profile, info.Level, info.Chroma, info.DepthLuma, info.DepthChroma, info.Width, info.Height)
+				logging.Infof("ard: HEVC SPS profile=%d level=%d chroma_idc=%d bit_depth=%d/%d picture=%dx%d decoder=libav software", info.Profile, info.Level, info.Chroma, info.DepthLuma, info.DepthChroma, info.Width, info.Height)
 				lastInfo = info
 			}
 			if info.Width*info.Height > maxSinglePicturePixels {
@@ -285,7 +285,7 @@ func (s *session) mediaLoop() {
 					s.stop(err)
 					return
 				}
-				log.Printf("ard: requesting media restart after lost HEVC reference state")
+				logging.Infof("ard: requesting media restart after lost HEVC reference state")
 				lastRestart = now
 			}
 		}

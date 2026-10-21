@@ -11,7 +11,9 @@ import (
 var progressiveShader string
 
 //go:embed shaders/progressive_surface.hlsl
-var progressiveSurfaceShader string
+var progressiveSurfaceSource string
+
+var progressiveSurfaceShader = gpuconv.WithTileCompare(progressiveSurfaceSource, "main")
 
 type progressiveCompute interface {
 	Run([]byte, []uint32) ([]byte, [48]uint32, error)
@@ -47,29 +49,49 @@ func newGPUProgressive(mode string, quantization int) (nativeProgressiveCodec, e
 }
 
 func (e *progressiveEncoder) prepareSurface(s *gpuconv.Surface, w, h int, force bool) ([]bitmapRect, error) {
+	returnRects, _, err := e.prepareSurfaceMoves(s, w, h, force, nil)
+	return returnRects, err
+}
+func (e *progressiveEncoder) prepareSurfaceMoves(s *gpuconv.Surface, w, h int, force bool, moves []gpuconv.SurfaceMove) ([]bitmapRect, []gpuconv.SurfaceMove, error) {
 	g, ok := e.native.(*gpuProgressiveCodec)
 	if !ok {
-		return nil, fmt.Errorf("GPU capture requires the Progressive GPU backend")
+		return nil, nil, fmt.Errorf("GPU capture requires the Progressive GPU backend")
 	}
 	compute, ok := g.compute.(progressiveSurfaceCompute)
 	if !ok {
-		return nil, fmt.Errorf("Progressive backend cannot consume GPU surfaces")
+		return nil, nil, fmt.Errorf("Progressive backend cannot consume GPU surfaces")
 	}
-	flags, reset, err := compute.PrepareSurface(s, w, h, force || !g.surfaceActive)
+	var flags []uint32
+	var reset bool
+	var err error
+	if moveCompute, ok := g.compute.(progressiveSurfaceMoveCompute); ok && len(moves) > 0 {
+		flags, reset, err = moveCompute.PrepareSurfaceMoves(s, w, h, force || !g.surfaceActive, moves)
+	} else {
+		moves = nil
+		flags, reset, err = compute.PrepareSurface(s, w, h, force || !g.surfaceActive)
+	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if reset {
 		e.discardRefinements()
 	}
 	if len(flags) != ((w+63)/64)*((h+63)/64) {
-		return nil, fmt.Errorf("invalid GPU dirty tile grid")
+		return nil, nil, fmt.Errorf("invalid GPU dirty tile grid")
+	}
+	var accepted []gpuconv.SurfaceMove
+	if !reset && !force {
+		for _, m := range moves {
+			if flags[(m.DestinationY/64)*((w+63)/64)+m.DestinationX/64] == 0 {
+				accepted = append(accepted, m)
+			}
+		}
 	}
 	var rects []bitmapRect
 	columns := (w + 63) / 64
 	for i, flag := range flags {
 		if flag > 1 {
-			return nil, fmt.Errorf("invalid GPU dirty tile flag")
+			return nil, nil, fmt.Errorf("invalid GPU dirty tile flag")
 		}
 		if flag != 0 {
 			x, y := (i%columns)*64, (i/columns)*64
@@ -77,7 +99,7 @@ func (e *progressiveEncoder) prepareSurface(s *gpuconv.Surface, w, h int, force 
 		}
 	}
 	g.surfaceActive, g.surfaceW, g.surfaceH = true, w, h
-	return rects, nil
+	return rects, accepted, nil
 }
 func (e *progressiveEncoder) encodeSurface(w, h int, rects []bitmapRect, frame uint32) ([]byte, error) {
 	g, ok := e.native.(*gpuProgressiveCodec)

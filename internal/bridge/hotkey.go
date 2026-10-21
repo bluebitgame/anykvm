@@ -1,9 +1,10 @@
 package bridge
 
 import (
-	"log"
 	"strings"
 	"sync"
+
+	"anykvm/internal/logging"
 )
 
 const (
@@ -103,7 +104,7 @@ func (h *HotkeyMatcher) CheckKeyDown(code uint8) (idx int, matched bool) {
 			for m := range h.heldModKeys {
 				h.swallowed[m] = true
 			}
-			log.Printf("hotkey: switching to target %d", i)
+			logging.Infof("hotkey: switching to target %d", i)
 			return i, true
 		}
 	}

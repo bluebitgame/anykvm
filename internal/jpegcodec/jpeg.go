@@ -1,6 +1,6 @@
 // Package jpegcodec converts tightly packed BGRA frames to and from JPEG.
-// anyjpeg uses AVX2/SSE2 on x86 and NEON on ARM64. macOS ARM64 defaults to
-// ImageIO. Go JPEG handles unsupported CPUs, non-CGO builds and unusual scans.
+// FFmpeg builds use libavcodec; other native builds load TurboJPEG.
+// macOS falls back to ImageIO, then Go; other platforms fall back to Go.
 // Windows/Linux also provide compute JPEG encoding and baseline JPEG decoding
 // to BT.709 NV12.
 package jpegcodec
@@ -71,4 +71,12 @@ func EncodeBGRAOwned(pixels []byte, width, height, quality int) (*framebuf.Buffe
 		return nil, fmt.Errorf("JPEG: invalid BGRA frame %dx%d (%d bytes)", width, height, len(pixels))
 	}
 	return encodeBGRAOwned(pixels, width, height, min(100, max(1, quality)))
+}
+
+func encodeGoOwned(pixels []byte, width, height, quality int) (*framebuf.Buffer, error) {
+	data, err := encodeGo(pixels, width, height, quality)
+	if err != nil {
+		return nil, err
+	}
+	return framebuf.New(data, nil), nil
 }

@@ -2,7 +2,6 @@ package spice
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	"anykvm/internal/capture"
 	"anykvm/internal/dmabuf"
 	"anykvm/internal/framebuf"
+	"anykvm/internal/logging"
 )
 
 // A lease includes both FD ownership and upstream draw ownership. Duplicating an
@@ -148,7 +148,7 @@ func (d *Device) OpenWithFormat(w, h, fps int) error {
 	d.width, d.height, d.buttons = 0, 0, 0
 	d.keys = [256]bool{}
 	d.stats = Stats{}
-	log.Printf("spice: local GL source; render_node=%s; H.264 DMA-BUF hardware encoding; CPU pixel readback disabled", node)
+	logging.Infof("spice: local GL source; render_node=%s; H.264 DMA-BUF hardware encoding; CPU pixel readback disabled", node)
 	return nil
 }
 
@@ -227,7 +227,7 @@ func (d *Device) Capture() (*capture.Frame, error) {
 	d.width, d.height = int(f.Width), int(f.Height)
 	d.stats.GPUFrames++
 	if d.stats.GPUFrames == 1 {
-		log.Printf("spice: first DMA-BUF -> Vulkan Video H.264 frame; source=%dx%d fourcc=%08x modifier=%016x flip_y=%t; cpu_readbacks=0", f.Width, f.Height, f.FourCC, f.Modifier, f.FlipY)
+		logging.Infof("spice: first DMA-BUF -> Vulkan Video H.264 frame; source=%dx%d fourcc=%08x modifier=%016x flip_y=%t; cpu_readbacks=0", f.Width, f.Height, f.FourCC, f.Modifier, f.FlipY)
 	}
 	return d.output(data, now), nil
 }
@@ -293,7 +293,7 @@ func (d *Device) Close() error {
 		d.encoder.Close()
 		d.encoder = nil
 	}
-	log.Printf("spice: closed; gpu_frames=%d repeated_frames=%d audio_frames=%d cpu_readbacks=%d", d.stats.GPUFrames, d.stats.RepeatedFrames, d.audioFrames.Load(), d.stats.CPUReadbacks)
+	logging.Infof("spice: closed; gpu_frames=%d repeated_frames=%d audio_frames=%d cpu_readbacks=%d", d.stats.GPUFrames, d.stats.RepeatedFrames, d.audioFrames.Load(), d.stats.CPUReadbacks)
 	return nil
 }
 

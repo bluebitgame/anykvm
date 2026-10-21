@@ -2,9 +2,9 @@ package coredevice
 
 import (
 	"fmt"
-	"log"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // ValidateSource checks the source selector and protocol-specific settings.
@@ -45,13 +45,13 @@ func NewCapture(video, input string, options Options) (capture.Device, bool) {
 		if err != nil {
 			return capture.Failed(err), true
 		}
-		log.Printf("AnyKVM: ios-usb video capture with standalone CoreDevice HID configured")
+		logging.Infof("AnyKVM: ios-usb video capture with standalone CoreDevice HID configured")
 		return NewHybrid(capture.NewDevice(video), client), true
 	}
 	d, err := NewClient(video, options)
 	if err != nil {
 		return capture.Failed(err), true
 	}
-	log.Printf("AnyKVM: direct CoreDevice capture and HID configured")
+	logging.Infof("AnyKVM: direct CoreDevice capture and HID configured")
 	return d, true
 }

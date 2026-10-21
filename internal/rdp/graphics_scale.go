@@ -3,9 +3,9 @@ package rdp
 import (
 	"fmt"
 	"image"
-	"log"
 
 	"anykvm/internal/bridge"
+	"anykvm/internal/logging"
 )
 
 const gfxCapsScaledMapDisable uint32 = 0x80
@@ -103,7 +103,7 @@ func (c *client) ensureGraphicsLayout(next graphicsLayout) error {
 		return err
 	}
 	if old.surfaceW != 0 {
-		log.Printf("rdp: %s: graphics surface=%dx%d output=%dx%d viewport=%v", c.conn.RemoteAddr(), next.surfaceW, next.surfaceH, next.outputW, next.outputH, next.viewport)
+		logging.Infof("rdp: %s: graphics surface=%dx%d output=%dx%d viewport=%v", c.conn.RemoteAddr(), next.surfaceW, next.surfaceH, next.outputW, next.outputH, next.viewport)
 	}
 	c.graphics = next
 	return nil

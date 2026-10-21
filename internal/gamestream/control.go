@@ -5,10 +5,10 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"errors"
-	"log"
 	"time"
 
 	"anykvm/internal/gamestream/native"
+	"anykvm/internal/logging"
 )
 
 func controlAEAD(key []byte, v2 bool) (cipher.AEAD, error) {
@@ -116,7 +116,7 @@ func (s *Server) controlLoop() {
 			if x := s.currentSession(); x != nil {
 				x.stop("ENet error")
 			}
-			log.Printf("gamestream: %v", err)
+			logging.Infof("gamestream: %v", err)
 			return
 		}
 		switch e.Type {
@@ -144,7 +144,7 @@ func (s *Server) controlLoop() {
 			inputs = newInputQueue(x.ctx, &x.input)
 			statsAt = time.Now()
 			x.lastControl.Store(time.Now().UnixNano())
-			log.Printf("gamestream: ENet control connected from %s", e.Address)
+			logging.Infof("gamestream: ENet control connected from %s", e.Address)
 		case native.Disconnect:
 			if current != nil && e.Peer == peer {
 				current.stop("GameStream client disconnected")
@@ -166,21 +166,21 @@ func (s *Server) controlLoop() {
 			current.lastControl.Store(now.UnixNano())
 			if now.Sub(statsAt) >= 5*time.Second {
 				if stats, ok := s.control.Stats(peer); ok {
-					log.Printf("gamestream: control network rtt=%dms rtt_variation=%dms reliable_loss=%.2f%%", stats.RTTMillis, stats.RTTVariationMillis, stats.ReliableLossPercent)
+					logging.Debugf("gamestream: control network rtt=%dms rtt_variation=%dms reliable_loss=%.2f%%", stats.RTTMillis, stats.RTTVariationMillis, stats.ReliableLossPercent)
 				}
 				statsAt = now
 			}
 			switch kind {
 			case 0x0206:
 				if err := inputs.enqueue(payload); err != nil {
-					log.Printf("gamestream: input enqueue: %v", err)
+					logging.Infof("gamestream: input enqueue: %v", err)
 					current.stop("input queue rejected packet")
 				}
 			case 0x0302, 0x0301:
 				if kind == 0x0302 {
-					log.Printf("gamestream: client requested IDR (control=0x0302)")
+					logging.Infof("gamestream: client requested IDR (control=0x0302)")
 				} else {
-					log.Printf("gamestream: client requested reference invalidation (control=0x0301); responding with IDR")
+					logging.Infof("gamestream: client requested reference invalidation (control=0x0301); responding with IDR")
 				}
 				select {
 				case current.keyframe <- struct{}{}:

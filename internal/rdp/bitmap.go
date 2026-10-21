@@ -3,11 +3,13 @@ package rdp
 import (
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
+	"anykvm/internal/gpuconv"
+	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/pixelops"
 )
 
@@ -244,16 +246,18 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 	v := videoPipeline{}
 	defer v.close()
 	var previous []byte
+	var damageState jpegcodec.DesktopDamageState
+	scratchActive := false
 	previousFormat := progressivePixelFormat(255)
 	previousSurface := false
 	w, h := 0, 0
 	clear := newClearEncoder()
 	planar := planarEncoder{}
 	if c.codec == codecPlanar {
-		log.Printf("rdp: %s: bitmap codec=%s encoder=%q CLL=1", c.conn.RemoteAddr(), c.codec, planar.backend())
+		logging.Infof("rdp: %s: bitmap codec=%s encoder=%q CLL=1", c.conn.RemoteAddr(), c.codec, planar.backend())
 	}
 	if c.codec == codecClear {
-		log.Printf("rdp: %s: bitmap codec=%s encoder=Go pixelops=%q", c.conn.RemoteAddr(), c.codec, pixelops.Backend())
+		logging.Infof("rdp: %s: bitmap codec=%s encoder=Go pixelops=%q", c.conn.RemoteAddr(), c.codec, pixelops.Backend())
 	}
 	if c.codec == codecProgressive {
 		var err error
@@ -268,7 +272,7 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 		if err := progressive.setRefinement(runtime.ProgressiveRefinement); err != nil {
 			return err
 		}
-		log.Printf("rdp: %s: bitmap codec=%s encoder=%q quantization=%d refine=%d", c.conn.RemoteAddr(), c.codec, progressive.backend(), progressive.quantization, progressive.refineBits)
+		logging.Infof("rdp: %s: bitmap codec=%s encoder=%q quantization=%d refine=%d", c.conn.RemoteAddr(), c.codec, progressive.backend(), progressive.quantization, progressive.refineBits)
 	}
 	started := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
@@ -300,7 +304,7 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 			return nil
 		case <-ticker.C:
 			elapsed := time.Since(statsStarted).Seconds()
-			log.Printf("rdp: %s: bitmap output=%.1f fps refine=%.1f fps tiles=%d refine_tiles=%d encode_max=%.1fms send_max=%.1fms ack_wait_max=%.1fms",
+			logging.Debugf("rdp: %s: bitmap output=%.1f fps refine=%.1f fps tiles=%d refine_tiles=%d encode_max=%.1fms send_max=%.1fms ack_wait_max=%.1fms",
 				c.conn.RemoteAddr(), float64(frames)/elapsed, float64(refinementFrames)/elapsed, tiles, refinementTiles,
 				float64(encodeMax)/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond))
 			statsStarted = time.Now()
@@ -419,21 +423,35 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				if c.codec == codecPlanar {
 					label = "Planar"
 				}
-				log.Printf("rdp: %s: %s input=%s", c.conn.RemoteAddr(), label, name)
+				logging.Infof("rdp: %s: %s input=%s", c.conn.RemoteAddr(), label, name)
 				previous = nil
 				previousFormat = pixelFormat
+			}
+			forceMoves := refresh || resized || layoutChanged || modeChanged || previousFormat != pixelFormat
+			var moves []gpuconv.SurfaceMove
+			damage := fittedProgressiveDamage(f.Damage, width, height)
+			if progressive != nil {
+				moves = progressive.moveCandidates(damage, damageState, width, height, forceMoves)
+			}
+			var copies []gpuconv.SurfaceMove
+			comparison := previous
+			if !surface && c.codec == codecProgressive {
+				copies = validatedPixelMoves(moves, previous, pixels, width, height, pixelFormat)
+				if len(copies) > 0 {
+					comparison = copyProgressiveBaseline(previous, width, copies)
+				}
 			}
 			var rects []bitmapRect
 			prepareTime := time.Duration(0)
 			if surface {
 				started := time.Now()
-				rects, err = progressive.prepareSurface(f.Surface, width, height, refresh || resized || layoutChanged || modeChanged)
+				rects, copies, err = progressive.prepareSurfaceMoves(f.Surface, width, height, forceMoves, moves)
 				prepareTime = time.Since(started)
 				if err != nil {
 					return err
 				}
 			} else if c.codec == codecProgressive || c.codec == codecPlanar {
-				rects = dirtyProgressiveRectsFormat(pixels, previous, width, height, pixelFormat)
+				rects = dirtyProgressiveRectsFormat(pixels, comparison, width, height, pixelFormat)
 				if c.codec == codecPlanar {
 					rects = coalesceBitmapRects(rects, width, height)
 				}
@@ -441,7 +459,8 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				rects = dirtyBitmapRects(pixels, previous, width, height)
 				rects = coalesceBitmapRects(rects, width, height)
 			}
-			if len(rects) == 0 {
+			if len(rects) == 0 && len(copies) == 0 {
+				damageState.Commit(damage)
 				continue
 			}
 			if predictionCoded(f.Format) {
@@ -455,6 +474,12 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				frameAckWait += f.Timing.Waited(ackStarted, ackEnded)
 			}
 			if resized || layoutChanged {
+				if scratchActive {
+					if err := c.sendGFX(gfxPDU(0xa, u16(progressiveMoveScratch))); err != nil {
+						return err
+					}
+					scratchActive = false
+				}
 				if err := c.ensureGraphicsLayout(layout); err != nil {
 					return err
 				}
@@ -478,6 +503,30 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				err := c.sendGFX(p)
 				sendTime += time.Since(writeStarted)
 				return err
+			}
+			if len(copies) > 0 {
+				// Preserve the old source coefficients until their final UPGRADE
+				// has been generated, before any current-frame FIRST replaces them.
+				refinements := progressive.moveSourceRefinements(copies, w, h)
+				for i := 0; i < len(refinements); {
+					end := progressiveBatchEnd(refinements, i)
+					encodeStarted := time.Now()
+					encoded, err := progressive.upgrade(refinements[i:end], id)
+					encodeTime += time.Since(encodeStarted)
+					if err != nil {
+						return err
+					}
+					if len(batch)+graphicsProgressiveHeaderSize+len(encoded) > 256<<10 {
+						if err := sendBatch(batch); err != nil {
+							return err
+						}
+						batch = batch[:0]
+					}
+					batch = appendGraphicsProgressive(batch, encoded)
+					i = end
+				}
+				batch = append(batch, graphicsProgressiveCopies(w, h, copies, !scratchActive)...)
+				scratchActive = true
 			}
 			var progressivePackets [][]byte
 			for index := 0; index < len(rects); {
@@ -554,6 +603,10 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 			} else {
 				previous = append(previous[:0], pixels...)
 			}
+			if progressive != nil && len(copies) > 0 {
+				progressive.invalidateMovedTiles(copies, width)
+			}
+			damageState.Commit(damage)
 			previousSurface = surface
 			frames++
 			tiles += int64(len(rects))

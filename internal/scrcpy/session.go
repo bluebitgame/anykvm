@@ -11,7 +11,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"os/exec"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // Options configure an Android scrcpy session.
@@ -166,7 +166,7 @@ func (s *Session) Start(maxSize, fps int) error {
 	args := s.serverArgs(version, scid, maxSize, fps)
 	server := s.adbCmd(args...)
 	logCmdOutput(server, "scrcpy-server")
-	log.Printf("scrcpy: launching server v%s (scid=%s, port=%d, crop=%q, capture_orientation=%q, video_bit_rate=%d bps)", version, scid, port, s.opts.Crop, s.captureOrientation, s.captureBitRate)
+	logging.Infof("scrcpy: launching server v%s (scid=%s, port=%d, crop=%q, capture_orientation=%q, video_bit_rate=%d bps)", version, scid, port, s.opts.Crop, s.captureOrientation, s.captureBitRate)
 	if err := server.Start(); err != nil {
 		s.removeForward(port)
 		return fmt.Errorf("scrcpy: start server: %w", err)
@@ -242,7 +242,7 @@ func (s *Session) Start(maxSize, fps int) error {
 	s.fps = fps
 	s.setSize(w, h)
 	s.running = true
-	log.Printf("scrcpy: connected to device (%dx%d)", w, h)
+	logging.Infof("scrcpy: connected to device (%dx%d)", w, h)
 	return nil
 }
 
@@ -279,7 +279,7 @@ func (s *Session) Stop() {
 	s.pressed = make(map[uint8]bool)
 	s.buttons = 0
 	s.inMu.Unlock()
-	log.Printf("scrcpy: session stopped")
+	logging.Infof("scrcpy: session stopped")
 }
 
 // Running reports whether the session is currently connected.
@@ -300,7 +300,7 @@ func (s *Session) setSize(w, h int) {
 	s.sizeMu.Lock()
 	if w != s.width || h != s.height {
 		if s.width != 0 || s.height != 0 {
-			log.Printf("scrcpy: video size changed %dx%d -> %dx%d", s.width, s.height, w, h)
+			logging.Infof("scrcpy: video size changed %dx%d -> %dx%d", s.width, s.height, w, h)
 		}
 		s.width, s.height = w, h
 	}
@@ -460,7 +460,7 @@ func logCmdOutput(cmd *exec.Cmd, tag string) {
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
 			if line != "" {
-				log.Printf("%s: %s", tag, line)
+				logging.Infof("%s: %s", tag, line)
 			}
 		}
 	}

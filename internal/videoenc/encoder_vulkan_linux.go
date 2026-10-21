@@ -5,9 +5,9 @@ package videoenc
 import (
 	"anykvm/internal/dmabuf"
 	"anykvm/internal/gpuconv"
+	"anykvm/internal/logging"
 	"errors"
 	"fmt"
-	"log"
 )
 
 type vulkanEncoder struct {
@@ -41,7 +41,7 @@ func (e *vulkanEncoder) EncodeDMABUF(f dmabuf.Frame, force bool) ([]byte, bool, 
 	}
 	data, err := e.encoder.EncodeSource(f, force)
 	if errors.Is(err, gpuconv.ErrUnavailable) {
-		log.Printf("videoenc: NV12 DMA-BUF import unavailable: %v", err)
+		logging.Infof("videoenc: NV12 DMA-BUF import unavailable: %v", err)
 		return nil, false, ErrUnavailable
 	}
 	return data, true, err

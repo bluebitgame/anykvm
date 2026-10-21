@@ -70,6 +70,8 @@ type ffmpegDevice struct {
 	scalableInput          bool
 	outputDownscaleOnly    bool
 	outputMaxW, outputMaxH int
+	outputScale            float64
+	scaledW, scaledH       int
 	variableInputRate      bool // USB mirroring's nominal device rate may differ from sample delivery.
 	inputFPS               framerate.Rate
 	requestedRate          framerate.Rate
@@ -77,6 +79,7 @@ type ffmpegDevice struct {
 	sourceFrame            uint64
 	skippedEncodeInputs    uint64 // unencoded inputs explicitly rejected by pacing/decimation
 	targetW, targetH       int
+	jpegRegions            bool
 	gpuSurface             bool
 	gpuSurfaceLeases       atomic.Int32
 	quality                int

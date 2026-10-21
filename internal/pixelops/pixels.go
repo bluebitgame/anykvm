@@ -108,6 +108,16 @@ func runByteGo(p []byte) int {
 // is the maximum |dB|+|dG|+|dR| per pixel; zero uses exact SIMD comparison.
 // Results are in row order, with partial edge blocks clipped to the picture.
 func DirtyBlocks(previous, pixels []byte, width, height, tolerance int) []Block {
+	return dirtyBlocks(previous, pixels, width, height, tolerance, nil, false)
+}
+
+// DirtyBlocksCandidates compares only sorted, unique 64px tile IDs. An empty
+// list skips comparison. Malformed IDs conservatively fall back to all blocks.
+func DirtyBlocksCandidates(previous, pixels []byte, width, height, tolerance int, candidates []uint32) []Block {
+	return dirtyBlocks(previous, pixels, width, height, tolerance, candidates, true)
+}
+
+func dirtyBlocks(previous, pixels []byte, width, height, tolerance int, candidates []uint32, filtered bool) []Block {
 	if width <= 0 || height <= 0 || width > len(pixels)/4 ||
 		height != len(pixels)/4/width || len(pixels)%4 != 0 || len(pixels)/4%width != 0 {
 		panic("pixelops: invalid BGRA picture")
@@ -115,21 +125,39 @@ func DirtyBlocks(previous, pixels []byte, width, height, tolerance int) []Block 
 	var blocks []Block
 	stride := width * 4
 	refresh := len(previous) != len(pixels)
-	for y := 0; y < height; y += BlockSize {
-		for x := 0; x < width; x += BlockSize {
-			b := Block{x, y, min(BlockSize, width-x), min(BlockSize, height-y)}
-			dirty := refresh
-			if !dirty {
-				offset := y*stride + x*4
-				if tolerance <= 0 {
-					dirty = !EqualBGRBlock(pixels[offset:], previous[offset:], stride, b.W, b.H)
-				} else {
-					dirty = !equalBlockTolerance(pixels[offset:], previous[offset:], stride, b.W, b.H, tolerance)
-				}
+	cols, rows := (width+BlockSize-1)/BlockSize, (height+BlockSize-1)/BlockSize
+	for i, id := range candidates {
+		if uint64(id) >= uint64(cols*rows) || (i > 0 && id <= candidates[i-1]) {
+			filtered = false
+			break
+		}
+	}
+	if refresh {
+		filtered = false
+	}
+	count := cols * rows
+	if filtered {
+		count = len(candidates)
+	}
+	for i := 0; i < count; i++ {
+		id := i
+		if filtered {
+			id = int(candidates[i])
+		}
+		x, y := (id%cols)*BlockSize, (id/cols)*BlockSize
+
+		b := Block{x, y, min(BlockSize, width-x), min(BlockSize, height-y)}
+		dirty := refresh
+		if !dirty {
+			offset := y*stride + x*4
+			if tolerance <= 0 {
+				dirty = !EqualBGRBlock(pixels[offset:], previous[offset:], stride, b.W, b.H)
+			} else {
+				dirty = !equalBlockTolerance(pixels[offset:], previous[offset:], stride, b.W, b.H, tolerance)
 			}
-			if dirty {
-				blocks = append(blocks, b)
-			}
+		}
+		if dirty {
+			blocks = append(blocks, b)
 		}
 	}
 	return blocks

@@ -9,7 +9,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +20,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/gamestream/native"
+	"anykvm/internal/logging"
 	"anykvm/internal/netstats"
 )
 
@@ -89,7 +89,7 @@ type response struct {
 
 func reply(w http.ResponseWriter, code int, message string, values ...string) {
 	if code >= 400 {
-		log.Printf("gamestream: API rejected request (%d): %s", code, message)
+		logging.Infof("gamestream: API rejected request (%d): %s", code, message)
 	}
 	r := response{Code: code, Message: message}
 	for i := 0; i+1 < len(values); i += 2 {
@@ -225,7 +225,7 @@ func (s *Server) Start() error {
 		s.servers = append(s.servers, srv)
 		go func(l net.Listener, server *http.Server) {
 			if err := server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Printf("gamestream: listener stopped: %v", err)
+				logging.Infof("gamestream: listener stopped: %v", err)
 			}
 		}(listener, srv)
 	}

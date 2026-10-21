@@ -7,13 +7,13 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math"
 	"net"
 	"sync"
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // Legacy paired type-96 audio uses AAC-ELD for mirroring and ALAC for
@@ -204,7 +204,7 @@ func (a *audioStream) receivePacket(p []byte, now time.Time) {
 	payload := p[12:]
 	if bytes.Equal(payload, []byte{0, 0x68, 0x34, 0}) {
 		if !a.markerLogged {
-			log.Printf("airplay: audio UDP received no-data marker; waiting for sender audio")
+			logging.Infof("airplay: audio UDP received no-data marker; waiting for sender audio")
 			a.markerLogged = true
 		}
 		return
@@ -214,7 +214,7 @@ func (a *audioStream) receivePacket(p []byte, now time.Time) {
 		r.mu.Lock()
 		attached := r.audioOpen && r.owner == a.media.owner
 		r.mu.Unlock()
-		log.Printf("airplay: audio UDP received codec=%s (%d bytes, viewer attached=%t)", a.options.frameFormat().Codec, len(payload), attached)
+		logging.Infof("airplay: audio UDP received codec=%s (%d bytes, viewer attached=%t)", a.options.frameFormat().Codec, len(payload), attached)
 		a.packetLogged = true
 	}
 	// Retain RTP timestamp through reordering; the first 8 bytes precede the AU.

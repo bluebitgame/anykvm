@@ -11,12 +11,29 @@ import (
 	"anykvm/internal/capture"
 	"anykvm/internal/coredevice"
 	"anykvm/internal/hid"
+	"anykvm/internal/logging"
 	"anykvm/internal/rdp"
 	"anykvm/internal/rtsp"
 	"anykvm/internal/scrcpy"
 	"anykvm/internal/spice"
 	"anykvm/internal/vnc"
 )
+
+var targetScreenSize = capture.ScreenSize
+
+func initialTargetSize(source string, mode capture.Mode) (int, int) {
+	if mode.Width > 0 && mode.Height > 0 {
+		return mode.Width, mode.Height
+	}
+	w, h := targetScreenSize(source)
+	if w > 0 && h > 0 {
+		if sw, sh, err := capture.ScaledResolution(w, h, mode.Scale); err == nil {
+			return sw, sh
+		}
+	}
+	// Protocol handshakes need a positive canvas even when the source is offline.
+	return defaultWidth, defaultHeight
+}
 
 func buildMachines(cfg Config) []*bridge.MachineSession {
 	var machines []*bridge.MachineSession
@@ -31,6 +48,8 @@ func buildMachines(cfg Config) []*bridge.MachineSession {
 		ms.FPS = fps
 		ms.CapW = cw
 		ms.CapH = ch
+		mode, _ := capture.ParseMode(mc.Video.Mode)
+		ms.CapScale = mode.Scale
 		ms.AutoResolution = capture.ResolutionFollowsClient(mc.Video.Mode)
 		ms.CursorRendering = mc.Video.CursorRendering
 
@@ -44,12 +63,7 @@ func buildMachines(cfg Config) []*bridge.MachineSession {
 		}
 		ms.Capture = dev
 
-		ms.FallbackW = cw
-		ms.FallbackH = ch
-		if ms.FallbackW <= 0 || ms.FallbackH <= 0 {
-			ms.FallbackW = defaultWidth
-			ms.FallbackH = defaultHeight
-		}
+		ms.FallbackW, ms.FallbackH = initialTargetSize(mc.Video.Source, mode)
 
 		// HID.
 		hidCfg := mc.HID
@@ -138,7 +152,7 @@ func newCaptureSession(mc TargetConfig) (capture.Device, *scrcpy.Session) {
 	if vnc.IsVNCDevice(mc.Video.Source) {
 		dev, err := vnc.NewVNCClient(mc.Video.Source)
 		if err != nil {
-			log.Printf("AnyKVM: VNC device error: %v", err)
+			logging.Infof("AnyKVM: VNC device error: %v", err)
 			return capture.NewDevice(mc.Video.Source), nil
 		}
 		dev.SetWakeOnLAN(mc.WoL)

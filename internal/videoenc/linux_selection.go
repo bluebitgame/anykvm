@@ -1,6 +1,6 @@
 package videoenc
 
-import "log"
+import "anykvm/internal/logging"
 
 func selectLinuxEncoder(o Options, nvidia bool, devices []string,
 	openNative func(Options) (Encoder, error),
@@ -12,14 +12,14 @@ func selectLinuxEncoder(o Options, nvidia bool, devices []string,
 		if e, err := openLibrary(o, o.Codec+"_nvenc", ""); err == nil {
 			return e, nil
 		} else {
-			log.Printf("encoder NVENC: %v", err)
+			logging.Infof("encoder NVENC: %v", err)
 		}
 	}
 	for _, device := range devices {
 		if e, err := openLibrary(o, o.Codec+"_vaapi", device); err == nil {
 			return e, nil
 		} else {
-			log.Printf("encoder VAAPI %s: %v", device, err)
+			logging.Infof("encoder VAAPI %s: %v", device, err)
 		}
 	}
 	if o.Codec == "h264" {

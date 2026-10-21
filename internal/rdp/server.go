@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/clipboard"
+	"anykvm/internal/logging"
 	"anykvm/internal/netstats"
 )
 
@@ -252,14 +252,14 @@ func (s *Server) Start() error {
 	s.listener = l
 	if s.cfg.CursorCapture != nil {
 		if err := s.cfg.CursorCapture.Open(); err != nil {
-			log.Printf("rdp: cursor capture unavailable: %v", err)
+			logging.Infof("rdp: cursor capture unavailable: %v", err)
 		} else {
 			s.cursorOpen = true
 		}
 	}
 	s.wg.Add(1)
 	go s.accept(l)
-	log.Printf("rdp: TLS/RDPGFX server listening on %s", l.Addr())
+	logging.Basicf("rdp: TLS/RDPGFX server listening on %s", l.Addr())
 	return nil
 }
 
@@ -298,7 +298,7 @@ func (s *Server) accept(l net.Listener) {
 				select {
 				case <-c.done:
 				default:
-					log.Printf("rdp: %s: %v", conn.RemoteAddr(), err)
+					logging.Infof("rdp: %s: %v", conn.RemoteAddr(), err)
 				}
 			}
 		}()
@@ -334,7 +334,7 @@ func (s *Server) Close() {
 	if s.cursorOpen {
 		s.cursorOpen = false
 		if err := s.cfg.CursorCapture.Close(); err != nil {
-			log.Printf("rdp: cursor capture close: %v", err)
+			logging.Infof("rdp: cursor capture close: %v", err)
 		}
 	}
 }
@@ -399,6 +399,7 @@ func (s *Server) PushFrameWithStop(f bridge.Frame, stop <-chan struct{}) {
 		for {
 			select {
 			case old := <-c.frames:
+				f = mergeProgressiveDamage(old, f)
 				old.Release()
 			default:
 				goto drained
@@ -545,7 +546,7 @@ func (c *client) run() (err error) {
 	if err := c.conn.(*tls.Conn).Handshake(); err != nil {
 		return err
 	}
-	log.Printf("rdp: %s: TLS established (requested protocols=%#x, selected=%#x)", c.conn.RemoteAddr(), requested, selected)
+	logging.Infof("rdp: %s: TLS established (requested protocols=%#x, selected=%#x)", c.conn.RemoteAddr(), requested, selected)
 	nlaAuthenticated := selected != protocolTLS
 	if nlaAuthenticated {
 		stage = "NLA/CredSSP authentication"
@@ -561,7 +562,7 @@ func (c *client) run() (err error) {
 		if err := c.conn.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
 			return err
 		}
-		log.Printf("rdp: %s: NLA credentials accepted", c.conn.RemoteAddr())
+		logging.Infof("rdp: %s: NLA credentials accepted", c.conn.RemoteAddr())
 	}
 	stage = "MCS connect-initial"
 	p, fast, err := readPacket(c.conn)
@@ -669,7 +670,7 @@ func (c *client) run() (err error) {
 				}
 				c.logonSessionID = c.s.nextSessionID.Add(1)
 				authenticated = true
-				log.Printf("rdp: %s: Client Info accepted (NLA=%t)", c.conn.RemoteAddr(), nlaAuthenticated)
+				logging.Infof("rdp: %s: Client Info accepted (NLA=%t)", c.conn.RemoteAddr(), nlaAuthenticated)
 				stage = "licensing completion"
 				license := join([]byte{0x80, 0, 0, 0, 0xff, 3, 16, 0}, u32(7), u32(2), u16(4), u16(0))
 				if err := c.sendMCS(ioChannel, license); err != nil {
@@ -710,10 +711,10 @@ func (c *client) run() (err error) {
 					return err
 				}
 				if !created && c.gfxCreated {
-					log.Printf("rdp: %s: DRDYNVC client version=%d; using version %d", c.conn.RemoteAddr(), c.dvcClientVersion, c.dvcVersion)
+					logging.Infof("rdp: %s: DRDYNVC client version=%d; using version %d", c.conn.RemoteAddr(), c.dvcClientVersion, c.dvcVersion)
 				}
 				if !opened && c.gfxOpen {
-					log.Printf("rdp: %s: RDPGFX channel opened", c.conn.RemoteAddr())
+					logging.Infof("rdp: %s: RDPGFX channel opened", c.conn.RemoteAddr())
 				}
 			}
 		case 0x21, 0x20:
@@ -746,7 +747,7 @@ func (c *client) handleShare(p []byte) error {
 			}
 			c.cursorAlpha, c.longCredentials = caps.alphaPointer, caps.longCredentials
 			macShortcuts, swapLeftModifiers := c.input.configureShortcuts(caps.osMajor, !c.s.cfg.DisableAutoShortcutMapping)
-			log.Printf("rdp: client OS=%s build=%d mac_shortcuts=%t swap_left_win_alt=%t", clientOSName(caps.osMajor, caps.osMinor), c.data.clientBuild, macShortcuts, swapLeftModifiers)
+			logging.Infof("rdp: client OS=%s build=%d mac_shortcuts=%t swap_left_win_alt=%t", clientOSName(caps.osMajor, caps.osMinor), c.data.clientBuild, macShortcuts, swapLeftModifiers)
 			c.cursorLimit = maxPointerSize
 			if caps.largePointer {
 				c.cursorLimit = maxLargePointerSize
@@ -865,7 +866,7 @@ func (c *client) activate() error {
 		return err
 	}
 	c.startAudioLoop()
-	log.Printf("rdp: %s: authenticated RDPGFX session", c.conn.RemoteAddr())
+	logging.Infof("rdp: %s: authenticated RDPGFX session", c.conn.RemoteAddr())
 	c.s.wg.Add(1)
 	go func() {
 		defer c.s.wg.Done()
@@ -875,7 +876,7 @@ func (c *client) activate() error {
 	go func() {
 		defer c.s.wg.Done()
 		if err := c.videoLoop(); err != nil {
-			log.Printf("rdp: video: %v", err)
+			logging.Infof("rdp: video: %v", err)
 			c.close()
 		}
 	}()

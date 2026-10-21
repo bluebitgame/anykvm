@@ -1,4 +1,4 @@
-#include "pixel_simd_darwin.h"
+#include "pixel_bgra_darwin.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>

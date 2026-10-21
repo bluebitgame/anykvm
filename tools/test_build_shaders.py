@@ -104,17 +104,45 @@ class ShaderPreparationTests(unittest.TestCase):
                     patch.object(build_shaders.shutil, "which", return_value="glslang"), \
                     patch.object(build_shaders.subprocess, "run", side_effect=compile_shader) as compile:
                 build_shaders.prepare()
-                self.assertEqual(compile.call_count, 4)
+                self.assertEqual(compile.call_count, 10)
                 build_shaders.prepare()
-                self.assertEqual(compile.call_count, 4)
+                self.assertEqual(compile.call_count, 10)
                 build_shaders.shader_output(source, "encodeMCUs").unlink()
                 build_shaders.prepare()
-                self.assertEqual(compile.call_count, 5)
+                self.assertEqual(compile.call_count, 11)
                 command = compile.call_args.args[0]
                 self.assertEqual(command[command.index("-e") + 1], "encodeMCUs")
-                for entry in ("main", "encodeMCUs", "indexSegments", "packJPEG"):
+                for entry in ("compareTiles", "prepareWork", "main", "selectEntropy", "prepareEntropy", "encodeMCUs", "indexSegments", "scanSegmentGroups", "addSegmentOffsets", "packJPEG"):
                     self.assertTrue(build_shaders.current(source, entry))
 
+
+    def test_shared_tile_kernel_invalidates_both_consumers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            common = root / "internal/gpuconv/shaders/tile_compare.hlsl"
+            common.parent.mkdir(parents=True)
+            common.write_text("void compareTile() {}")
+            jpeg = root / "jpeg420.hlsl"
+            surface = root / "progressive_surface.hlsl"
+            for source in (jpeg, surface):
+                source.write_text("// ANYKVM_TILE_COMPARE")
+
+            def compile_shader(command, **kwargs):
+                entry = command[command.index("-e") + 1]
+                Path(command[command.index("-o") + 1]).write_bytes(entry.encode())
+
+            with patch.object(build_shaders, "ROOT", root), \
+                    patch.object(build_shaders, "SOURCES", (jpeg, surface)), \
+                    patch.object(build_shaders, "JPEG_SOURCE", jpeg), \
+                    patch.object(build_shaders.shutil, "which", return_value="glslang"), \
+                    patch.object(build_shaders.subprocess, "run", side_effect=compile_shader) as compile:
+                build_shaders.prepare()
+                self.assertEqual(compile.call_count, 11)
+                build_shaders.prepare()
+                self.assertEqual(compile.call_count, 11)
+                common.write_text("void compareTile() { /* changed */ }")
+                build_shaders.prepare()
+                self.assertEqual(compile.call_count, 22)
 
     def test_all_progressive_stages_are_built_and_cached(self):
         with tempfile.TemporaryDirectory() as temporary:

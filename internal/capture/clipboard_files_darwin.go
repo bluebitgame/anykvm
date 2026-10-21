@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +23,8 @@ import (
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/text/unicode/norm"
+
+	"anykvm/internal/logging"
 )
 
 type deferredClipboardOffer struct {
@@ -77,7 +78,7 @@ func cleanClipboardTemporaryFiles(base string) {
 		if unix.Fstat(fd, &st) == nil && st.Uid == uint32(os.Getuid()) && st.Mode&unix.S_IFMT == unix.S_IFREG &&
 			unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) == nil {
 			if err := os.RemoveAll(path); err == nil {
-				log.Printf("clipboard: removed abandoned temporary directory %s", path)
+				logging.Infof("clipboard: removed abandoned temporary directory %s", path)
 			}
 		}
 		unix.Close(fd)
@@ -241,7 +242,7 @@ func bk_clipboard_materialize(id C.uint64_t) C.int {
 		return 0
 	}
 	if err := value.(*deferredClipboardOffer).materialize(); err != nil {
-		log.Printf("clipboard: deferred file transfer: %v", err)
+		logging.Infof("clipboard: deferred file transfer: %v", err)
 		return 0
 	}
 	return 1
@@ -303,7 +304,7 @@ func (systemClipboard) WriteDeferredFiles(ctx context.Context, expectedRevision 
 		os.RemoveAll(directory)
 		return uint64(revision), nil, errors.New("macOS deferred file publication failed or clipboard changed")
 	}
-	log.Printf("clipboard: deferred file offer %s (%d entries, no content downloaded)", directory, len(files))
+	logging.Infof("clipboard: deferred file offer %s (%d entries, no content downloaded)", directory, len(files))
 	var once sync.Once
 	release := func() {
 		once.Do(func() {

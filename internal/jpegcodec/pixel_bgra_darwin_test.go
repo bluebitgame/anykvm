@@ -1,4 +1,4 @@
-//go:build darwin && cgo && (amd64 || anykvm_jpeg_simd)
+//go:build darwin && cgo
 
 package jpegcodec
 
@@ -48,7 +48,7 @@ func TestPixelBufferRows(t *testing.T) {
 
 func TestNativePixelBufferAccess(t *testing.T) {
 	program := filepath.Join(t.TempDir(), "pixel-buffer")
-	cmd := exec.Command("clang", "-fblocks", "-I.", "pixel_simd_darwin.m", "testdata/pixel_simd_darwin.m",
+	cmd := exec.Command("clang", "-fblocks", "-I.", "pixel_bgra_darwin.m", "testdata/pixel_bgra_darwin.m",
 		"-framework", "Foundation", "-framework", "CoreVideo", "-framework", "CoreImage", "-framework", "CoreGraphics", "-o", program)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile pixel buffer fixture: %v\n%s", err, output)

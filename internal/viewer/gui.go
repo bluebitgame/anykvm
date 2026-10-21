@@ -3,7 +3,6 @@
 package viewer
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +10,7 @@ import (
 
 	"anykvm/internal/capture"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -266,7 +266,7 @@ func (g *GUI) captureLoop(frameReady chan<- *capture.Frame, renderDone <-chan st
 			f, err := g.dev.Capture()
 			if err != nil {
 				f.Release()
-				log.Printf("gui: capture error: %v", err)
+				logging.Infof("gui: capture error: %v", err)
 				time.Sleep(time.Second)
 				continue
 			}
@@ -377,7 +377,7 @@ func (g *GUI) handleKeyboard(e *sdl.KeyboardEvent) {
 
 func (g *GUI) enableRelativeMouse() {
 	if ret := sdl.SetRelativeMouseMode(true); ret != 0 {
-		log.Printf("gui: relative mouse capture failed: %s", sdl.GetError())
+		logging.Infof("gui: relative mouse capture failed: %s", sdl.GetError())
 	}
 }
 
@@ -454,10 +454,10 @@ func (g *GUI) updateGCMouseStatus(forceLog bool) {
 	}
 	g.gcMouseLastCount = n
 	if n > 0 {
-		log.Printf("gui: GCMouse raw input (%d device(s), using current); SDL motion ignored while active", n)
+		logging.Infof("gui: GCMouse raw input (%d device(s), using current); SDL motion ignored while active", n)
 		return
 	}
-	log.Printf("gui: no GCMouse devices — SDL relative motion (trackpad; Mac acceleration applies)")
+	logging.Infof("gui: no GCMouse devices — SDL relative motion (trackpad; Mac acceleration applies)")
 }
 
 func (g *GUI) forwardMouseRel(dx, dy int, source string) {
@@ -467,12 +467,12 @@ func (g *GUI) forwardMouseRel(dx, dy int, source string) {
 	if dbg, ok := g.input.(*debugInput); ok {
 		dbg.logMouseRel(source, dx, dy)
 		if err := dbg.inner.MouseMoveRel(dx, dy); err != nil {
-			log.Printf("gui: mouse rel: %v", err)
+			logging.Infof("gui: mouse rel: %v", err)
 		}
 		return
 	}
 	if err := g.input.MouseMoveRel(dx, dy); err != nil {
-		log.Printf("gui: mouse rel: %v", err)
+		logging.Infof("gui: mouse rel: %v", err)
 	}
 }
 
@@ -557,7 +557,7 @@ func (g *GUI) renderFrame(frame *capture.Frame) {
 		if frame.Format == capture.FormatYUV {
 			g.yuvPixFmt = frame.PixFmt
 		}
-		log.Printf("gui: capture resolution %dx%d pixfmt=%q datalen=%d",
+		logging.Infof("gui: capture resolution %dx%d pixfmt=%q datalen=%d",
 			g.capW, g.capH, frame.PixFmt, len(frame.Data))
 		if g.capW > 0 && g.capH > 0 {
 			g.recreateTexture()
@@ -570,7 +570,7 @@ func (g *GUI) renderFrame(frame *capture.Frame) {
 		if frame.Format == capture.FormatYUV {
 			g.yuvPixFmt = frame.PixFmt
 		}
-		log.Printf("gui: resolution changed %dx%d -> %dx%d", g.capW, g.capH, frame.Width, frame.Height)
+		logging.Infof("gui: resolution changed %dx%d -> %dx%d", g.capW, g.capH, frame.Width, frame.Height)
 		g.capW = frame.Width
 		g.capH = frame.Height
 		g.recreateTexture()
@@ -620,7 +620,7 @@ func (g *GUI) extractPixels(frame *capture.Frame) bool {
 
 	data, err := g.decodeFrame(frame)
 	if err != nil {
-		log.Printf("gui: decode error: %v", err)
+		logging.Infof("gui: decode error: %v", err)
 		return false
 	}
 	g.updateTexture(data)
@@ -681,11 +681,11 @@ func (g *GUI) recreateTexture() {
 
 	tex, err := g.renderer.CreateTexture(pf, sdl.TEXTUREACCESS_STREAMING, int32(g.capW), int32(g.capH))
 	if err != nil {
-		log.Printf("gui: create texture error: %v (falling back to BGRA)", err)
+		logging.Infof("gui: create texture error: %v (falling back to BGRA)", err)
 		g.yuvPixFmt = ""
 		tex, err = g.renderer.CreateTexture(uint32(sdl.PIXELFORMAT_BGRA32), sdl.TEXTUREACCESS_STREAMING, int32(g.capW), int32(g.capH))
 		if err != nil {
-			log.Printf("gui: create texture error: %v", err)
+			logging.Infof("gui: create texture error: %v", err)
 			return
 		}
 	}
@@ -814,7 +814,7 @@ func (g *GUI) initAudio() {
 
 	audioDev, err := sdl.OpenAudioDevice("", false, spec, nil, 0)
 	if err != nil {
-		log.Printf("gui: audio init error: %v", err)
+		logging.Infof("gui: audio init error: %v", err)
 		return
 	}
 	g.audioDev = audioDev

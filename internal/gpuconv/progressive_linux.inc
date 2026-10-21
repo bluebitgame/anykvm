@@ -126,6 +126,7 @@ bk_vk *bk_vk_progressive_context(bk_vk_image *image,const void *spirv,size_t byt
     *v=*parent;v->jpeg_buffers=NULL;v->library=NULL;v->instance=VK_NULL_HANDLE;v->borrowed_device=1;
     v->descriptor_layout=VK_NULL_HANDLE;v->layout=VK_NULL_HANDLE;v->pipeline=VK_NULL_HANDLE;
     v->jpeg_entropy=v->jpeg_index=v->jpeg_pack=VK_NULL_HANDLE;
+    v->jpeg_select_entropy=v->jpeg_prepare_entropy=VK_NULL_HANDLE;
     v->descriptor_pool=VK_NULL_HANDLE;v->descriptor=VK_NULL_HANDLE;
     v->commands=VK_NULL_HANDLE;v->command=VK_NULL_HANDLE;v->sampler=VK_NULL_HANDLE;
     VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
@@ -170,8 +171,8 @@ int bk_vk_progressive_surface_init(bk_vk_progressive *p,const void *spirv,size_t
     TRY(v->AllocateDescriptorSets(v->device,&set,&p->surface_descriptor));return 0;
 failed:return -1;
 }
-int bk_vk_progressive_surface_prepare(bk_vk_progressive *p,bk_vk_image *image,const uint32_t *parameters,uint32_t *flags,char *error,size_t capacity) {
-    if(!p||!image||!parameters||!flags||!p->surface_pipeline||!bk_progressive_surface_validate(parameters)||
+int bk_vk_progressive_surface_prepare(bk_vk_progressive *p,bk_vk_image *image,const uint32_t *parameters,size_t words,uint32_t *flags,char *error,size_t capacity) {
+    if(!p||!image||!parameters||!flags||!p->surface_pipeline||!bk_progressive_surface_moves_validate(parameters,words)||
        image->context->device!=p->v->device||image->nv12||image->width!=parameters[0]||image->height!=parameters[1]||parameters[3]) {
         snprintf(error,capacity,"invalid GPU surface context or geometry");return -1;
     }
@@ -187,7 +188,8 @@ int bk_vk_progressive_surface_prepare(bk_vk_progressive *p,bk_vk_image *image,co
        decode_buffer_resize(v,&p->previous,pixels,0,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,error,capacity)<0||
        decode_buffer_resize(v,&p->dirty,tiles*4,0,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,error,capacity)<0||
        decode_buffer_resize(v,&p->dirty_readback,tiles*4,1,VK_BUFFER_USAGE_TRANSFER_DST_BIT,error,capacity)<0||
-       decode_buffer_resize(v,&p->surface_parameters,48,1,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,error,capacity)<0)return -1;
+       decode_buffer_resize(v,&p->surface_parameters,words*4,1,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,error,capacity)<0)return -1;
+    memcpy(p->surface_parameters.mapped,parameters,words*4);
     memcpy(p->surface_parameters.mapped,values,48);
     if(flush_buffer(v,&p->surface_parameters,error,capacity)<0)return -1;
     buffer *buffers[]={&image->output,&p->surface_parameters,&p->current,&p->previous,&p->dirty};

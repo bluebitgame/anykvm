@@ -31,9 +31,11 @@ func TestGPUSurfaceFrameOwnershipAndRouting(t *testing.T) {
 type surfacePolicyCapture struct {
 	rdpCapture
 	surface atomic.Bool
+	damage  atomic.Bool
 }
 
-func (d *surfacePolicyCapture) SetGPUSurface(v bool) { d.surface.Store(v) }
+func (d *surfacePolicyCapture) SetGPUSurface(v bool)    { d.surface.Store(v) }
+func (d *surfacePolicyCapture) SetDesktopDamage(v bool) { d.damage.Store(v) }
 
 func TestRDPProgressiveRequestsGPUSurface(t *testing.T) {
 	for _, mode := range []string{"auto", "go", "native", "gpu", "vulkan", "d3d11"} {
@@ -48,6 +50,9 @@ func TestRDPProgressiveRequestsGPUSurface(t *testing.T) {
 				defer b.Stop()
 				b.StartRDPWithCodec(codec)
 				d.waitForRead(t)
+				if d.damage.Load() != (codec == "progressive") {
+					t.Fatalf("desktop move metadata for %s/%s: %v", mode, codec, d.damage.Load())
+				}
 				want := codec == "progressive" && (mode == "gpu" || mode == "vulkan" || mode == "d3d11")
 				if b.wantSurface != want || d.surface.Load() != want {
 					t.Fatalf("surface request=%v capture=%v want %v", b.wantSurface, d.surface.Load(), want)

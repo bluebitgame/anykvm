@@ -1,9 +1,8 @@
 package ard
 
 import (
-	"log"
-
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // ValidateSource checks the source selector and protocol-specific settings.
@@ -27,9 +26,9 @@ func NewCapture(device string, options Options) (capture.Device, bool) {
 	}
 	d, err := NewClient(device, options)
 	if err != nil {
-		log.Printf("AnyKVM: ARD configuration error: %v", err)
+		logging.Infof("AnyKVM: ARD configuration error: %v", err)
 		return capture.Failed(err), true
 	}
-	log.Printf("AnyKVM: ARD capture source configured")
+	logging.Infof("AnyKVM: ARD capture source configured")
 	return d, true
 }

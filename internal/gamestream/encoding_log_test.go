@@ -5,10 +5,14 @@ import (
 	"log"
 	"strings"
 	"testing"
+
+	"anykvm/internal/logging"
 )
 
 func TestVideoEncodingLogSurvivesRebuildsAndTracksTransitions(t *testing.T) {
 	var output bytes.Buffer
+	logging.Configure(true, false)
+	t.Cleanup(func() { logging.Configure(false, false) })
 	previous := log.Writer()
 	log.SetOutput(&output)
 	defer log.SetOutput(previous)

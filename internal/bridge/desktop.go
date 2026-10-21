@@ -2,9 +2,20 @@ package bridge
 
 import (
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"fmt"
-	"log"
 )
+
+func (m *MachineSession) outputLimit(frame *capture.Frame) (int, int) {
+	if m.CapW > 0 && m.CapH > 0 || m.CapScale == 0 || m.CapScale == 1 {
+		return m.CapW, m.CapH
+	}
+	w, h, err := capture.ScaledResolution(frame.SourceWidth, frame.SourceHeight, m.CapScale)
+	if err != nil {
+		return frame.Width, frame.Height
+	}
+	return w, h
+}
 
 // ResizeRDPDesktop is called only for the currently controlling RDP session.
 // Restarting capture produces an independent frame; RDPGFX resets its surfaces
@@ -50,7 +61,7 @@ func (b *Bridge) ResizeRDPDesktopWithOptions(size capture.DesktopSize) error {
 func (b *Bridge) restoreDesktopLocked(m *MachineSession) {
 	if desktop, ok := m.Capture.(capture.DesktopConfigurer); ok {
 		if err := desktop.RestoreDesktopSize(); err != nil {
-			log.Printf("bridge: restore desktop for %q: %v", m.Name, err)
+			logging.Infof("bridge: restore desktop for %q: %v", m.Name, err)
 		}
 	}
 }

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "pixels_darwin.h"
+#include "screen_damage_darwin.h"
 #include "../videoenc/reference_darwin.h"
 
 void bk_screen_list_displays(char *out, int outlen) {
@@ -18,8 +19,12 @@ void bk_screen_list_displays(char *out, int outlen) {
         return;
     int used = 0;
     for (uint32_t i = 0; i < count && used < outlen - 1; i++) {
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(ids[i]);
+        size_t width = mode ? CGDisplayModeGetPixelWidth(mode) : CGDisplayPixelsWide(ids[i]);
+        size_t height = mode ? CGDisplayModeGetPixelHeight(mode) : CGDisplayPixelsHigh(ids[i]);
+        if (mode) CFRelease(mode);
         int written = snprintf(out + used, (size_t)(outlen - used), "%u\t%zu\t%zu\n", i,
-                               CGDisplayPixelsWide(ids[i]), CGDisplayPixelsHigh(ids[i]));
+                               width, height);
         if (written < 0 || written >= outlen - used)
             break;
         used += written;
@@ -159,6 +164,9 @@ static bk_screen_frame_context bk_screen_sample_timing(CMSampleBufferRef sample,
     BOOL closed, forceIDR, awaitingIDR, disableLowLatency, nativeCadence;
     BOOL rdpFullRange, rangeRejected, rangeVerified;
     BOOL timingEnabled;
+    BOOL damageEnabled;
+    uint64_t damageStream, damageSequence;
+    NSArray *damageGeometry;
     bk_screen_frame_context lastCaptureTiming;
     CMFormatDescriptionRef verifiedRangeFormat;
     int h264Profile, encoderBufferFrames;
@@ -176,6 +184,126 @@ static bk_screen_frame_context bk_screen_sample_timing(CMSampleBufferRef sample,
 - (void)scheduleEncoderLocked;
 - (void)drainPending;
 @end
+
+// DirtyRects are surface pixels, unlike ContentRect (points). Never apply
+// ScaleFactor again. A changed/missing geometry signature invalidates filtering.
+// Called under the capture lock; the returned dictionary owns all rect storage.
+static NSDictionary *bk_frame_damage(BKScreen *s, NSDictionary *info, CVPixelBufferRef pixel) {
+    id raw = info[SCStreamFrameInfoDirtyRects];
+    id scale = info[SCStreamFrameInfoScaleFactor];
+    id contentScale = info[SCStreamFrameInfoContentScale];
+    id content = info[SCStreamFrameInfoContentRect];
+    CGRect contentRect = CGRectZero;
+    BOOL geometryOK = [scale isKindOfClass:[NSNumber class]] &&
+        [contentScale isKindOfClass:[NSNumber class]] &&
+        isfinite([scale doubleValue]) && [scale doubleValue] >= 1 && [scale doubleValue] <= 4 &&
+        isfinite([contentScale doubleValue]) && [contentScale doubleValue] > 0 &&
+        [content isKindOfClass:[NSDictionary class]] &&
+        CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)content, &contentRect) &&
+        isfinite(contentRect.origin.x) && isfinite(contentRect.origin.y) &&
+        isfinite(contentRect.size.width) && isfinite(contentRect.size.height) &&
+        contentRect.size.width > 0 && contentRect.size.height > 0;
+    NSArray *geometry = geometryOK ? @[scale, contentScale, content,
+        @(CVPixelBufferGetWidth(pixel)), @(CVPixelBufferGetHeight(pixel)),
+        @(s->sourceWidth), @(s->sourceHeight)] : nil;
+    BOOL valid = geometry && [geometry isEqual:s->damageGeometry] && [raw isKindOfClass:[NSArray class]];
+    [s->damageGeometry release];
+    s->damageGeometry = [geometry copy];
+    NSMutableData *rects = [NSMutableData data];
+    if (valid) {
+        for (id value in raw) {
+            if (![value isKindOfClass:[NSValue class]] || strcmp([value objCType], @encode(CGRect)) != 0) {
+                valid = NO; break;
+            }
+            CGRect r = [value rectValue];
+            double x0 = floor(r.origin.x), y0 = floor(r.origin.y);
+            double x1 = ceil(r.origin.x + r.size.width), y1 = ceil(r.origin.y + r.size.height);
+            if (!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1) ||
+                r.size.width <= 0 || r.size.height <= 0 || x0 < 0 || y0 < 0 ||
+                x1 > CVPixelBufferGetWidth(pixel) || y1 > CVPixelBufferGetHeight(pixel)) {
+                valid = NO; break;
+            }
+            bk_screen_dirty_rect rect = {(int)x0, (int)y0, (int)x1, (int)y1};
+            [rects appendBytes:&rect length:sizeof(rect)];
+        }
+    }
+    return @{@"stream": @(s->damageStream), @"previous": @(s->damageSequence-1), @"sequence": @(s->damageSequence),
+        @"valid": @(valid), @"rects": rects};
+}
+
+// Merge the replaceable native queue slot before releasing its old pixels.
+// Canonical tile-row runs keep metadata bounded even through long stalls.
+static NSDictionary *bk_merge_frame_damage(NSDictionary *previous, NSDictionary *next, int width, int height) {
+    NSMutableDictionary *result = [[next mutableCopy] autorelease];
+    result[@"valid"] = @NO;
+    result[@"rects"] = [NSData data];
+    if (!previous || ![previous[@"valid"] boolValue] || ![next[@"valid"] boolValue] ||
+        ![previous[@"stream"] isEqual:next[@"stream"]] ||
+        ![previous[@"sequence"] isEqual:next[@"previous"]] ||
+        width < 1 || height < 1 || width > 8192 || height > 8192)
+        return result;
+    result[@"previous"] = previous[@"previous"];
+    int cols = (width+63)/64, rows = (height+63)/64;
+    unsigned char *tiles = calloc((size_t)cols*rows, 1);
+    if (!tiles) return result;
+    BOOL valid = YES;
+    for (NSDictionary *d in @[previous, next]) {
+        NSData *data = d[@"rects"];
+        const bk_screen_dirty_rect *rects = data.bytes;
+        size_t count = data.length / sizeof(*rects);
+        for (size_t i=0; i<count; i++) {
+            bk_screen_dirty_rect r = rects[i];
+            if (r.x0 < 0 || r.y0 < 0 || r.x1 > width || r.y1 > height || r.x1 <= r.x0 || r.y1 <= r.y0) {
+                valid = NO; break;
+            }
+            for (int y=r.y0/64; y<(r.y1+63)/64; y++)
+                for (int x=r.x0/64; x<(r.x1+63)/64; x++) tiles[y*cols+x] = 1;
+        }
+        if (!valid) break;
+    }
+    long long area = 0;
+    NSMutableData *rects = [NSMutableData data];
+    if (valid) {
+        for (int y=0; y<rows; y++) {
+            for (int x=0; x<cols;) {
+                if (!tiles[y*cols+x]) { x++; continue; }
+                int start=x;
+                while (x<cols && tiles[y*cols+x]) x++;
+                bk_screen_dirty_rect r = {start*64, y*64, MIN(width,x*64), MIN(height,(y+1)*64)};
+                area += (long long)(r.x1-r.x0)*(r.y1-r.y0);
+                [rects appendBytes:&r length:sizeof(r)];
+            }
+        }
+    }
+    free(tiles);
+    if (valid && area*5 < (long long)width*height*4) {
+        result[@"valid"] = @YES;
+        result[@"rects"] = rects;
+    }
+    return result;
+}
+
+void bk_screen_set_damage(void *handle, int enabled) {
+    BKScreen *s = handle;
+    [s->lock lock];
+    s->damageEnabled = enabled != 0;
+    [s->damageGeometry release];
+    s->damageGeometry = nil;
+    [s->lock unlock];
+}
+
+int bk_screen_lease_damage(void *lease, bk_screen_damage *out) {
+    NSDictionary *d = ((NSDictionary *)lease)[@"damage"];
+    if (!d || !out) return 0;
+    NSData *rects = d[@"rects"];
+    out->stream = [d[@"stream"] unsignedLongLongValue];
+    out->sequence = [d[@"sequence"] unsignedLongLongValue];
+    out->previous = [d[@"previous"] unsignedLongLongValue];
+    out->valid = [d[@"valid"] boolValue];
+    out->count = (int)(rects.length / sizeof(bk_screen_dirty_rect));
+    out->rects = rects.bytes;
+    return 1;
+}
 
 // Called with the native lock held. The Go callback is a nonblocking wakeup;
 // it never reads native state or takes the Go device lock.
@@ -506,6 +634,8 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
 @implementation BKScreen
 - (id)init {
     if ((self = [super init])) {
+        static uint64_t nextDamageStream;
+        damageStream = __sync_add_and_fetch(&nextDamageStream, 1);
         lock = [NSLock new];
         frames = [NSMutableArray new];
         audio = [NSMutableData new];
@@ -563,13 +693,20 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
                 return;
             }
         }
-        if (type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sample))
+        if (type != SCStreamOutputTypeScreen)
             return;
+        if (!sample || !CMSampleBufferIsValid(sample)) {
+            [lock lock];
+            damageSequence++; // Lost screen input breaks damage continuity.
+            [lock unlock];
+            return;
+        }
         long long acquiredNS = timingEnabled ? bk_screen_host_ns() : 0;
         NSArray *a = (NSArray *)CMSampleBufferGetSampleAttachmentsArray(sample, false);
         NSNumber *status = a.count ? a[0][SCStreamFrameInfoStatus] : nil;
         [lock lock];
         callbacks++;
+        if (!status || status.integerValue != SCFrameStatusIdle) damageSequence++;
         lastStatus = status ? status.intValue : -1;
         [lock unlock];
         if (!status)
@@ -650,6 +787,11 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
             BKScreenPixel *lease = [[[BKScreenPixel alloc] initWithPixel:pixel] autorelease];
             [lock lock];
             if (!closed) {
+                NSDictionary *damage = nil;
+                if (damageEnabled) {
+                    damage = bk_frame_damage(self, a[0], pixel);
+                    if (frames.count) damage = bk_merge_frame_damage(frames[0][@"damage"], damage, width, height);
+                }
                 [frames removeAllObjects];
                 NSDictionary *entry = @{
                     @"pixel" : lease,
@@ -658,9 +800,10 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
                                                   NSEC_PER_SEC, kCMTimeRoundingMethod_Default)
                                    .value)
                 };
-                if (timingEnabled) {
+                if (damageEnabled || timingEnabled) {
                     NSMutableDictionary *measured = [[entry mutableCopy] autorelease];
-                    measured[@"timing"] = [NSValue valueWithBytes:&sourceTiming objCType:@encode(bk_screen_frame_context)];
+                    if (damageEnabled) measured[@"damage"] = damage;
+                    if (timingEnabled) measured[@"timing"] = [NSValue valueWithBytes:&sourceTiming objCType:@encode(bk_screen_frame_context)];
                     entry = measured;
                 }
                 [frames addObject:entry];
@@ -860,6 +1003,7 @@ int bk_screen_audio_read(void *handle, void *out, int capacity, char *error, int
     stream = nil;
 }
 - (void)dealloc {
+    [damageGeometry release];
     if (verifiedRangeFormat)
         CFRelease(verifiedRangeFormat);
     [audio release];

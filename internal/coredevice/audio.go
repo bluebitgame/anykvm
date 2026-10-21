@@ -2,11 +2,11 @@ package coredevice
 
 import (
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"github.com/google/uuid"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -132,7 +132,7 @@ func startAudio(ctx context.Context, e *endpoint, id uuid.UUID) (*audioStream, e
 	}
 	channel.live()
 	s := &audioStream{udp: u, channel: channel, peer: peer, config: cfg, done: make(chan struct{})}
-	log.Printf("coredevice: native audio AAC-ELD 48000Hz stereo, 480 samples/packet PT=%d", cfg.payloadType)
+	logging.Infof("coredevice: native audio AAC-ELD 48000Hz stereo, 480 samples/packet PT=%d", cfg.payloadType)
 	go s.loop()
 	return s, nil
 }
@@ -204,7 +204,7 @@ func (s *audioStream) loop() {
 			step := int32(ts - lastStamp)
 			if contiguous && (step == 480 || step == 512) && frameSamples != int(step) {
 				frameSamples = int(step)
-				log.Printf("coredevice: AAC-ELD packet duration=%d samples", frameSamples)
+				logging.Infof("coredevice: AAC-ELD packet duration=%d samples", frameSamples)
 			}
 			ticks += int64(step)
 		} else {
@@ -212,7 +212,7 @@ func (s *audioStream) loop() {
 		}
 		lastStamp = ts
 		if !logged {
-			log.Printf("coredevice: first AAC-ELD packet (%d bytes)", len(payload))
+			logging.Infof("coredevice: first AAC-ELD packet (%d bytes)", len(payload))
 			logged = true
 		}
 		config := aacELDConfig

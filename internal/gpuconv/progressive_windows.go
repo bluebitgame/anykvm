@@ -93,7 +93,10 @@ func (p *ProgressiveCompute) ConfigureSurface(source string, _ []byte) error {
 	return nil
 }
 func (p *ProgressiveCompute) PrepareSurface(s *Surface, w, h int, force bool) ([]uint32, bool, error) {
-	parameters, err := SurfaceParameters(s, w, h, force)
+	return p.PrepareSurfaceMoves(s, w, h, force, nil)
+}
+func (p *ProgressiveCompute) PrepareSurfaceMoves(s *Surface, w, h int, force bool, moves []SurfaceMove) ([]uint32, bool, error) {
+	parameters, err := SurfaceMoveParameters(s, w, h, force, moves)
 	if err != nil {
 		return nil, false, err
 	}
@@ -117,7 +120,7 @@ func (p *ProgressiveCompute) PrepareSurface(s *Surface, w, h int, force bool) ([
 		p.adapterSet = true
 	}
 	flags := make([]uint32, ((w+63)/64)*((h+63)/64))
-	status := C.bk_d3d_progressive_surface_prepare(p.ptr, C.uintptr_t(s.SharedTexture), (*C.uint32_t)(unsafe.Pointer(&parameters[0])), (*C.uint32_t)(unsafe.Pointer(&flags[0])), &message[0], 1024)
+	status := C.bk_d3d_progressive_surface_prepare(p.ptr, C.uintptr_t(s.SharedTexture), (*C.uint32_t)(unsafe.Pointer(&parameters[0])), C.size_t(len(parameters)), (*C.uint32_t)(unsafe.Pointer(&flags[0])), &message[0], 1024)
 	runtime.KeepAlive(s)
 	if status != 0 {
 		return nil, changed, fmt.Errorf("GPU surface preparation: %s", C.GoString(&message[0]))

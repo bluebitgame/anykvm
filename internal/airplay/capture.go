@@ -2,12 +2,12 @@ package airplay
 
 import (
 	"fmt"
-	"log"
 	"sync"
 
 	"anykvm/internal/avmedia"
 	"anykvm/internal/capture"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videodec"
 )
 
@@ -79,8 +79,8 @@ func (d *Device) OpenWithFormat(width, height, fps int) error {
 	d.mu.Lock()
 	d.decoder, d.activeCodec, d.open = decoder, codec, true
 	d.mu.Unlock()
-	log.Printf("airplay: native receiver %q ready; select it in iPhone/iPad Screen Mirroring (video and audio, legacy pairing)", d.receiver.name)
-	log.Printf("airplay: requested mirror display %dx%d up to %dfps; actual dimensions and bitrate are sender-controlled", width, height, fps)
+	logging.Infof("airplay: native receiver %q ready; select it in iPhone/iPad Screen Mirroring (video and audio, legacy pairing)", d.receiver.name)
+	logging.Infof("airplay: requested mirror display %dx%d up to %dfps; actual dimensions and bitrate are sender-controlled", width, height, fps)
 	return nil
 }
 
@@ -119,7 +119,7 @@ func (d *Device) StartReceiver(width, height, fps int) error {
 	d.mu.Lock()
 	d.receiverPersistent = true
 	d.mu.Unlock()
-	log.Printf("airplay: receiver %q advertised before viewer connection; Screen Mirroring is ready", d.receiver.name)
+	logging.Infof("airplay: receiver %q advertised before viewer connection; Screen Mirroring is ready", d.receiver.name)
 	return nil
 }
 

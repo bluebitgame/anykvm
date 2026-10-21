@@ -10,8 +10,8 @@ import "C"
 
 import (
 	"anykvm/internal/dmabuf"
+	"anykvm/internal/logging"
 	"fmt"
-	"log"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -49,10 +49,10 @@ func openRaspberryPi(o Options) (Encoder, error) {
 		}
 		encoder, err := openRaspberryPiDevice(o, path)
 		if err == nil {
-			log.Printf("videoenc: Raspberry Pi native H.264 encoder %s", path)
+			logging.Infof("videoenc: Raspberry Pi native H.264 encoder %s", path)
 			return encoder, nil
 		}
-		log.Printf("videoenc: Raspberry Pi encoder %s: %v", path, err)
+		logging.Infof("videoenc: Raspberry Pi encoder %s: %v", path, err)
 	}
 	return nil, ErrUnavailable
 }
@@ -168,7 +168,7 @@ func (e *piEncoder) EncodeDMABUF(f dmabuf.Frame, key bool) ([]byte, bool, error)
 		e.dma = C.bk_pi_open_dma(path, C.int(f.Width), C.int(f.Height), C.int(rate.Num), C.int(rate.Den), C.int(e.options.Bitrate), C.uint(f.Pitch), &msg[0], 512)
 		if e.dma == nil {
 			e.dmaUnavailable = true
-			log.Printf("videoenc: V4L2 DMA-BUF unavailable: %s", C.GoString(&msg[0]))
+			logging.Infof("videoenc: V4L2 DMA-BUF unavailable: %s", C.GoString(&msg[0]))
 			return nil, false, nil
 		}
 	}

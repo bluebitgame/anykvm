@@ -13,8 +13,19 @@ traffic every five seconds. It excludes other applications and network headers.
 
 `video.mode` describes the input, independently of the viewer's output codec:
 
-- Empty: device/source dimensions and cadence.
+- Empty: width and height are unspecified (0), scale defaults to 1, retaining
+  device/source dimensions and cadence. Explicit width and height take priority;
+  otherwise local screen output uses physical dimensions multiplied by scale.
+  Local screen framebuffer initialization also uses the discovered physical size.
 - `@30`: retain dimensions and request a 30 FPS cap.
+- `0.5` / `0.75@30`: scale each physical screen dimension by the decimal factor,
+  optionally requesting a frame rate. For local `screen` sources, this uses
+  backing pixels rather than logical desktop points and rounds down to even
+  dimensions. The physical desktop mode stays unchanged. The factor must be
+  positive and the resulting dimensions must be between 2 and 8192 pixels.
+  For example, 2880x1800 at `0.5` produces 1440x900. A smaller RDP output request
+  may reduce the output further. Scaling does not apply to capture-card or
+  compressed network sources.
 - `1920x1080@59.94:nv12`: request size, rate and input format.
 - `auto` / `auto@30`: follow client size where the source supports it.
 
@@ -39,9 +50,22 @@ geometry and letterboxing.
 
 `screen` / `screen:N` uses ScreenCaptureKit on macOS 12.3+. Grant Screen Recording
 to the executable or launching terminal, plus Accessibility for local input.
-VideoToolbox provides native H.264/HEVC; ImageIO handles JPEG. These paths do not
-require FFmpeg. `audio.source: auto` captures system audio through the same
-session on macOS 13+, excluding AnyKVM's own audio; an explicit device overrides
+VideoToolbox provides native H.264/HEVC; JPEG uses TurboJPEG with ImageIO and Go
+fallback (`ffmpeg` builds use FFmpeg JPEG). Native builds do not require FFmpeg.
+For VNC, ScreenCaptureKit supplies raw pixels and `dirtyRects`; overlapping
+rectangles are combined into unique 64×64 candidate tiles. Only those tiles are
+compared, then changed rectangles are JPEG-encoded and transmitted. Dirty rects
+already use surface pixels, including Retina/scaled capture. First frames,
+changed scale/content geometry, and missing or invalid metadata force a full
+comparison. When either the native capture queue or VNC send queue replaces a
+frame, it carries that frame's dirty regions into the newest frame, preserving
+the covered acquisition interval. The union is deduplicated into bounded tile-row
+runs. Coverage of at least 80% of the output pixel area uses full comparison;
+unaccounted acquisition gaps also fall back. A valid empty list skips comparison.
+The transmitted pixel baseline is retained for cumulative tolerance checks.
+Other protocols and external MJPEG passthrough keep their existing paths.
+
+`audio.source: auto` captures system audio through the same session on macOS 13+, excluding AnyKVM's own audio; an explicit device overrides
 it and an empty source disables it.
 
 Third-party loopback devices are user-managed: install the driver, configure OS
@@ -87,6 +111,54 @@ a forced exit, restore AWDL if necessary with `sudo /sbin/ifconfig awdl0 up`.
 encode a shared D3D11 desktop texture after GPU NV12 conversion when adapter and
 encoder match. Desktop MJPEG uses D3D11 Compute with
 automatic CPU fallback; set `ANYKVM_WINDOWS_GPU_JPEG=0` to disable it.
+D3D11 and Vulkan JPEG first compare 64×64 tiles on the GPU using the shared
+Progressive/RemoteFX comparison kernel. DCT, quantization and Huffman coding
+run only for changed tiles; alpha-only changes do not trigger encoding. The
+comparison uses JPEG's own crop/scale/rotation sampling. First frames, geometry
+or table changes, and recovery after a failed encode force a full refresh.
+The exclusive VNC session selects compact readback: the GPU packs only changed
+MCU indices, lengths and entropy bytes, with a four-byte packet header. Clean
+frames contain only that header. No full-frame JPEG is assembled or read back in
+this mode. The CPU keeps an immutable compressed segment snapshot and packages
+requested dirty rectangles as standalone JPEGs, without decoding or re-encoding.
+Snapshots preserve skipped captures and support new clients and full refreshes;
+the viewer baseline advances only after a successful send. Switching output modes
+also initializes all tiles. Other MJPEG consumers receive standalone frames.
+Comparison appends each dirty tile's valid MCU IDs directly to a compact GPU
+work list. DCT/quantization and Huffman dispatches are indirect and sized from
+that list; offset indexing and payload packing access only listed MCU metadata.
+Clean frames launch zero transform, entropy and packing thread groups. The
+full-frame comparison and constant-size counter/dispatch preparation remain;
+there is no subsequent scan over clean tiles or MCUs in VNC mode. GPU append
+order can vary, so CPU snapshots apply records by MCU ID and reject duplicates.
+Windows VNC also reads Desktop Duplication dirty and move rectangles before
+releasing the acquired frame. It includes both move sources and destinations,
+rotates/scales the union into output tiles, and dispatches comparison only for
+those candidate tiles. Overlapping rectangles are deduplicated. DXGI already
+accumulates updates between acquisitions; acquired inputs that produce no output
+are additionally merged until the next successful output. CPU raw output carries
+rotated/scaled damage into the VNC queue, which merges replaced frames again.
+Both stages reuse bounded tile-row runs and the 80% full-comparison threshold.
+GPU JPEG uses that same candidate/fallback planner; each compressed snapshot
+contains the full current picture, so the existing compressed-domain viewer
+baseline handles skipped snapshots without losing updates. VNC and RDP
+Progressive enable metadata collection for their region/copy paths.
+When a VNC client advertises CopyRect, DXGI moves retain their source/destination
+pairs through exact integer scaling and rotation. Continuous, unmerged acquisitions
+may copy pixels before sending residual dirty regions. Lossless pixel output
+validates the old viewer pixels against the current destination; GPU JPEG validates
+complete aligned 16×16 MCU payloads with identical JPEG parameters, without decoding
+or re-encoding. A self-overlapping copy uses memmove semantics. Moves that depend on
+other moves' destinations fall back to pixels, as do fractional scaling, unaligned
+MCUs, and unverified lossy CPU JPEG baselines. Queue replacement discards copy
+commands while retaining both endpoints in the accumulated damage. Viewer baselines
+advance only after the complete mixed CopyRect/pixel update writes successfully.
+Capture-session and acquisition sequence checks detect
+unaccounted skipped inputs; missing/invalid metadata, a discontinuity, and initial/configuration
+refreshes use full comparison. DXGI accumulated/coalesced updates remain safe
+candidates: comparison filters unchanged pixels included by their rectangles.
+A repeated frame can supply an explicitly empty candidate list. macOS VNC uses
+ScreenCaptureKit `dirtyRects` with the same candidate selection, as described above.
 Raw output and other incompatible encoder paths use CPU readback.
 Hardware cursor composition and Windows Graphics Capture are absent.
 Local keyboard/mouse input uses SendInput.

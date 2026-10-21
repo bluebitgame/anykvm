@@ -2,10 +2,11 @@ package airplay
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"unicode/utf8"
+
+	"anykvm/internal/logging"
 )
 
 type advertisement interface{ Shutdown() }
@@ -75,8 +76,8 @@ func (r *Receiver) registerAdvertisements(port int, ifaces []net.Interface) (adv
 		group = append(group, ad)
 	}
 	for _, iface := range ifaces {
-		log.Printf("airplay: Bonjour Mirror services on %s, control port %d", iface.Name, port)
+		logging.Infof("airplay: Bonjour Mirror services on %s, control port %d", iface.Name, port)
 	}
-	log.Printf("airplay: advertised capabilities features=%s video=%t hls=%t web_media=%t", r.featureRecord(), r.featureBits()&(1<<0) != 0, r.featureBits()&(1<<4) != 0, r.browserMedia)
+	logging.Infof("airplay: advertised capabilities features=%s video=%t hls=%t web_media=%t", r.featureRecord(), r.featureBits()&(1<<0) != 0, r.featureBits()&(1<<4) != 0, r.browserMedia)
 	return group, nil
 }

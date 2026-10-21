@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
 	"time"
 
 	"github.com/danielpaulus/go-ios/ios"
+
+	"anykvm/internal/logging"
 )
 
 const springboardService = "com.apple.springboardservices"
@@ -57,7 +58,7 @@ func (s *session) setOrientation(orientation int32) {
 		s.input.mu.Unlock()
 	}
 	if old := s.client.orientation.Swap(orientation); old != orientation {
-		log.Printf("coredevice: interface orientation=%d", orientation)
+		logging.Infof("coredevice: interface orientation=%d", orientation)
 	}
 }
 
@@ -158,7 +159,7 @@ func (s *session) orientationLoop(ctx context.Context) {
 				channel = nil
 			}
 			if !warned && ctx.Err() == nil {
-				log.Printf("coredevice: automatic orientation unavailable: %v; will retry", err)
+				logging.Infof("coredevice: automatic orientation unavailable: %v; will retry", err)
 				warned = true
 			}
 			delay = 5 * time.Second

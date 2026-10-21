@@ -2,6 +2,7 @@ package capture
 
 import (
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"bytes"
 	"fmt"
 	"log"
@@ -11,6 +12,8 @@ import (
 
 func TestEncodingLogOnlyChangesOnBackendTransition(t *testing.T) {
 	var output bytes.Buffer
+	logging.Configure(true, false)
+	t.Cleanup(func() { logging.Configure(false, false) })
 	previous := log.Writer()
 	log.SetOutput(&output)
 	defer log.SetOutput(previous)

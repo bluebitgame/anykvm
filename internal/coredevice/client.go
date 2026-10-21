@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -13,6 +12,7 @@ import (
 	"anykvm/internal/avmedia"
 	"anykvm/internal/capture"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"github.com/google/uuid"
 )
 
@@ -325,7 +325,7 @@ func (c *Client) start(ctx context.Context, decoder *avmedia.Session) (_ *sessio
 	if c.wantAudio.Load() {
 		audio, audioErr = startAudio(ctx, e, id)
 		if audioErr != nil {
-			log.Printf("coredevice: audio unavailable: %v", audioErr)
+			logging.Infof("coredevice: audio unavailable: %v", audioErr)
 		}
 	}
 	defer func() {
@@ -364,7 +364,7 @@ func (c *Client) start(ctx context.Context, decoder *avmedia.Session) (_ *sessio
 		passthrough: decoder == nil, jpegOutput: c.videoCodec.Load() == 0 && !c.decodeImage.Load(),
 	}
 	if s.passthrough {
-		log.Printf("coredevice: native HEVC passthrough requested; no host video decoder or encoder")
+		logging.Infof("coredevice: native HEVC passthrough requested; no host video decoder or encoder")
 	}
 	success = true
 	s.startOrientationTracking()
@@ -386,7 +386,7 @@ func (c *Client) startInput(ctx context.Context) (*session, error) {
 	s := &session{client: c, endpoint: e, input: input, frames: make(chan *capture.Frame, 1), ready: make(chan struct{}), done: make(chan struct{}), workerDone: make(chan struct{})}
 	close(s.ready)
 	close(s.workerDone)
-	log.Printf("coredevice: standalone HID ready for %s (feature=%s, mainTouchscreen=257); no DisplayService stream", e.udid, input.channel.hidFeature)
+	logging.Infof("coredevice: standalone HID ready for %s (feature=%s, mainTouchscreen=257); no DisplayService stream", e.udid, input.channel.hidFeature)
 	s.startOrientationTracking()
 	return s, nil
 }
@@ -471,7 +471,7 @@ func (s *session) mediaLoop(decoder *avmedia.Session) {
 					return fmt.Errorf("HEVC passthrough parameters: %w", err)
 				}
 				if info != lastHEVCInfo {
-					log.Printf("coredevice: native HEVC parameters %dx%d profile=%d level=%d chroma=%d bit_depth=%d/%d", info.Width, info.Height, info.Profile, info.Level, info.Chroma, info.DepthLuma, info.DepthChroma)
+					logging.Infof("coredevice: native HEVC parameters %dx%d profile=%d level=%d chroma=%d bit_depth=%d/%d", info.Width, info.Height, info.Profile, info.Level, info.Chroma, info.DepthLuma, info.DepthChroma)
 					lastHEVCInfo = info
 				}
 				s.client.width.Store(int64(info.Width))

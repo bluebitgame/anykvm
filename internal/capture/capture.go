@@ -3,6 +3,7 @@ package capture
 import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/gpuconv"
+	"anykvm/internal/jpegcodec"
 	"anykvm/internal/videoenc"
 	"anykvm/internal/videotiming"
 	"errors"
@@ -53,7 +54,9 @@ func (f VideoFormat) String() string {
 
 // Frame represents one frame of captured video data.
 type Frame struct {
-	Timing *videotiming.Trace
+	Damage      *jpegcodec.DesktopDamage // Immutable advisory source damage; nil requires full comparison.
+	JPEGRegions *jpegcodec.RestartJPEG   // Immutable CPU compressed snapshot, VNC only; Data is empty.
+	Timing      *videotiming.Trace
 	// Buffer owns immutable Data when non-nil. Frame copies borrow this reference.
 	Buffer  *framebuf.Buffer
 	Surface *gpuconv.Surface
@@ -127,6 +130,9 @@ type FrameNotifier interface {
 // selection; other protocols continue to receive their usual pixel/byte frames.
 type GPUSurfaceConfigurer interface{ SetGPUSurface(bool) }
 
+// DesktopDamageConfigurer requests advisory desktop move/dirty metadata.
+type DesktopDamageConfigurer interface{ SetDesktopDamage(bool) }
+
 // RDPAVC420Configurer selects full-range BT.709 for the native RDP H.264
 // path. Apply before opening; other protocols retain the backend's defaults.
 type RDPAVC420Configurer interface {
@@ -165,5 +171,11 @@ func (f *Frame) Release() {
 		f.Buffer = nil
 		f.Data = nil
 		f.Surface = nil
+		f.JPEGRegions = nil
+		f.Damage = nil
 	}
 }
+
+// JPEGRegionsConfigurer selects region-based JPEG capture for the exclusive VNC
+// session: compact GPU JPEG readback or raw pixels with desktop damage metadata.
+type JPEGRegionsConfigurer interface{ SetJPEGRegions(bool) }

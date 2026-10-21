@@ -6,6 +6,7 @@ import platform
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 import cross_toolchain
 
@@ -58,12 +59,22 @@ def shader_output(source, entry):
     return source.with_name(source.stem + suffix + ".spv")
 
 
+def shader_source(source):
+    text = source.read_bytes().decode("utf-8")
+    if "// ANYKVM_TILE_COMPARE" in text:
+        kernel = (ROOT / "internal/gpuconv/shaders/tile_compare.hlsl").read_bytes().decode("utf-8")
+        entry = "compareTiles" if source == JPEG_SOURCE else "main"
+        kernel = kernel.replace("void compareTile(", "void " + entry + "(", 1)
+        text = text.replace("// ANYKVM_TILE_COMPARE", kernel)
+    return text.encode()
+
+
 def current(source, entry="main"):
     output = shader_output(source, entry)
     try:
         manifest = json.loads(output.with_suffix(".json").read_text())
         return (manifest.get("entry_point") == entry
-                and manifest["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+                and manifest["source_sha256"] == hashlib.sha256(shader_source(source)).hexdigest()
                 and manifest["spirv_sha256"] == hashlib.sha256(output.read_bytes()).hexdigest())
     except (OSError, ValueError, KeyError, TypeError):
         return False
@@ -71,7 +82,7 @@ def current(source, entry="main"):
 
 def prepare(compiler=None, dry_run=False, allow_download=True):
     jobs = [(source, entry) for source in SOURCES
-            for entry in (("main", "encodeMCUs", "indexSegments", "packJPEG") if source == JPEG_SOURCE else ("main", "inverseDCT", "packNV12") if source == JPEG_DECODE_SOURCE else ("main", "encodeTiles", "indexSegments", "packSegments") if source == PROGRESSIVE_SOURCE else ("main",))]
+            for entry in (("compareTiles", "prepareWork", "main", "selectEntropy", "prepareEntropy", "encodeMCUs", "indexSegments", "scanSegmentGroups", "addSegmentOffsets", "packJPEG") if source == JPEG_SOURCE else ("main", "inverseDCT", "packNV12") if source == JPEG_DECODE_SOURCE else ("main", "encodeTiles", "indexSegments", "packSegments") if source == PROGRESSIVE_SOURCE else ("main",))]
     pending = [(source, entry) for source, entry in jobs if compiler is not None or not current(source, entry)]
     if not pending:
         return
@@ -93,8 +104,18 @@ def compile_shader(source, compiler, entry="main"):
     else:
         command = [compiler, "-D", "-D__spirv__=1", "-V", "--target-env", "vulkan1.1",
                    "-S", "comp", "-e", entry, "-o", str(output), str(source)]
-    subprocess.run(command, check=True)
-    manifest = {"entry_point": entry, "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    # Runtime D3D and SPIR-V must see identical expanded shared source.
+    expanded_source = shader_source(source)
+    if expanded_source == source.read_bytes():
+        subprocess.run(command, check=True)
+    else:
+        with tempfile.TemporaryDirectory() as temporary:
+            expanded = Path(temporary) / source.name
+            expanded.write_bytes(expanded_source)
+            command[-1] = str(expanded)
+            subprocess.run(command, check=True)
+
+    manifest = {"entry_point": entry, "source_sha256": hashlib.sha256(shader_source(source)).hexdigest(),
                 "spirv_sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
     output.with_suffix(".json").write_text(json.dumps(manifest, indent=2) + "\n")
 

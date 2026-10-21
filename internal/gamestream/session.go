@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -21,6 +20,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/gamestream/native"
+	"anykvm/internal/logging"
 )
 
 type streamOptions struct {
@@ -66,7 +66,7 @@ func (x *streamSession) logVideoEncoder(codec, encoder string) {
 		codec = "h264"
 	}
 	if codec != x.loggedVideoCodec || encoder != x.loggedVideoEncoder {
-		log.Printf("gamestream: video codec=%s encoder=%q", codec, encoder)
+		logging.Infof("gamestream: video codec=%s encoder=%q", codec, encoder)
 		x.loggedVideoCodec, x.loggedVideoEncoder = codec, encoder
 	}
 }
@@ -178,7 +178,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/resume" {
 		field = "resume"
 	}
-	log.Printf("gamestream: launching target %q for %s client_os=%s os_source=%s apple_shortcuts=%t client_cert=%s User-Agent=%q", s.apps[index].Title, x.ip, x.client.OS, x.client.OSSource, x.client.UsesAppleShortcuts(), x.client.CertificateFingerprint, x.client.UserAgent)
+	logging.Infof("gamestream: launching target %q for %s client_os=%s os_source=%s apple_shortcuts=%t client_cert=%s User-Agent=%q", s.apps[index].Title, x.ip, x.client.OS, x.client.OSSource, x.client.UsesAppleShortcuts(), x.client.CertificateFingerprint, x.client.UserAgent)
 	reply(w, 200, "", field, "1", "sessionUrl0", scheme+"://"+net.JoinHostPort(ip, strconv.Itoa(s.rtspPort)))
 }
 
@@ -208,7 +208,7 @@ func (s *Server) cancelStream(w http.ResponseWriter, r *http.Request) {
 
 func (x *streamSession) stop(reason string) {
 	x.stopOnce.Do(func() {
-		log.Printf("gamestream: stopping session: %s", reason)
+		logging.Infof("gamestream: stopping session: %s", reason)
 		x.cancel()
 		go func() {
 			x.startMu.Lock()
@@ -283,7 +283,7 @@ func (x *streamSession) play() error {
 			}
 		}
 	}()
-	log.Printf("gamestream: streaming %dx%d@%d %d kbps, audio enabled=%t", x.options.Width, x.options.Height, x.options.FPS, x.options.Bitrate, x.audioEnabled())
+	logging.Infof("gamestream: streaming %dx%d@%d %d kbps, audio enabled=%t", x.options.Width, x.options.Height, x.options.FPS, x.options.Bitrate, x.audioEnabled())
 	return nil
 }
 
@@ -456,7 +456,7 @@ func (s *Server) pingLoop(conn *net.UDPConn, video bool) {
 		}
 		x.mu.Unlock()
 		if newVideoPeer {
-			log.Printf("gamestream: video UDP endpoint ready from %s", peer)
+			logging.Infof("gamestream: video UDP endpoint ready from %s", peer)
 		}
 	}
 }

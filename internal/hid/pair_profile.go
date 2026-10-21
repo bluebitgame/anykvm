@@ -2,8 +2,9 @@ package hid
 
 import (
 	"fmt"
-	"log"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 // PairProfile advertises and waits for a BLE target to bond.
@@ -24,20 +25,20 @@ func PairProfile(pairSpec, mouseMode string) error {
 		return fmt.Errorf("opened device does not support BLE profile management")
 	}
 
-	log.Printf("AnyKVM: pairing slot %d (mouse mode: %s)...", slot, mouseMode)
+	logging.Infof("AnyKVM: pairing slot %d (mouse mode: %s)...", slot, mouseMode)
 
 	if err := ble.Pair(slot); err != nil {
 		return fmt.Errorf("pair: %w", err)
 	}
 
-	log.Printf("AnyKVM: slot %d is now advertising — pair with \"AnyKVM\" on the target device", slot)
-	log.Printf("AnyKVM: waiting for bond (USB serial may reconnect after pairing)...")
+	logging.Infof("AnyKVM: slot %d is now advertising — pair with \"AnyKVM\" on the target device", slot)
+	logging.Infof("AnyKVM: waiting for bond (USB serial may reconnect after pairing)...")
 
 	var st ProfileStatus
 	d, st, err = WaitBonded(d, devPath, 5*time.Minute)
 	if err != nil {
 		return err
 	}
-	log.Printf("AnyKVM: slot %d paired successfully (mode=%s)", slot, st.MouseMode)
+	logging.Infof("AnyKVM: slot %d paired successfully (mode=%s)", slot, st.MouseMode)
 	return nil
 }

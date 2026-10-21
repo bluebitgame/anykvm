@@ -6,13 +6,13 @@ import (
 	"crypto/cipher"
 	"crypto/sha512"
 	"fmt"
-	"log"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 type mediaSession struct {
@@ -88,7 +88,7 @@ func (s *mediaSession) startAudio(options audioOptions) (int, int, error) {
 		return 0, 0, err
 	}
 	s.audio = audio
-	log.Printf("airplay: audio ready ct=%d spf=%d format=0x%x; UDP data=%d control=%d", options.CT, options.SPF, options.Format, data.LocalAddr().(*net.UDPAddr).Port, control.LocalAddr().(*net.UDPAddr).Port)
+	logging.Infof("airplay: audio ready ct=%d spf=%d format=0x%x; UDP data=%d control=%d", options.CT, options.SPF, options.Format, data.LocalAddr().(*net.UDPAddr).Port, control.LocalAddr().(*net.UDPAddr).Port)
 	s.receiver.mu.Lock()
 	s.receiver.audioOwner = s.owner
 	s.receiver.mu.Unlock()
@@ -221,7 +221,7 @@ func (s *mediaSession) receive(listener net.Listener, decoder *MirrorDecoder, st
 			}
 			arrived := time.Now()
 			if packet.Type == 5 && !reportSeen {
-				log.Printf("airplay: received streaming report type=5 payload=%d; keeping mirror cipher continuous", len(packet.Payload))
+				logging.Infof("airplay: received streaming report type=5 payload=%d; keeping mirror cipher continuous", len(packet.Payload))
 				reportSeen = true
 			}
 			au, err := decoder.Decode(packet)
@@ -230,7 +230,7 @@ func (s *mediaSession) receive(listener net.Listener, decoder *MirrorDecoder, st
 				return
 			}
 			if packet.Type == 1 {
-				log.Printf("airplay: mirror AVC configuration %dx%d waiting_IDR=%t", decoder.width, decoder.height, decoder.waitIDR)
+				logging.Infof("airplay: mirror AVC configuration %dx%d waiting_IDR=%t", decoder.width, decoder.height, decoder.waitIDR)
 			}
 			if len(au) == 0 {
 				continue
@@ -284,7 +284,7 @@ func (s *mediaSession) mediaFailed(stopped <-chan struct{}, err error) {
 		return
 	default:
 	}
-	log.Printf("airplay: mirroring ended (%v); reconnect the sender to start a new session", err)
+	logging.Infof("airplay: mirroring ended (%v); reconnect the sender to start a new session", err)
 	// Cipher state cannot be reused after a truncated video payload.
 	// Close the owning control connection so the next sender gets fresh keys.
 	s.ownerControlClose()

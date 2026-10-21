@@ -18,6 +18,7 @@ import (
 	"anykvm/internal/discovery"
 	"anykvm/internal/gamestream"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/netstats"
 	"anykvm/internal/pixelops"
 	"anykvm/internal/rdp"
@@ -356,7 +357,7 @@ func runConfiguredApplication(opts *serverOptions, configPath string, cfg Config
 	}()
 	if cfg.Viewer && viewer.Available {
 		if err := viewer.Run(b, machines[0].MouseMode, viewerStopped); errors.Is(err, viewer.ErrTakenOver) {
-			log.Print("AnyKVM: remote client took over; continuing headless")
+			logging.Info("AnyKVM: remote client took over; continuing headless")
 			runApplicationMain(Config{}, func() { <-viewerStopped })
 		} else if err != nil {
 			log.Printf("AnyKVM: viewer: %v", err)

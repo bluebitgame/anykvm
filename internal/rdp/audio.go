@@ -3,12 +3,12 @@ package rdp
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // MS-RDPEA audio output travels on the client's rdpsnd static virtual channel.
@@ -172,7 +172,7 @@ func (c *client) handleAudio(p []byte) error {
 		}
 		a.negotiated, a.version = true, min(version, uint16(soundVersion))
 		if selected < 0 || le.Uint32(body)&1 == 0 || version < 2 {
-			log.Printf("rdp: audio disabled by client or no compatible PCM format")
+			logging.Infof("rdp: audio disabled by client or no compatible PCM format")
 			return nil
 		}
 		a.format = uint16(selected)
@@ -190,7 +190,7 @@ func (c *client) handleAudio(p []byte) error {
 		}
 		a.trained = true
 		a.statsStarted, a.statsLogged = time.Now(), time.Now()
-		log.Printf("rdp: audio ready (48000 Hz stereo PCM, version=%d, TLS virtual channel)", a.version)
+		logging.Infof("rdp: audio ready (48000 Hz stereo PCM, version=%d, TLS virtual channel)", a.version)
 		a.signalLocked()
 	case soundQuality:
 		if len(body) != 4 {
@@ -252,7 +252,7 @@ func (a *audioState) confirmLocked(block byte, stamp uint16, now time.Time) {
 				}
 			}
 			clear(a.received)
-			log.Printf("rdp: audio playback confirmations detected; limiting unplayed PCM to 100ms")
+			logging.Infof("rdp: audio playback confirmations detected; limiting unplayed PCM to 100ms")
 		}
 		delete(a.outstanding, block)
 		return
@@ -368,7 +368,7 @@ func (c *client) startAudioLoop() {
 	go func() {
 		defer c.s.wg.Done()
 		if err := c.audioLoop(); err != nil {
-			log.Printf("rdp: audio transport: %v", err)
+			logging.Infof("rdp: audio transport: %v", err)
 			c.close()
 		}
 	}()
@@ -418,13 +418,13 @@ func (c *client) audioLoop() error {
 				}
 				delete(a.outstanding, block)
 				if !a.timeoutLogged {
-					log.Printf("rdp: audio confirmation timed out; dropping stale audio")
+					logging.Infof("rdp: audio confirmation timed out; dropping stale audio")
 					a.timeoutLogged = true
 				}
 			}
 		}
 		if a.trained && now.Sub(a.statsLogged) >= 5*time.Second {
-			log.Printf("rdp: audio timing elapsed_ms=%d captured_ms=%d sent_ms=%d queued=%d unplayed_ms=%d confirms=%d playback_confirms=%d max_client_hold_ms=%d", now.Sub(a.statsStarted).Milliseconds(), a.capturedDuration.Milliseconds(), a.sentDuration.Milliseconds(), len(a.queue), a.playbackQueuedLocked().Milliseconds(), a.confirmCount, a.playbackCount, a.maxConfirmHold.Milliseconds())
+			logging.Debugf("rdp: audio timing elapsed_ms=%d captured_ms=%d sent_ms=%d queued=%d unplayed_ms=%d confirms=%d playback_confirms=%d max_client_hold_ms=%d", now.Sub(a.statsStarted).Milliseconds(), a.capturedDuration.Milliseconds(), a.sentDuration.Milliseconds(), len(a.queue), a.playbackQueuedLocked().Milliseconds(), a.confirmCount, a.playbackCount, a.maxConfirmHold.Milliseconds())
 			a.statsLogged, a.maxConfirmHold = now, 0
 		}
 		if !a.trained || len(a.outstanding) >= audioWindow || a.playbackQueuedLocked() >= audioPlayWindow || now.Before(nextSend) {

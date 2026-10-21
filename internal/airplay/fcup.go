@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +15,8 @@ import (
 	"time"
 
 	"howett.net/plist"
+
+	"anykvm/internal/logging"
 )
 
 const maxFCUPResource = 4 << 20
@@ -121,7 +122,7 @@ func (s *fcupStore) serve(w http.ResponseWriter, q *http.Request) {
 	data, err = s.fetch(q.Context(), resource.String())
 	if err != nil {
 		if s.ctx.Err() == nil && q.Context().Err() == nil {
-			log.Printf("airplay: FCUP resource failed: %v", err)
+			logging.Infof("airplay: FCUP resource failed: %v", err)
 		}
 		http.Error(w, "AirPlay resource unavailable", 503)
 		return

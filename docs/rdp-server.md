@@ -245,6 +245,28 @@ Replacement, refresh and resize invalidate stale refinements. Coefficient
 caches are bounded to 128 MiB per connection; oversized grids use SIMPLE.
 Temporal sub-band differences are not implemented.
 
+Windows DXGI move metadata can produce `SurfaceToSurface` updates in CPU BGRA
+and resident GPU Progressive modes. Copies require continuous acquisitions. The
+server validates destination pixels against the last sent source (on the GPU for
+resident capture). Pending source tiles are then refined from their cached old
+coefficients, deduplicated across all verified copies, before the client picture
+is snapshotted. Copies cover complete interior
+64×64 destination tiles; partial edges or failed matches are encoded normally.
+An unmapped scratch surface snapshots the old client picture before copies, so
+self-overlap and mutually dependent moves cannot overwrite another move's source.
+The scratch surface is recreated after layout changes.
+
+Surface copies do not relocate Progressive decoder contexts. Copied destinations
+cancel their old UPGRADE tasks and invalidate CPU coefficient entries; resident
+GPU entries become unreachable until a new absolute FIRST overwrites them. No
+UPGRADE is issued for a copied tile without that new FIRST. Source UPGRADEs
+precede both the scratch snapshot and current-frame FIRST updates, so new pixels
+cannot overwrite the coefficients needed for the old source. Both capture queue
+replacement and ACK-window replacement discard move commands while accumulating
+their source/destination damage; refresh, geometry changes and invalid metadata
+also disable copies. Pixel and damage baselines commit only after the complete
+frame writes successfully.
+
 CGO builds use parallel SIMD encoding (AVX2/SSE2 on AMD64, NEON on ARM64),
 with Go as the fallback. `ANYKVM_RDP_PROGRESSIVE_BACKEND` selects `auto`, `go`,
 `native`, `native-scalar`, or AMD64-only `native-sse2`/`native-avx2`.

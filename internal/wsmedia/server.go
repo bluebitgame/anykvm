@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +18,7 @@ import (
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
 	"anykvm/internal/framebuf"
+	"anykvm/internal/logging"
 	"anykvm/internal/netstats"
 
 	"github.com/gorilla/websocket"
@@ -357,7 +357,7 @@ func (s *Server) Start() error {
 	for _, ep := range endpoints {
 		go func(ep endpoint) {
 			if err := ep.server.Serve(ep.listener); err != nil && err != http.ErrServerClosed {
-				log.Printf("wsmedia: serve %s: %v", ep.server.Addr, err)
+				logging.Infof("wsmedia: serve %s: %v", ep.server.Addr, err)
 			}
 		}(ep)
 	}
@@ -372,7 +372,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("wsmedia: upgrade error: %v", err)
+		logging.Infof("wsmedia: upgrade error: %v", err)
 		return
 	}
 	c := &wsClient{
@@ -384,7 +384,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.cfg.OnTargetSelected != nil {
 		if err := s.cfg.OnTargetSelected(target); err != nil {
-			log.Printf("wsmedia: target selection failed: %v", err)
+			logging.Infof("wsmedia: target selection failed: %v", err)
 			_ = conn.Close()
 			return
 		}
@@ -542,7 +542,7 @@ func (s *Server) addClient(c *wsClient) {
 	} else {
 		s.activateClient(c)
 	}
-	log.Printf("wsmedia: client connected (total: %d)", n)
+	logging.Infof("wsmedia: client connected (total: %d)", n)
 }
 
 func (s *Server) activateClient(c *wsClient) {
@@ -588,7 +588,7 @@ func (s *Server) removeClient(c *wsClient) {
 	if lastActive && s.cfg.OnClientDisconnected != nil {
 		s.cfg.OnClientDisconnected()
 	}
-	log.Printf("wsmedia: client disconnected")
+	logging.Infof("wsmedia: client disconnected")
 }
 
 // --- bridge.FrameServer ---
@@ -611,7 +611,7 @@ func (s *Server) PushFrameWithStop(f bridge.Frame, stop <-chan struct{}) {
 		// Validation and WebCodecs recovery flag; payload stays in its source buffer.
 		encoded, err := encodeAV1Header(f.Data)
 		if err != nil {
-			log.Printf("wsmedia: %v", err)
+			logging.Infof("wsmedia: %v", err)
 			return
 		}
 		s.broadcastVideo(f, encoded, true, stop)
@@ -698,7 +698,7 @@ func (s *Server) logVideoDiagnostics(body []byte) bool {
 	if err := json.Unmarshal(body, &stats); err != nil {
 		return false
 	}
-	log.Printf("wsmedia: browser video receive=%.1f decode=%.1f draw=%.1ffps decode_avg=%.1fms queue=%d/%d pending_output=%d/%d discarded=%d recovery=%d unmatched=%d gaps=%.1f/%.1fms buffer=%.1fms display_wait=%.1fms display_queue=%d/%d superseded=%d rebases=%d presentation=%q raf=%.1ffps raf_gap=%.1fms draw_ms=%.1f/%.1f source_gap=%.1fms visible=%q display_drops=%d/%d burst=%d pts_waits=%d interval_delta_mean_abs_max=%.1f/%.1f/%.1fms interval_samples=%d", stats.ReceivedFPS, stats.DecodedFPS, stats.DrawnFPS, stats.DecodeAvgMS, stats.Queue, stats.QueueMax, stats.PendingOutput, stats.PendingMax, stats.Discarded, stats.KeyRequests, stats.UnmatchedOutput, stats.InputGapMS, stats.OutputGapMS, stats.BufferMS, stats.DisplayWaitMS, stats.DisplayQueue, stats.DisplayQueueMax, stats.Superseded, stats.Rebases, stats.PresentationMode, stats.RefreshFPS, stats.RefreshGapMS, stats.DrawAvgMS, stats.DrawMaxMS, stats.SourceGapMS, stats.Visible, stats.OverflowDrops, stats.CatchUpDrops, stats.DecodedBurstMax, stats.WaitedRefreshes, stats.IntervalErrorMeanMS, stats.IntervalErrorAbsMeanMS, stats.IntervalErrorAbsMaxMS, stats.IntervalSamples)
+	logging.Debugf("wsmedia: browser video receive=%.1f decode=%.1f draw=%.1ffps decode_avg=%.1fms queue=%d/%d pending_output=%d/%d discarded=%d recovery=%d unmatched=%d gaps=%.1f/%.1fms buffer=%.1fms display_wait=%.1fms display_queue=%d/%d superseded=%d rebases=%d presentation=%q raf=%.1ffps raf_gap=%.1fms draw_ms=%.1f/%.1f source_gap=%.1fms visible=%q display_drops=%d/%d burst=%d pts_waits=%d interval_delta_mean_abs_max=%.1f/%.1f/%.1fms interval_samples=%d", stats.ReceivedFPS, stats.DecodedFPS, stats.DrawnFPS, stats.DecodeAvgMS, stats.Queue, stats.QueueMax, stats.PendingOutput, stats.PendingMax, stats.Discarded, stats.KeyRequests, stats.UnmatchedOutput, stats.InputGapMS, stats.OutputGapMS, stats.BufferMS, stats.DisplayWaitMS, stats.DisplayQueue, stats.DisplayQueueMax, stats.Superseded, stats.Rebases, stats.PresentationMode, stats.RefreshFPS, stats.RefreshGapMS, stats.DrawAvgMS, stats.DrawMaxMS, stats.SourceGapMS, stats.Visible, stats.OverflowDrops, stats.CatchUpDrops, stats.DecodedBurstMax, stats.WaitedRefreshes, stats.IntervalErrorMeanMS, stats.IntervalErrorAbsMeanMS, stats.IntervalErrorAbsMaxMS, stats.IntervalSamples)
 	return true
 }
 
@@ -790,7 +790,7 @@ func (c *wsClient) recordPointerInput(started time.Time) {
 	stats.events++
 	stats.maxHID = max(stats.maxHID, time.Since(started))
 	if elapsed := started.Sub(stats.started); elapsed >= 5*time.Second {
-		log.Printf("wsmedia: pointer input %.1f events/s events=%d max_gap=%.1fms max_hid=%.1fms (gaps include idle time)", float64(stats.events)/elapsed.Seconds(), stats.events, float64(stats.maxGap)/float64(time.Millisecond), float64(stats.maxHID)/float64(time.Millisecond))
+		logging.Debugf("wsmedia: pointer input %.1f events/s events=%d max_gap=%.1fms max_hid=%.1fms (gaps include idle time)", float64(stats.events)/elapsed.Seconds(), stats.events, float64(stats.maxGap)/float64(time.Millisecond), float64(stats.maxHID)/float64(time.Millisecond))
 		*stats = pointerInputStats{started: started}
 	}
 }
@@ -863,7 +863,7 @@ func (s *Server) handleHello(body []byte, clients ...*wsClient) bool {
 		}
 		s.mu.Unlock()
 	}
-	log.Printf("wsmedia: client caps h264=%v hevc=%v av1=%v raw_pointer=%v", caps.H264, caps.HEVC, caps.AV1, caps.RawPointer)
+	logging.Infof("wsmedia: client caps h264=%v hevc=%v av1=%v raw_pointer=%v", caps.H264, caps.HEVC, caps.AV1, caps.RawPointer)
 	if s.cfg.OnVideoCodecsChanged != nil {
 		s.cfg.OnVideoCodecsChanged(caps.H264, caps.HEVC, caps.AV1)
 		return true

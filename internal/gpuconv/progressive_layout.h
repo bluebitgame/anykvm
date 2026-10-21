@@ -34,4 +34,18 @@ static int bk_progressive_surface_validate(const uint32_t *p) {
         p[8]>=1&&p[8]<=p[4]&&p[9]>=1&&p[9]<=p[5]&&
         p[6]<=p[4]-p[8]&&p[7]<=p[5]-p[9]&&p[10]<=1;
 }
+// Validate the optional copy map before the shader can read previous pixels.
+static int bk_progressive_surface_moves_validate(const uint32_t *p,size_t words) {
+ if (words<12 || !bk_progressive_surface_validate(p) || p[11]>1) return 0;
+ uint32_t cols=(p[4]+63)/64,rows=(p[5]+63)/64;
+ if (!p[11]) return words==12;
+ if (words!=12+(size_t)cols*rows*2) return 0;
+ for(uint32_t i=0;i<cols*rows;i++) {
+  uint32_t x=p[12+2*i],y=p[13+2*i];
+  if(x==UINT32_MAX && y==UINT32_MAX)continue;
+  if(p[4]<64||p[5]<64||x>p[4]-64||y>p[5]-64||
+     (i%cols)*64>p[4]-64||(i/cols)*64>p[5]-64)return 0;
+ }
+ return 1;
+}
 #endif

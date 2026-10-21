@@ -5,6 +5,7 @@ package capture
 /*
 #cgo LDFLAGS: -framework ScreenCaptureKit -framework VideoToolbox
 #include <stdlib.h>
+#include "screen_damage_darwin.h"
 void bk_screen_list_displays(char *out, int outlen);
 void *bk_screen_open(int index, unsigned int display_id, int width, int height, int fps, int codec, int bitrate, int hide, int preserve_aspect, int disable_low_latency, int h264_profile, int encoder_buffer_frames, int rdp_full_range, int capture_audio, int downscale_only, int max_w, int max_h, char *error, int error_size);
 int bk_screen_audio_read(void *screen, void *out, int capacity, char *error, int error_size);
@@ -22,12 +23,12 @@ import "C"
 import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 	"anykvm/internal/videotiming"
 	"encoding/binary"
 	"fmt"
 	"image"
-	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ type screenDevice struct {
 	ready                   chan struct{}
 	notification            uintptr
 	hideCursor, decodeImage bool
+	jpegRegions             bool
 	codec                   string
 	encoderBufferFrames     int
 	quality, fps            int
@@ -58,6 +60,7 @@ type screenDevice struct {
 	outputW, outputH        int
 	outputDownscaleOnly     bool
 	outputMaxW, outputMaxH  int
+	outputScale             float64
 	statsAt                 time.Time
 	rdpAVC420               bool
 	fullRangeDisabled       bool // retain a failed full-range negotiation across recovery opens
@@ -99,6 +102,21 @@ func ListScreens() []Screen {
 func newScreenDevice(id string) Device {
 	return &screenDevice{index: screenIndex(id), decodeImage: true}
 }
+
+// SetJPEGRegions defers VNC JPEG encoding until after candidate tile comparison.
+func (d *screenDevice) SetJPEGRegions(v bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.jpegRegions = v
+	enabled := C.int(0)
+	if v {
+		enabled = 1
+	}
+	if d.session != nil {
+		C.bk_screen_set_damage(d.session, enabled)
+	}
+}
+
 func (d *screenDevice) SetHideCursor(v bool)                        { d.hideCursor = v }
 func (d *screenDevice) SetDecodeImage(v bool)                       { d.mu.Lock(); d.decodeImage = v; d.mu.Unlock() }
 func (d *screenDevice) SetJPEGQuality(q int)                        { d.mu.Lock(); d.quality = q; d.mu.Unlock() }
@@ -125,6 +143,12 @@ func (d *screenDevice) SetOutputSize(w, h int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.outputW, d.outputH = w, h
+}
+func (d *screenDevice) SetOutputScale(scale float64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.outputScale = scale
+	return nil
 }
 func (d *screenDevice) SetOutputDownscaleOnly(v bool) {
 	d.mu.Lock()
@@ -249,6 +273,21 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 	if !d.SupportsVideoCodec(d.codec) {
 		return fmt.Errorf("unsupported screen codec %q", d.codec)
 	}
+	if d.outputScale > 0 && d.outputScale != 1 {
+		physical, _, err := d.displayModesLocked()
+		if err != nil {
+			return err
+		}
+		sw, sh, err := ScaledResolution(physical.pixelWidth, physical.pixelHeight, d.outputScale)
+		if err != nil {
+			return err
+		}
+		if d.outputDownscaleOnly {
+			w, h = BoundedOutputSize(sw, sh, w, h)
+		} else {
+			w, h = sw, sh
+		}
+	}
 	if d.outputDownscaleOnly && (d.codec == "h264" || d.codec == "hevc") &&
 		(d.outputMaxW > 0 && d.outputMaxW < 2 || d.outputMaxH > 0 && d.outputMaxH < 2) {
 		return fmt.Errorf("ScreenCaptureKit: Target resolution limit is too small for video encoding")
@@ -319,7 +358,7 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 	}
 	d.session = open(fullRange)
 	if d.session == nil && fullRange != 0 {
-		log.Printf("capture: RDP full-range startup failed: %s; falling back to existing video-range path", C.GoString(&message[0]))
+		logging.Infof("capture: RDP full-range startup failed: %s; falling back to existing video-range path", C.GoString(&message[0]))
 		d.session = open(0)
 		// Permission/display failures can affect both formats. Cache a format
 		// fallback only when the original path actually opened successfully.
@@ -333,7 +372,10 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 	d.contentRect = image.Rectangle{}
 	d.fps = fps
 	if codec == 1 || codec == 2 {
-		log.Printf("capture: native buffer_frames=%d (configured=%d)", encoderFrames, d.encoderBufferFrames)
+		logging.Infof("capture: native buffer_frames=%d (configured=%d)", encoderFrames, d.encoderBufferFrames)
+	}
+	if d.jpegRegions {
+		C.bk_screen_set_damage(d.session, 1)
 	}
 	d.statsAt = time.Now()
 	encoder := jpegcodec.Backend()
@@ -343,16 +385,19 @@ func (d *screenDevice) OpenWithFormat(w, h, fps int) error {
 	case "rawvideo", "nv12":
 		encoder = "none (pixels)"
 	}
+	if codec == 0 && d.jpegRegions {
+		encoder = "VNC dirty JPEG rectangles"
+	}
 	cadence := "native"
 	if fps > 0 {
 		cadence = strconv.Itoa(fps)
 	}
-	log.Printf("capture: ScreenCaptureKit screen:%d codec=%s encoder=%q fps=%s", d.index, d.codec, encoder, cadence)
+	logging.Infof("capture: ScreenCaptureKit screen:%d codec=%s encoder=%q fps=%s", d.index, d.codec, encoder, cadence)
 	if d.codec == "h264" {
 		if bitrate == 0 {
-			log.Printf("capture: encoder bitrate=auto lowdelay=%t profile=%s", disableLowLatency == 0, profile)
+			logging.Infof("capture: encoder bitrate=auto lowdelay=%t profile=%s", disableLowLatency == 0, profile)
 		} else {
-			log.Printf("capture: encoder bitrate=%d kbps lowdelay=%t profile=%s", bitrate, disableLowLatency == 0, profile)
+			logging.Infof("capture: encoder bitrate=%d kbps lowdelay=%t profile=%s", bitrate, disableLowLatency == 0, profile)
 		}
 	}
 	return nil
@@ -368,7 +413,7 @@ func (d *screenDevice) Capture() (*Frame, error) {
 	if time.Since(d.statsAt) >= 5*time.Second {
 		var detail [512]C.char
 		C.bk_screen_idle_status(d.session, &detail[0], C.int(len(detail)))
-		log.Printf("capture: screen:%d counters (cumulative): %s", d.index, C.GoString(&detail[0]))
+		logging.Debugf("capture: screen:%d counters (cumulative): %s", d.index, C.GoString(&detail[0]))
 		d.statsAt = time.Now()
 	}
 	var lease, data, pixel unsafe.Pointer
@@ -384,7 +429,7 @@ func (d *screenDevice) Capture() (*Frame, error) {
 			// Full-range verification failed. The bridge will reopen
 			// this device with video-range pixels.
 			d.fullRangeDisabled = true
-			log.Printf("capture: RDP full-range verification failed: %s; next open uses video range", C.GoString(&message[0]))
+			logging.Infof("capture: RDP full-range verification failed: %s; next open uses video range", C.GoString(&message[0]))
 		}
 		return nil, fmt.Errorf("%w: ScreenCaptureKit: %s", ErrStreamStopped, C.GoString(&message[0]))
 	}
@@ -400,6 +445,15 @@ func (d *screenDevice) Capture() (*Frame, error) {
 		return nil, fmt.Errorf("ScreenCaptureKit: invalid frame size")
 	}
 	f := &Frame{CapturedAt: capturedAt, Width: int(w), Height: int(h), SourceWidth: int(sw), SourceHeight: int(sh), Format: FormatRaw}
+	if pixel != nil && d.jpegRegions && d.codec != "nv12" {
+		var damage C.bk_screen_damage
+		if C.bk_screen_lease_damage(lease, &damage) != 0 {
+			f.Damage = &jpegcodec.DesktopDamage{Stream: uint64(damage.stream), Previous: uint64(damage.previous), Sequence: uint64(damage.sequence), SourceWidth: int(w), SourceHeight: int(h), Valid: damage.valid != 0}
+			for _, r := range unsafe.Slice(damage.rects, int(damage.count)) {
+				f.Damage.Rects = append(f.Damage.Rects, image.Rect(int(r.x0), int(r.y0), int(r.x1), int(r.y1)))
+			}
+		}
+	}
 	if videotiming.Sample() {
 		var present, display, acquired, submitted, completed, now C.longlong
 		var readyStart, readyEnd, imported C.longlong
@@ -430,10 +484,10 @@ func (d *screenDevice) Capture() (*Frame, error) {
 		f.ContentRect = screenContentRect(f.Width, f.Height, f.SourceWidth, f.SourceHeight, d.preserveAspect)
 	}
 	if f.ContentRect != d.contentRect {
-		log.Printf("capture: screen:%d frame=%dx%d source=%dx%d content=%v metadata=%t", d.index, f.Width, f.Height, f.SourceWidth, f.SourceHeight, f.ContentRect, actualContent)
+		logging.Infof("capture: screen:%d frame=%dx%d source=%dx%d content=%v metadata=%t", d.index, f.Width, f.Height, f.SourceWidth, f.SourceHeight, f.ContentRect, actualContent)
 		d.contentRect = f.ContentRect
 	}
-	if pixel != nil && !d.decodeImage && d.codec != "rawvideo" && d.codec != "nv12" {
+	if pixel != nil && !d.jpegRegions && !d.decodeImage && d.codec != "rawvideo" && d.codec != "nv12" {
 		bytes, err := jpegcodec.EncodePixelBufferOwned(pixel, d.quality)
 		if err != nil {
 			return nil, err

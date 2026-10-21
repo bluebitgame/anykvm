@@ -3,8 +3,9 @@ package rdp
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
+
+	"anykvm/internal/logging"
 )
 
 var errProgressiveNativeUnavailable = errors.New("native Progressive encoder unavailable")
@@ -186,7 +187,7 @@ func (e *progressiveEncoder) encodePrepared(pixels []byte, w, h int, rects []bit
 		}
 		// Both paths send original SIMPLE tiles with the same quantization and
 		// context flags. An unsent failed batch can safely be retried in Go.
-		log.Printf("rdp: Progressive native encoder failed, switching to Go: %v", err)
+		logging.Infof("rdp: Progressive native encoder failed, switching to Go: %v", err)
 		e.native.close()
 		e.native = nil
 	}
@@ -237,7 +238,7 @@ func (e *progressiveEncoder) encodeWindow(pixels []byte, w, h int, rects []bitma
 		if e.required {
 			return nil, err
 		}
-		log.Printf("rdp: Progressive window failed, switching to Go: %v", err)
+		logging.Infof("rdp: Progressive window failed, switching to Go: %v", err)
 		pool.close()
 		e.native = nil
 	}

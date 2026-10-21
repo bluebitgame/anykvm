@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 
 	"anykvm/internal/avmedia"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"howett.net/plist"
 )
 
@@ -122,7 +122,7 @@ func (p *urlPlayer) setState(state string) {
 	p.mu.Unlock()
 	if changed {
 		p.receiver.sendMediaEvent(p.key, state)
-		log.Printf("airplay: URL playback %s", state)
+		logging.Infof("airplay: URL playback %s", state)
 	}
 }
 func (p *urlPlayer) info() map[string]any {
@@ -198,7 +198,7 @@ func (p *urlPlayer) run(request playRequest) {
 		defer p.fcup.close()
 		location, err := p.fcup.open(request.Location)
 		if err != nil {
-			log.Printf("airplay: FCUP resource service unavailable")
+			logging.Infof("airplay: FCUP resource service unavailable")
 			return
 		}
 		request.Location = location
@@ -206,7 +206,7 @@ func (p *urlPlayer) run(request playRequest) {
 	source, err := avmedia.OpenMedia(p.ctx, request.Location)
 	if err != nil {
 		if p.ctx.Err() == nil {
-			log.Printf("airplay: URL media open failed: %v", err)
+			logging.Infof("airplay: URL media open failed: %v", err)
 		}
 		return
 	}
@@ -221,7 +221,7 @@ func (p *urlPlayer) run(request playRequest) {
 	}
 	if origin > 0 {
 		if source.Seek(origin) != nil {
-			log.Printf("airplay: URL initial seek failed")
+			logging.Infof("airplay: URL initial seek failed")
 			return
 		}
 	}
@@ -307,7 +307,7 @@ func (p *urlPlayer) run(request playRequest) {
 				continue
 			}
 			if err != nil {
-				log.Printf("airplay: URL media read failed: %v", err)
+				logging.Infof("airplay: URL media read failed: %v", err)
 				return
 			}
 			if packet == nil {
@@ -330,7 +330,7 @@ func (p *urlPlayer) run(request playRequest) {
 		}
 		if packet.Audio {
 			if len(packet.Config) < 2 || packet.Config[0]>>3 != 2 || packet.SampleRate < 8000 || packet.SampleRate > 192000 || packet.Channels < 1 || packet.Channels > 8 {
-				log.Printf("airplay: URL audio requires AAC-LC with AudioSpecificConfig")
+				logging.Infof("airplay: URL audio requires AAC-LC with AudioSpecificConfig")
 				return
 			}
 			// Copy into the bounded Go audio queue before releasing native ownership.
@@ -478,7 +478,7 @@ func (r *Receiver) handleURL(q request, conn net.Conn) (int, []byte, string, boo
 				r.owner = nil
 			}
 			r.mu.Unlock()
-			log.Printf("airplay: paired RTP sender switched to HTTP video")
+			logging.Infof("airplay: paired RTP sender switched to HTTP video")
 		}
 		r.mu.Lock()
 		// Shutdown or viewer detach may cancel ownership while URL setup runs.
@@ -499,7 +499,7 @@ func (r *Receiver) handleURL(q request, conn net.Conn) (int, []byte, string, boo
 		r.mu.Unlock()
 		r.sendMediaEvent(key, "loading")
 		if p.fcup != nil {
-			log.Printf("airplay: FCUP playback requested")
+			logging.Infof("airplay: FCUP playback requested")
 		}
 		if p.browser != nil {
 			go p.runBrowser()

@@ -2,8 +2,8 @@ package rdp
 
 import (
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"fmt"
-	"log"
 )
 
 const dispChannel = 2
@@ -174,7 +174,7 @@ func (c *client) desktopLoop(initial capture.DesktopSize) {
 		c.s.mu.Unlock()
 		if active && size != nil && c.s.cfg.OnDesktopResize != nil {
 			if err := c.s.cfg.OnDesktopResize(*size); err != nil {
-				log.Printf("rdp: desktop resize: %v", err)
+				logging.Infof("rdp: desktop resize: %v", err)
 			}
 		}
 		c.lifeMu.Unlock()

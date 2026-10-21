@@ -3,11 +3,11 @@ package rdp
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"math"
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 const (
@@ -232,7 +232,7 @@ func (c *client) cursorLoop() {
 		p, err := c.capturePointer()
 		if err != nil {
 			if !loggedError {
-				log.Printf("rdp: cursor capture: %v", err)
+				logging.Infof("rdp: cursor capture: %v", err)
 				loggedError = true
 			}
 		} else {

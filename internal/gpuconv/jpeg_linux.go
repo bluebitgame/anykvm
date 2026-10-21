@@ -17,7 +17,8 @@ import (
 
 // JPEGEncoder owns a compute-only device associated with the captured DRM
 // source, including the split vc4 display/v3d renderer on Raspberry Pi 4/5.
-// Intermediate coefficients and Huffman segments never leave device memory.
+// Coefficients remain device-local. Readback is either a standalone JPEG or
+// compact records for changed MCUs, selected by the consumer.
 type JPEGEncoder struct {
 	mu           sync.Mutex
 	ptr          *C.bk_vk
@@ -36,8 +37,9 @@ func (e *JPEGEncoder) DRMDevice() (uint32, uint32) {
 	return uint32(major), uint32(minor)
 }
 
-// Stages are transform, MCU Huffman coding, offset scan and JPEG packing.
-func NewJPEGEncoder(major, minor uint32, stages [4][]byte) (*JPEGEncoder, error) {
+// Stages: transform, entropy, local scan, pack, compare, work preparation,
+// group scan, offset addition, entropy selection and entropy preparation.
+func NewJPEGEncoder(major, minor uint32, stages [10][]byte) (*JPEGEncoder, error) {
 	if major == 0 {
 		return nil, fmt.Errorf("invalid Vulkan JPEG DRM device")
 	}
@@ -52,7 +54,9 @@ func NewJPEGEncoder(major, minor uint32, stages [4][]byte) (*JPEGEncoder, error)
 	if ptr == nil {
 		return nil, fmt.Errorf("%w: %s", ErrUnavailable, C.GoString(&message[0]))
 	}
-	if C.bk_vk_jpeg_init(ptr, pointer(1), C.size_t(len(stages[1])), pointer(2), C.size_t(len(stages[2])), pointer(3), C.size_t(len(stages[3])), &message[0], 512) < 0 {
+	if C.bk_vk_jpeg_init(ptr, pointer(1), C.size_t(len(stages[1])), pointer(2), C.size_t(len(stages[2])), pointer(3), C.size_t(len(stages[3])), pointer(4), C.size_t(len(stages[4])), pointer(5), C.size_t(len(stages[5])),
+		pointer(8), C.size_t(len(stages[8])), pointer(9), C.size_t(len(stages[9])),
+		pointer(6), C.size_t(len(stages[6])), pointer(7), C.size_t(len(stages[7])), &message[0], 512) < 0 {
 		C.bk_vk_close(ptr)
 		return nil, fmt.Errorf("Vulkan JPEG pipelines: %s", C.GoString(&message[0]))
 	}
@@ -60,6 +64,14 @@ func NewJPEGEncoder(major, minor uint32, stages [4][]byte) (*JPEGEncoder, error)
 }
 
 func (e *JPEGEncoder) EncodeSource(frame dmabuf.Frame, width, height int, quantization *[128]uint32, huffman *[3072]uint32, header []byte) ([]byte, error) {
+	return e.encodeSource(frame, width, height, quantization, huffman, header, false)
+}
+
+func (e *JPEGEncoder) EncodeRegions(frame dmabuf.Frame, width, height int, quantization *[128]uint32, huffman *[3072]uint32, header []byte) ([]byte, error) {
+	return e.encodeSource(frame, width, height, quantization, huffman, header, true)
+}
+
+func (e *JPEGEncoder) encodeSource(frame dmabuf.Frame, width, height int, quantization *[128]uint32, huffman *[3072]uint32, header []byte, regions bool) ([]byte, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.ptr == nil {
@@ -79,9 +91,13 @@ func (e *JPEGEncoder) EncodeSource(frame dmabuf.Frame, width, height int, quanti
 	var message [512]C.char
 	var jpeg *C.uint8_t
 	var bytes C.size_t
-	status := C.bk_vk_jpeg_encode(e.ptr, &input, C.int(width), C.int(height),
+	mode := C.int(0)
+	if regions {
+		mode = 1
+	}
+	status := C.bk_vk_jpeg_encode_mode(e.ptr, &input, C.int(width), C.int(height),
 		(*C.uint32_t)(unsafe.Pointer(&quantization[0])), (*C.uint32_t)(unsafe.Pointer(&huffman[0])),
-		(*C.uint8_t)(unsafe.Pointer(&header[0])), C.size_t(len(header)), &jpeg, &bytes, &message[0], 512)
+		(*C.uint8_t)(unsafe.Pointer(&header[0])), C.size_t(len(header)), mode, &jpeg, &bytes, &message[0], 512)
 	defer C.free(unsafe.Pointer(jpeg))
 	if status < 0 {
 		return nil, fmt.Errorf("Vulkan JPEG: %s", C.GoString(&message[0]))

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 	"anykvm/internal/airplay/playfair"
 	"anykvm/internal/avmedia"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 
 	"howett.net/plist"
 )
@@ -199,7 +199,7 @@ func (r *Receiver) accept(listener net.Listener) {
 			full := r.listener == listener && len(r.connections) >= 8
 			r.mu.Unlock()
 			if full {
-				log.Printf("airplay: control connection from %s rejected: connection limit reached", conn.RemoteAddr())
+				logging.Infof("airplay: control connection from %s rejected: connection limit reached", conn.RemoteAddr())
 			}
 			conn.Close()
 			continue
@@ -231,7 +231,7 @@ func (r *Receiver) serve(conn net.Conn) {
 	for {
 		q, err := r.readControlRequest(conn, reader, 30*time.Second)
 		if err != nil {
-			log.Printf("airplay: control connection from %s ended: %v", conn.RemoteAddr(), err)
+			logging.Infof("airplay: control connection from %s ended: %v", conn.RemoteAddr(), err)
 			return
 		}
 		if q.method == "POST" && q.path == "/reverse" {
@@ -240,11 +240,11 @@ func (r *Receiver) serve(conn net.Conn) {
 		}
 		status, body, contentType := r.handle(q, &p, conn)
 		if status != 200 || q.path != "/feedback" && q.path != "/action" && q.method != "GET_PARAMETER" && q.method != "SET_PARAMETER" {
-			log.Printf("airplay: %s %q from %s -> %d%s", q.method, q.path, conn.RemoteAddr(), status, controlDetails(q))
+			logging.Infof("airplay: %s %q from %s -> %d%s", q.method, q.path, conn.RemoteAddr(), status, controlDetails(q))
 		}
 		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if err := writeResponse(conn, q, status, body, contentType); err != nil {
-			log.Printf("airplay: %s %q response to %s failed: %v", q.method, q.path, conn.RemoteAddr(), err)
+			logging.Infof("airplay: %s %q response to %s failed: %v", q.method, q.path, conn.RemoteAddr(), err)
 			return
 		}
 		if q.method == "TEARDOWN" && status == 200 && p.media == nil || status == 403 || q.headers.Get("Connection") == "close" {
@@ -339,7 +339,7 @@ func (r *Receiver) handle(q request, p *pairing, conn net.Conn) (int, []byte, st
 					result[field] = encodeTXT(r.raopRecords())
 				}
 			}
-			log.Printf("airplay: info qualifiers=%q features=%s", query.Qualifier, r.featureRecord())
+			logging.Infof("airplay: info qualifiers=%q features=%s", query.Qualifier, r.featureRecord())
 			body, err := plist.Marshal(result, plist.BinaryFormat)
 			if err != nil {
 				return 400, nil, ""
@@ -349,7 +349,7 @@ func (r *Receiver) handle(q request, p *pairing, conn net.Conn) (int, []byte, st
 		r.mu.Lock()
 		width, height, fps := r.width, r.height, r.fps
 		r.mu.Unlock()
-		log.Printf("airplay: info capabilities features=%s video=%t hls=%t web_media=%t", r.featureRecord(), r.featureBits()&(1<<0) != 0, r.featureBits()&(1<<4) != 0, r.browserMedia)
+		logging.Infof("airplay: info capabilities features=%s video=%t hls=%t web_media=%t", r.featureRecord(), r.featureBits()&(1<<0) != 0, r.featureBits()&(1<<4) != 0, r.browserMedia)
 		body, err := plist.Marshal(map[string]any{
 			"name": r.name, "deviceID": r.deviceID, "macAddress": r.deviceID,
 			"model": "AppleTV3,2", "sourceVersion": "220.68", "features": r.featureBits(),
@@ -389,7 +389,7 @@ func (r *Receiver) handle(q request, p *pairing, conn net.Conn) (int, []byte, st
 			body, err = p.pairVerify(q.body)
 		}
 		if err != nil {
-			log.Printf("airplay: pairing %q from %s failed: %v", q.path, conn.RemoteAddr(), err)
+			logging.Infof("airplay: pairing %q from %s failed: %v", q.path, conn.RemoteAddr(), err)
 			return 403, nil, ""
 		}
 		return 200, body, "application/octet-stream"
@@ -591,14 +591,14 @@ func (r *Receiver) setup(q request, p *pairing, conn net.Conn) (int, []byte, str
 	}
 	var request setupRequest
 	if _, err := plist.Unmarshal(q.body, &request); err != nil {
-		log.Printf("airplay: invalid SETUP property list: %v", err)
+		logging.Infof("airplay: invalid SETUP property list: %v", err)
 		return 400, nil, ""
 	}
 	var streamTypes []uint64
 	for _, stream := range request.Streams {
 		streamTypes = append(streamTypes, stream.Type)
 	}
-	log.Printf("airplay: SETUP streams=%v timing=%q ekey_bytes=%d eiv_bytes=%d", streamTypes, request.TimingProtocol, len(request.EKey), len(request.EIV))
+	logging.Infof("airplay: SETUP streams=%v timing=%q ekey_bytes=%d eiv_bytes=%d", streamTypes, request.TimingProtocol, len(request.EKey), len(request.EIV))
 	if len(request.Streams) > 2 || request.TimingProtocol != "" && request.TimingProtocol != "NTP" {
 		return 461, nil, ""
 	}
@@ -609,9 +609,9 @@ func (r *Receiver) setup(q request, p *pairing, conn net.Conn) (int, []byte, str
 		}
 		seen[stream.Type] = true
 		if stream.Type == 96 {
-			log.Printf("airplay: audio SETUP ct=%d spf=%d format=0x%x sr=%d control=%d using_screen=%t is_media=%t", stream.CT, stream.SPF, stream.AudioFormat, stream.SampleRate, stream.ControlPort, stream.UsingScreen, stream.IsMedia)
+			logging.Infof("airplay: audio SETUP ct=%d spf=%d format=0x%x sr=%d control=%d using_screen=%t is_media=%t", stream.CT, stream.SPF, stream.AudioFormat, stream.SampleRate, stream.ControlPort, stream.UsingScreen, stream.IsMedia)
 			if _, err := stream.audioOptions().normalized(); err != nil {
-				log.Printf("airplay: audio SETUP rejected: %v", err)
+				logging.Infof("airplay: audio SETUP rejected: %v", err)
 				return 461, nil, ""
 			}
 		}
@@ -638,7 +638,7 @@ func (r *Receiver) setup(q request, p *pairing, conn net.Conn) (int, []byte, str
 				r.owner = nil
 			}
 			r.mu.Unlock()
-			log.Printf("airplay: media setup failed: %v", err)
+			logging.Infof("airplay: media setup failed: %v", err)
 			return 400, nil, ""
 		}
 		p.media = media
@@ -661,7 +661,7 @@ func (r *Receiver) setup(q request, p *pairing, conn net.Conn) (int, []byte, str
 	// unrelated to HTTP /reverse; advertising the control listener here falsely
 	// asks the sender to establish an event connection that we cannot serve.
 	response := map[string]any{"timingPort": uint64(p.media.timing.port()), "eventPort": uint64(0)}
-	log.Printf("airplay: SETUP transport timing_port=%d event_port=0", p.media.timing.port())
+	logging.Infof("airplay: SETUP transport timing_port=%d event_port=0", p.media.timing.port())
 	if len(request.Streams) > 0 {
 		var streams []any
 		for _, stream := range request.Streams {
@@ -674,7 +674,7 @@ func (r *Receiver) setup(q request, p *pairing, conn net.Conn) (int, []byte, str
 			} else {
 				dataPort, controlPort, err := p.media.startAudio(stream.audioOptions())
 				if err != nil {
-					log.Printf("airplay: audio start failed: %v", err)
+					logging.Infof("airplay: audio start failed: %v", err)
 					return 400, nil, ""
 				}
 				streams = append(streams, map[string]any{"type": uint64(96), "dataPort": uint64(dataPort), "controlPort": uint64(controlPort)})

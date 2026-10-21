@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 type writeFixture struct {
@@ -23,6 +25,8 @@ func (c reportLog) Write(p []byte) (int, error) { c <- string(p); return len(p),
 
 func TestGlobalReportEveryFiveSecondsWithoutFinalFlush(t *testing.T) {
 	messages := make(reportLog, 4)
+	logging.Configure(false, true)
+	t.Cleanup(func() { logging.Configure(false, false) })
 	previous := log.Writer()
 	log.SetOutput(messages)
 	ctx, cancel := context.WithCancel(context.Background())

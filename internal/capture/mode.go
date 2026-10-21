@@ -14,19 +14,33 @@ type Mode struct {
 	FPS           float64
 	PixelFormat   string
 	FollowClient  bool
+	Scale         float64 // physical screen pixels; defaults to 1; used when Width and Height are zero
 }
 
 var modePattern = regexp.MustCompile(`^(?i:(auto)|([1-9][0-9]*)x([1-9][0-9]*))?(?:@([0-9]+(?:\.[0-9]+)?))?(?::([a-zA-Z0-9_]+))?$`)
 var fourCCFormatPattern = regexp.MustCompile(`^(fourcc_[0-9a-f]{8}|guid_[0-9a-f]{32})$`)
+var scalePattern = regexp.MustCompile(`^(?:[0-9]+)?\.[0-9]+$`)
 
-// ParseMode accepts WxH[@FPS][:format], auto[@FPS], @FPS, or an empty mode.
+// ParseMode accepts WxH[@FPS][:format], SCALE[@FPS], auto[@FPS], @FPS, or empty.
 func ParseMode(s string) (Mode, error) {
 	s = strings.TrimSpace(s)
-	m := modePattern.FindStringSubmatch(s)
-	if m == nil {
-		return Mode{}, fmt.Errorf("invalid capture mode %q; use WIDTHxHEIGHT@FPS:format", s)
+	mode := Mode{Scale: 1}
+	value := s
+	end := strings.IndexAny(value, "@:")
+	if end < 0 {
+		end = len(value)
 	}
-	var mode Mode
+	if scalePattern.MatchString(value[:end]) {
+		mode.Scale, _ = strconv.ParseFloat(value[:end], 64)
+		if mode.Scale <= 0 || math.IsInf(mode.Scale, 0) {
+			return Mode{}, fmt.Errorf("invalid capture scale in %q; use a positive decimal", s)
+		}
+		value = value[end:]
+	}
+	m := modePattern.FindStringSubmatch(value)
+	if m == nil {
+		return Mode{}, fmt.Errorf("invalid capture mode %q; use WIDTHxHEIGHT@FPS:format or 0.75@30", s)
+	}
 	mode.FollowClient = m[1] != ""
 	if m[2] != "" {
 		mode.Width, _ = strconv.Atoi(m[2])
@@ -52,6 +66,9 @@ func ParseMode(s string) (Mode, error) {
 	if mode.FollowClient && mode.PixelFormat != "" {
 		return Mode{}, fmt.Errorf("auto follows the client and cannot specify an input pixel format")
 	}
+	if scalePattern.MatchString(s[:end]) && mode.PixelFormat != "" {
+		return Mode{}, fmt.Errorf("screen scaling cannot specify an input pixel format")
+	}
 	return mode, nil
 }
 
@@ -68,6 +85,13 @@ func ConfigureMode(device Device, value string) error {
 	mode, err := ParseMode(value)
 	if err != nil {
 		return err
+	}
+	if scaler, ok := device.(interface{ SetOutputScale(float64) error }); ok {
+		if err := scaler.SetOutputScale(mode.Scale); err != nil {
+			return err
+		}
+	} else if mode.Scale != 1 {
+		return fmt.Errorf("proportional screen scaling is unavailable for this source")
 	}
 	if setter, ok := device.(interface{ SetCaptureMode(string) error }); ok {
 		return setter.SetCaptureMode(value)

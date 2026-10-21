@@ -3,18 +3,18 @@ package gamestream
 import (
 	"anykvm/internal/av1"
 	"errors"
-	"log"
 	"time"
 
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // streamEncodedVideo forwards capture access units without decoding or re-encoding.
 func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketizer, epoch time.Time) (bridge.Frame, error) {
 	x.logVideoEncoder(x.options.Codec, "passthrough")
 	if first.Width != x.options.Width || first.Height != x.options.Height {
-		log.Printf("gamestream: source is %dx%d, client requested %dx%d; preserving encoded source (match client resolution if decoding fails)", first.Width, first.Height, x.options.Width, x.options.Height)
+		logging.Infof("gamestream: source is %dx%d, client requested %dx%d; preserving encoded source (match client resolution if decoding fails)", first.Width, first.Height, x.options.Width, x.options.Height)
 	}
 	current := first
 	framePacer := sourceFramePacer{fps: x.options.FPS}
@@ -41,14 +41,14 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 				return err
 			}
 			if handled {
-				log.Printf("gamestream: requested native encoder IDR")
+				logging.Infof("gamestream: requested native encoder IDR")
 				wantIDR, nativePending = false, true
 				return nil
 			}
 		}
 		if allowed := x.server.cfg.OnVideoRestartAllowed; allowed != nil && !allowed() {
 			wantIDR, nativePending = false, false
-			log.Printf("gamestream: waiting for source IDR without reopening sender-driven capture")
+			logging.Infof("gamestream: waiting for source IDR without reopening sender-driven capture")
 			return nil
 		}
 		wantIDR = true
@@ -129,10 +129,10 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 				waitingIDR = false
 				if idr {
 					if v.frame == 1 && refreshRequested.IsZero() {
-						log.Printf("gamestream: sent first recovery frame=%d bytes=%d", v.frame, len(current.Data))
+						logging.Infof("gamestream: sent first recovery frame=%d bytes=%d", v.frame, len(current.Data))
 					}
 					if !refreshRequested.IsZero() {
-						log.Printf("gamestream: sent recovery frame=%d bytes=%d after=%.1fms", v.frame, len(current.Data), float64(time.Since(refreshRequested))/float64(time.Millisecond))
+						logging.Infof("gamestream: sent recovery frame=%d bytes=%d after=%.1fms", v.frame, len(current.Data), float64(time.Since(refreshRequested))/float64(time.Millisecond))
 						refreshRequested = time.Time{}
 					}
 					// A naturally occurring IDR satisfies a pending refresh. Avoid
@@ -168,7 +168,7 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 			peerReady := x.videoPeer != nil
 			x.mu.Unlock()
 			if elapsed := now.Sub(statsStart); elapsed >= 5*time.Second {
-				log.Printf("gamestream: video %.1f fps target=%d idrs=%d max_gap=%.1fms max_packetize_send=%.1fms received=%d recovery_seen=%d dropped_no_peer=%d dropped_waiting_IDR=%d peer_ready=%t waiting_IDR=%t", float64(frames)/elapsed.Seconds(), x.options.FPS, idrs, float64(maxGap)/float64(time.Millisecond), float64(maxSend)/float64(time.Millisecond), received, recoverySeen, noPeer, awaitingIDR, peerReady, waitingIDR)
+				logging.Debugf("gamestream: video %.1f fps target=%d idrs=%d max_gap=%.1fms max_packetize_send=%.1fms received=%d recovery_seen=%d dropped_no_peer=%d dropped_waiting_IDR=%d peer_ready=%t waiting_IDR=%t", float64(frames)/elapsed.Seconds(), x.options.FPS, idrs, float64(maxGap)/float64(time.Millisecond), float64(maxSend)/float64(time.Millisecond), received, recoverySeen, noPeer, awaitingIDR, peerReady, waitingIDR)
 				statsStart, frames, idrs, maxGap, maxSend = now, 0, 0, 0, 0
 				received, recoverySeen, noPeer, awaitingIDR = 0, 0, 0, 0
 			}
@@ -196,7 +196,7 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 			// A successful request callback means feedback was sent, not that
 			// the remote encoder honored it. Bound the wait before reopening.
 			if nativePending && now.Sub(refreshRequested) >= 2*time.Second {
-				log.Printf("gamestream: native IDR request timed out after %.1fms; capture recovery required", float64(now.Sub(refreshRequested))/float64(time.Millisecond))
+				logging.Infof("gamestream: native IDR request timed out after %.1fms; capture recovery required", float64(now.Sub(refreshRequested))/float64(time.Millisecond))
 				wantIDR, nativePending = true, false
 			}
 			if !wantIDR || time.Since(lastRestart) < time.Second {
@@ -210,7 +210,7 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 			}
 			// The capture stop channel unblocks any producer waiting to enqueue a
 			// P-frame while we synchronously close and reopen capture.
-			log.Printf("gamestream: restarting capture for pending client IDR request")
+			logging.Infof("gamestream: restarting capture for pending client IDR request")
 			if err := x.server.cfg.OnVideoRestart(); err != nil {
 				return current, err
 			}

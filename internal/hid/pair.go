@@ -2,9 +2,10 @@ package hid
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 // SerialStale reports whether err indicates the USB CDC port was reset or
@@ -54,7 +55,7 @@ func WaitBonded(d *Device, port string, timeout time.Duration) (*Device, Profile
 		if err != nil && SerialStale(err) {
 			if !staleNote {
 				staleNote = true
-				log.Printf("AnyKVM: USB serial reset — reopening %s", port)
+				logging.Infof("AnyKVM: USB serial reset — reopening %s", port)
 			}
 			next, reopenErr := ReopenBLELink(d, port)
 			if reopenErr != nil {

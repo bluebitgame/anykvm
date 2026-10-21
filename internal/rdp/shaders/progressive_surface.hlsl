@@ -11,7 +11,6 @@ BIND(1) ByteAddressBuffer surfaceParameters : register(t1);
 BIND(2) RWByteAddressBuffer currentPixels : register(u0);
 BIND(3) RWByteAddressBuffer previousPixels : register(u1);
 BIND(4) RWStructuredBuffer<uint> dirtyTiles : register(u2);
-groupshared uint groupDirty;
 uint sp(uint i) { return surfaceParameters.Load(i*4); }
 uint sourcePixel(uint x,uint y) {
     uint sx=x,sy=y;
@@ -48,19 +47,19 @@ uint fittedPixel(uint x,uint y) {
     }
     return pixel;
 }
-[numthreads(64,1,1)]
-void main(uint3 group : SV_GroupID,uint lane : SV_GroupIndex) {
-    if (lane==0) groupDirty=sp(10);
-    GroupMemoryBarrierWithGroupSync();
-    uint changed=0;
-    for (uint i=lane;i<4096;i+=64) {
-        uint x=group.x*64+i%64,y=group.y*64+i/64;
-        if (x>=sp(4)||y>=sp(5)) continue;
-        uint pixel=fittedPixel(x,y),offset=(y*sp(4)+x)*4;
-        currentPixels.Store(offset,pixel);
-        if (sp(10)==0 && ((pixel^previousPixels.Load(offset))&0x00ffffff)!=0) changed=1;
+uint compareWidth() { return sp(4); }
+uint compareHeight() { return sp(5); }
+uint compareForce() { return sp(10); }
+uint comparePixel(uint x,uint y) { return fittedPixel(x,y); }
+uint comparePrevious(uint offset) {
+    if (sp(11)!=0) {
+        uint x=(offset/4)%sp(4),y=(offset/4)/sp(4);
+        uint tile=(y/64)*((sp(4)+63)/64)+x/64;
+        uint sx=sp(12+tile*2),sy=sp(13+tile*2);
+        if (sx!=0xffffffff) offset=((sy+y%64)*sp(4)+sx+x%64)*4;
     }
-    if (changed!=0) InterlockedOr(groupDirty,1);
-    GroupMemoryBarrierWithGroupSync();
-    if (lane==0) dirtyTiles[group.y*((sp(4)+63)/64)+group.x]=groupDirty;
+    return previousPixels.Load(offset);
 }
+void compareStore(uint offset,uint pixel) { currentPixels.Store(offset,pixel); }
+void compareFlag(uint index,uint dirty) { dirtyTiles[index]=dirty; }
+// ANYKVM_TILE_COMPARE

@@ -1,6 +1,7 @@
 package gamestream
 
 import (
+	"anykvm/internal/logging"
 	"anykvm/internal/netstats"
 	"bufio"
 	"bytes"
@@ -8,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/textproto"
 	"strconv"
@@ -163,12 +163,12 @@ func (s *Server) rtspLoop() {
 			}
 			req, err := x.readRTSP(conn)
 			if err != nil {
-				log.Printf("gamestream: invalid RTSP request: %v", err)
+				logging.Infof("gamestream: invalid RTSP request: %v", err)
 				return
 			}
 			resp := x.handleRTSP(req)
 			if err = x.writeRTSP(conn, resp); err != nil {
-				log.Printf("gamestream: RTSP response: %v", err)
+				logging.Infof("gamestream: RTSP response: %v", err)
 			}
 		}()
 	}
@@ -181,7 +181,7 @@ func (x *streamSession) handleRTSP(r rtspRequest) []byte {
 	if sid := r.headers.Get("Session"); sid != "" && strings.TrimSpace(strings.Split(sid, ";")[0]) != x.id {
 		return rtspResponse(454, r.cseq, "", nil)
 	}
-	log.Printf("gamestream: RTSP %s %s", r.method, r.target)
+	logging.Infof("gamestream: RTSP %s %s", r.method, r.target)
 	extra := map[string]string{}
 	body := ""
 	code := 200
@@ -229,13 +229,13 @@ func (x *streamSession) handleRTSP(r rtspRequest) []byte {
 		}
 	case "ANNOUNCE":
 		if err := x.announce(r.body); err != nil {
-			log.Printf("gamestream: negotiation rejected: %v", err)
+			logging.Infof("gamestream: negotiation rejected: %v", err)
 			code = 461
 			x.stop("unsupported stream configuration")
 		}
 	case "PLAY":
 		if err := x.play(); err != nil {
-			log.Printf("gamestream: PLAY failed: %v", err)
+			logging.Infof("gamestream: PLAY failed: %v", err)
 			code = 455
 		}
 	case "TEARDOWN":

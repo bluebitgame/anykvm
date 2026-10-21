@@ -33,6 +33,8 @@ func (*jpegWireConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
 type jpegWireRect struct {
 	r    rectangle
 	data []byte
+	fill bool
+	rgb  [3]byte
 }
 
 // Parse the actual RFB framing and independently decode each rectangle's JPEG.
@@ -54,6 +56,11 @@ func readJPEGWire(t *testing.T, conn *jpegWireConn, enc int32) []jpegWireRect {
 		wire = wire[12:]
 		n := 0
 		if enc == encTight {
+			if len(wire) >= 4 && wire[0] == tightFill {
+				rects = append(rects, jpegWireRect{r: r, fill: true, rgb: [3]byte{wire[1], wire[2], wire[3]}})
+				wire = wire[4:]
+				continue
+			}
 			if len(wire) < 2 || wire[0] != tightJPEG {
 				t.Fatal("missing Tight JPEG control byte")
 			}
@@ -91,7 +98,7 @@ func readJPEGWire(t *testing.T, conn *jpegWireConn, enc int32) []jpegWireRect {
 		if img.Bounds().Dx() != r.w || img.Bounds().Dy() != r.h {
 			t.Fatalf("JPEG size %v differs from rectangle %+v", img.Bounds(), r)
 		}
-		rects = append(rects, jpegWireRect{r, data})
+		rects = append(rects, jpegWireRect{r: r, data: data})
 		wire = wire[n:]
 	}
 	if len(wire) != 0 {
@@ -144,7 +151,11 @@ func TestJPEGDirtyRectDelivery(t *testing.T) {
 			c.needFull = true
 			c.sendFrame(frame)
 			got = readJPEGWire(t, conn, enc)
-			if len(got) != 1 || got[0].r != (rectangle{0, 0, w, h}) {
+			area := 0
+			for _, part := range got {
+				area += part.r.w * part.r.h
+			}
+			if area != w*h {
 				t.Fatal("explicit full refresh suppressed")
 			}
 			frame.width, frame.height = 65, 67
@@ -179,7 +190,7 @@ func TestJPEGDirtyToleranceBaseline(t *testing.T) {
 	}
 }
 
-func TestMJPEGPassthroughSkipsDirtyRects(t *testing.T) {
+func TestMJPEGIncrementalKeepsRawBaselineSeparate(t *testing.T) {
 	for _, enc := range []int32{encJPEG, encTight} {
 		t.Run(encodingName(enc), func(t *testing.T) {
 			c, conn := newJPEGWireClient(enc, 65, 67)
@@ -191,12 +202,18 @@ func TestMJPEGPassthroughSkipsDirtyRects(t *testing.T) {
 				t.Fatal(err)
 			}
 			frame := &frameData{format: capture.FormatJPEG, width: 65, height: 67, data: data}
-			for i := 0; i < 2; i++ {
-				c.sendFrame(frame)
-				got := readJPEGWire(t, conn, enc)
-				if len(got) != 1 || got[0].r != (rectangle{0, 0, 65, 67}) || !bytes.Equal(got[0].data, data) || c.prevFrame != nil {
-					t.Fatal("MJPEG was re-encoded, diffed, or retained a stale baseline")
-				}
+			c.sendFrame(frame)
+			got := readJPEGWire(t, conn, enc)
+			area := 0
+			for _, tile := range got {
+				area += tile.r.w * tile.r.h
+			}
+			if area != 65*67 || c.prevFrame != nil {
+				t.Fatal("MJPEG refresh coverage or raw baseline is incorrect")
+			}
+			c.sendFrame(frame)
+			if conn.wire.Len() != 0 || !c.pendingReq {
+				t.Fatal("static MJPEG was resent or request lost")
 			}
 			c.sendFrame(&frameData{format: capture.FormatRaw, width: 65, height: 67, data: pixels})
 			if got := readJPEGWire(t, conn, enc); len(got) != 1 || got[0].r != (rectangle{0, 0, 65, 67}) {
@@ -209,7 +226,11 @@ func TestMJPEGPassthroughSkipsDirtyRects(t *testing.T) {
 func TestTightJPEGWideRefresh(t *testing.T) {
 	const w, h = 2051, 257
 	c, conn := newJPEGWireClient(encTight, w, h)
-	c.sendFrame(&frameData{format: capture.FormatRaw, width: w, height: h, data: make([]byte, w*h*4)})
+	pixels := make([]byte, w*h*4)
+	for i := 0; i < len(pixels); i += 4 {
+		pixels[i] = byte(i / 4)
+	}
+	c.sendFrame(&frameData{format: capture.FormatRaw, width: w, height: h, data: pixels})
 	got := readJPEGWire(t, conn, encTight)
 	want := []rectangle{{0, 0, 2048, 256}, {2048, 0, 3, 256}, {0, 256, 2048, 1}, {2048, 256, 3, 1}}
 	if len(got) != len(want) {
@@ -250,22 +271,25 @@ func TestJPEGRequestSurvivesUnchangedFrame(t *testing.T) {
 		if _, err := io.ReadFull(receiver, header[:]); err != nil {
 			t.Fatal(err)
 		}
-		if binary.BigEndian.Uint16(header[2:4]) != 1 || int32(binary.BigEndian.Uint32(header[12:16])) != encTight || header[16] != tightJPEG {
+		if binary.BigEndian.Uint16(header[2:4]) != 1 || int32(binary.BigEndian.Uint32(header[12:16])) != encTight || (header[16] != tightJPEG && header[16] != tightFill) {
 			t.Fatalf("invalid Tight update: %x", header)
 		}
-		n := 0
-		for j := 0; j < 3; j++ {
-			var b [1]byte
-			if _, err := io.ReadFull(receiver, b[:]); err != nil {
-				t.Fatal(err)
-			}
-			if j == 2 {
-				n |= int(b[0]) << 14
-			} else {
-				n |= int(b[0]&127) << (j * 7)
-			}
-			if j == 2 || b[0]&128 == 0 {
-				break
+		n := 3
+		if header[16] == tightJPEG {
+			n = 0
+			for j := 0; j < 3; j++ {
+				var b [1]byte
+				if _, err := io.ReadFull(receiver, b[:]); err != nil {
+					t.Fatal(err)
+				}
+				if j == 2 {
+					n |= int(b[0]) << 14
+				} else {
+					n |= int(b[0]&127) << (j * 7)
+				}
+				if j == 2 || b[0]&128 == 0 {
+					break
+				}
 			}
 		}
 		if _, err := io.CopyN(io.Discard, receiver, int64(n)); err != nil {

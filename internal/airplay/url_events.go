@@ -5,13 +5,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"howett.net/plist"
+
+	"anykvm/internal/logging"
 )
 
 type reverseEvents struct {
@@ -67,7 +68,7 @@ func readEventAck(reader *bufio.Reader) error {
 func (r *Receiver) serveReverse(q request, conn net.Conn, reader *bufio.Reader) {
 	key, err := mediaKey(q, conn)
 	if err != nil || q.protocol != "HTTP/1.1" || !strings.EqualFold(q.headers.Get("Upgrade"), "PTTH/1.0") || !strings.Contains(strings.ToLower(q.headers.Get("Connection")), "upgrade") {
-		log.Printf("airplay: POST /reverse from %s -> 400", conn.RemoteAddr())
+		logging.Infof("airplay: POST /reverse from %s -> 400", conn.RemoteAddr())
 		writeResponse(conn, q, 400, nil, "")
 		return
 	}
@@ -76,7 +77,7 @@ func (r *Receiver) serveReverse(q request, conn net.Conn, reader *bufio.Reader) 
 	r.mu.Lock()
 	if r.urlPlayer != nil && r.urlPlayer.key != key || r.owner != nil && r.urlPlayer == nil && !samePlaybackPeer(r.owner, key) {
 		r.mu.Unlock()
-		log.Printf("airplay: POST /reverse from %s -> 453 (receiver owned by another sender/session)", conn.RemoteAddr())
+		logging.Infof("airplay: POST /reverse from %s -> 453 (receiver owned by another sender/session)", conn.RemoteAddr())
 		writeResponse(conn, q, 453, nil, "")
 		return
 	}
@@ -96,10 +97,10 @@ func (r *Receiver) serveReverse(q request, conn net.Conn, reader *bufio.Reader) 
 	}
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: PTTH/1.0\r\nConnection: Upgrade\r\n\r\n"); err != nil {
-		log.Printf("airplay: POST /reverse from %s upgrade failed: %v", conn.RemoteAddr(), err)
+		logging.Infof("airplay: POST /reverse from %s upgrade failed: %v", conn.RemoteAddr(), err)
 		return
 	}
-	log.Printf("airplay: POST /reverse from %s -> 101", conn.RemoteAddr())
+	logging.Infof("airplay: POST /reverse from %s -> 101", conn.RemoteAddr())
 	// Read continuously so EOF also releases idle or replaced reverse sockets.
 	// This worker exits before serveReverse returns; no orphaned socket readers.
 	acks := make(chan error)

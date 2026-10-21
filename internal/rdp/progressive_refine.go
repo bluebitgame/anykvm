@@ -2,7 +2,8 @@ package rdp
 
 import (
 	"errors"
-	"log"
+
+	"anykvm/internal/logging"
 )
 
 // MS-RDPEGFX 3.1.8.1.3 and 3.2.8.1.5: one coarse original FIRST,
@@ -41,7 +42,7 @@ func (e *progressiveEncoder) initRefinement(w, h int) {
 		return
 	}
 	if n > progressiveRefineCacheBytes/(4*progressiveTileCoefficients) {
-		log.Printf("rdp: Progressive %dx%d exceeds refinement cache limit; using SIMPLE", w, h)
+		logging.Infof("rdp: Progressive %dx%d exceeds refinement cache limit; using SIMPLE", w, h)
 		return
 	}
 	// GPU backends own the coefficient cache; only scheduling bits live here.
@@ -82,7 +83,7 @@ func (e *progressiveEncoder) encodeLayered(pixels []byte, rects []bitmapRect, fr
 		}
 		// Cache contains base coefficients in exactly the same order and scale
 		// as Go. A failed unsent FIRST can be recomputed; UPGRADE is read-only.
-		log.Printf("rdp: Progressive layered native encoder failed, switching to Go: %v", err)
+		logging.Infof("rdp: Progressive layered native encoder failed, switching to Go: %v", err)
 		e.native.close()
 		e.native = nil
 	}

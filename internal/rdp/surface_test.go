@@ -20,6 +20,8 @@ type surfaceTestConn struct {
 	surfaceW, surfaceH     int
 	outputW, outputH       int
 	creates, deletes       int
+	copyCommands           int
+	onGraphics             func(uint16, []byte)
 	frames                 chan struct{}
 	allowScaled            bool
 	resets, scaledMaps     int
@@ -68,6 +70,9 @@ func (c *surfaceTestConn) Write(packet []byte) (int, error) {
 	for len(gfx) > 0 {
 		n, kind := int(le.Uint32(gfx[4:])), le.Uint16(gfx)
 		body := gfx[8:n]
+		if c.onGraphics != nil {
+			c.onGraphics(kind, body)
+		}
 		switch kind {
 		case 0xe:
 			c.resets++
@@ -84,7 +89,7 @@ func (c *surfaceTestConn) Write(packet []byte) (int, error) {
 			if _, exists := c.surfaces[id]; exists {
 				return 0, fmt.Errorf("duplicate CREATE_SURFACE %d", id)
 			}
-			if id != 1 && !c.allowScaled {
+			if id != 1 && id != progressiveMoveScratch && !c.allowScaled {
 				return 0, fmt.Errorf("unexpected surface %d", id)
 			}
 			c.surfaces[id] = size
@@ -93,6 +98,25 @@ func (c *surfaceTestConn) Write(packet []byte) (int, error) {
 				c.creates++
 				c.progressiveInitialized = false
 			}
+		case 5:
+			if len(body) != 18 || le.Uint16(body[12:]) != 1 {
+				return 0, fmt.Errorf("invalid surface copy")
+			}
+			source, destination := int(le.Uint16(body)), int(le.Uint16(body[2:]))
+			sw, ok := c.surfaces[source]
+			if !ok {
+				return 0, fmt.Errorf("missing source surface")
+			}
+			dw, ok := c.surfaces[destination]
+			if !ok {
+				return 0, fmt.Errorf("missing target surface")
+			}
+			x0, y0, x1, y1 := int(le.Uint16(body[4:])), int(le.Uint16(body[6:])), int(le.Uint16(body[8:])), int(le.Uint16(body[10:]))
+			x, y := int(le.Uint16(body[14:])), int(le.Uint16(body[16:]))
+			if x1 <= x0 || y1 <= y0 || x1 > sw.X || y1 > sw.Y || x+x1-x0 > dw.X || y+y1-y0 > dw.Y {
+				return 0, fmt.Errorf("surface copy outside bounds")
+			}
+			c.copyCommands++
 		case 0xa:
 			id := int(le.Uint16(body))
 			if _, exists := c.surfaces[id]; !exists {

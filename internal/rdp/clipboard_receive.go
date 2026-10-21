@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -165,7 +165,7 @@ func (c *client) publishRemoteClipboardFiles(p []byte) error {
 	s := &c.clipboard
 	files, err := decodeClipboardFileList(p)
 	if err != nil {
-		log.Printf("rdp: clipboard file list: %v", err)
+		logging.Infof("rdp: clipboard file list: %v", err)
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -180,7 +180,7 @@ func (c *client) publishRemoteClipboardFiles(p []byte) error {
 		})
 	if err != nil {
 		c.retireRemoteClipboardFiles()
-		log.Printf("rdp: clipboard file publication: %v", err)
+		logging.Infof("rdp: clipboard file publication: %v", err)
 		return nil
 	}
 	remote.release = release
@@ -217,7 +217,7 @@ func (c *client) receiveClipboardFile(ctx context.Context, remote *remoteClipboa
 		remote.sizes[index] = size
 		c.clipboard.mu.Unlock()
 	}
-	log.Printf("rdp: clipboard download %s (%d bytes)", remote.files[index].Name, size)
+	logging.Infof("rdp: clipboard download %s (%d bytes)", remote.files[index].Name, size)
 	for offset := int64(0); offset < size; {
 		requested := uint32(min(int64(clipboardReceiveChunk), size-offset))
 		data, err := c.requestClipboardFileChunk(ctx, remote, index, clipFileRange, uint64(offset), requested)
@@ -239,7 +239,7 @@ func (c *client) receiveClipboardFile(ctx context.Context, remote *remoteClipboa
 	if err := file.Truncate(size); err != nil {
 		return err
 	}
-	log.Printf("rdp: clipboard download complete %s (%d bytes)", remote.files[index].Name, size)
+	logging.Infof("rdp: clipboard download complete %s (%d bytes)", remote.files[index].Name, size)
 	return nil
 }
 

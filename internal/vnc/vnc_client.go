@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/url"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"anykvm/internal/wol"
 )
 
@@ -183,7 +183,7 @@ func (c *VNCClient) handshake() error {
 		return fmt.Errorf("vnc: read server version: %w", err)
 	}
 	serverVer := string(buf[:12])
-	log.Printf("vnc client: server version %q", strings.TrimSpace(serverVer))
+	logging.Infof("vnc client: server version %q", strings.TrimSpace(serverVer))
 
 	if _, err := io.WriteString(c.conn, protoVersion); err != nil {
 		return fmt.Errorf("vnc: write client version: %w", err)
@@ -242,7 +242,7 @@ func (c *VNCClient) handshake() error {
 		c.fbName = string(nameBuf)
 	}
 
-	log.Printf("vnc client: desktop %dx%d %q", c.fbWidth, c.fbHeight, c.fbName)
+	logging.Infof("vnc client: desktop %dx%d %q", c.fbWidth, c.fbHeight, c.fbName)
 	if !validVNCSize(c.fbWidth, c.fbHeight) {
 		return fmt.Errorf("vnc: invalid desktop size %dx%d", c.fbWidth, c.fbHeight)
 	}
@@ -329,7 +329,7 @@ func (c *VNCClient) authVeNCrypt() error {
 		return fmt.Errorf("vnc: read vencrypt version: %w", err)
 	}
 	major, minor := buf[0], buf[1]
-	log.Printf("vnc client: VeNCrypt version %d.%d", major, minor)
+	logging.Infof("vnc client: VeNCrypt version %d.%d", major, minor)
 
 	buf[0], buf[1] = major, minor
 	if _, err := c.conn.Write(buf[:2]); err != nil {
@@ -381,7 +381,7 @@ func (c *VNCClient) authVeNCrypt() error {
 	}
 	c.conn = tlsConn
 	c.reader = tlsConn
-	log.Printf("vnc client: VeNCrypt TLS established")
+	logging.Infof("vnc client: VeNCrypt TLS established")
 
 	if chosen == vencryptX509Vnc {
 		return c.authVNC()
@@ -498,7 +498,7 @@ func (c *VNCClient) recvLoop() {
 			err = fmt.Errorf("vnc: unsupported server message %d", message[0])
 		}
 		if err != nil {
-			log.Printf("vnc client: %v", err)
+			logging.Infof("vnc client: %v", err)
 			return
 		}
 	}

@@ -20,9 +20,12 @@ bk_vk_image *bk_vk_convert(bk_vk *, const bk_vk_source *, int, int, int, char *,
 uint32_t bk_vk_image_pitch(bk_vk_image *);
 int bk_vk_readback(bk_vk_image *, void **, size_t *, char *, size_t);
 void bk_vk_image_free(bk_vk_image *);
-int bk_vk_jpeg_init(bk_vk *, const void *, size_t, const void *, size_t, const void *, size_t, char *, size_t);
+int bk_vk_jpeg_init(bk_vk *, const void *, size_t, const void *, size_t, const void *, size_t, const void *, size_t, const void *, size_t,
+                   const void *, size_t, const void *, size_t, const void *, size_t, const void *, size_t, char *, size_t);
 int bk_vk_jpeg_encode(bk_vk *, const bk_vk_source *, int, int, const uint32_t *, const uint32_t *,
     const uint8_t *, size_t, uint8_t **, size_t *, char *, size_t);
+int bk_vk_jpeg_encode_mode(bk_vk *, const bk_vk_source *, int, int, const uint32_t *, const uint32_t *,
+    const uint8_t *, size_t, int, uint8_t **, size_t *, char *, size_t);
 typedef struct bk_vk_encoder bk_vk_encoder;
 int bk_vk_encoder_supports(bk_vk *);
 bk_vk_encoder *bk_vk_encoder_new(bk_vk *, int, int, int, int, int, char *, size_t);
@@ -39,6 +42,6 @@ int bk_vk_progressive_run(bk_vk_progressive *, const uint8_t *, size_t, const ui
 void bk_vk_progressive_free(bk_vk_progressive *);
 bk_vk *bk_vk_progressive_context(bk_vk_image *,const void *,size_t,char *,size_t);
 int bk_vk_progressive_surface_init(bk_vk_progressive *,const void *,size_t,char *,size_t);
-int bk_vk_progressive_surface_prepare(bk_vk_progressive *,bk_vk_image *,const uint32_t *,uint32_t *,char *,size_t);
+int bk_vk_progressive_surface_prepare(bk_vk_progressive *,bk_vk_image *,const uint32_t *,size_t,uint32_t *,char *,size_t);
 int bk_vk_progressive_surface_commit(bk_vk_progressive *,char *,size_t);
 #endif

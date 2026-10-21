@@ -26,9 +26,9 @@ import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/framerate"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -195,10 +195,10 @@ func (d *darwinDevice) OpenWithFormat(width, height, fps int) error {
 		if attempt >= 1 {
 			// Keep the session: frames may start later (e.g. the mirrored
 			// device is locked); the bridge tolerates an idle stream.
-			log.Printf("capture: session running but no frames yet (device locked or idle?)")
+			logging.Infof("capture: session running but no frames yet (device locked or idle?)")
 			return nil
 		}
-		log.Printf("capture: no frames within 2.5s; restarting AVFoundation session")
+		logging.Infof("capture: no frames within 2.5s; restarting AVFoundation session")
 		C.avfoundation_stop(d.session)
 		d.session = nil
 		time.Sleep(300 * time.Millisecond)
@@ -228,7 +228,7 @@ func (d *darwinDevice) capture(keepNative bool) (*Frame, error) {
 	}
 	if elapsed := time.Since(d.statsAt); elapsed >= 5*time.Second {
 		frames := int(C.frame_buf_count())
-		log.Printf("capture: AVFoundation input %.1f fps (before host encoding)", float64(frames-d.statsFrames)/elapsed.Seconds())
+		logging.Debugf("capture: AVFoundation input %.1f fps (before host encoding)", float64(frames-d.statsFrames)/elapsed.Seconds())
 		d.statsFrames, d.statsAt = frames, time.Now()
 	}
 	var sample unsafe.Pointer

@@ -57,10 +57,12 @@ int main() {
             if (!std::cin) return 3;
             if(metadata.words[15]==0x53555246) {
                 surfaceParameters.words.assign(metadata.words.begin(),metadata.words.begin()+12);
+                uint extra=metadata.words[14];
+                surfaceParameters.words.insert(surfaceParameters.words.end(),pixels.words.begin(),pixels.words.begin()+extra);
                 uint sourceWords=surfaceParameters.words[2]*surfaceParameters.words[1]/4;
                 uint w=surfaceParameters.words[4],h=surfaceParameters.words[5];
-                sourcePixels.words.assign(pixels.words.begin(),pixels.words.begin()+sourceWords);
-                previousPixels.words.assign(pixels.words.begin()+sourceWords,pixels.words.end());
+                sourcePixels.words.assign(pixels.words.begin()+extra,pixels.words.begin()+extra+sourceWords);
+                previousPixels.words.assign(pixels.words.begin()+extra+sourceWords,pixels.words.end());
                 currentPixels.words.resize(w*h);dirtyTiles.resize(((w+63)/64)*((h+63)/64));
                 for(uint y=0;y<(h+63)/64;y++)for(uint x=0;x<(w+63)/64;x++) {
                     std::vector<std::thread> threads;

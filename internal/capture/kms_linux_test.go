@@ -5,6 +5,7 @@ package capture
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"image/jpeg"
 	"os"
 	"path/filepath"
@@ -43,6 +44,28 @@ func TestLinuxKMSVulkanJPEG(t *testing.T) {
 				t.Fatalf("Vulkan JPEG path: decode=%v GPU=%d pixel readbacks=%d disabled=%v", err, d.gpuFrames, d.readbacks, d.jpegDisabled)
 			}
 		}
+
+		d.SetJPEGRegions(true)
+		for index := 0; index < 3; index++ {
+			frame := captureOne(t, d, 10*time.Second)
+			snapshot := frame.JPEGRegions
+			if snapshot == nil || len(frame.Data) != 0 || d.jpegDisabled || d.readbacks != 0 {
+				frame.Release()
+				t.Fatal("compact Vulkan JPEG mode fell back or returned full JPEG")
+			}
+			data, err := snapshot.Crop(image.Rect(0, 0, frame.Width, frame.Height))
+			if err != nil {
+				frame.Release()
+				t.Fatal(err)
+			}
+			decoded, err := jpeg.Decode(bytes.NewReader(data))
+			if err != nil || decoded.Bounds().Dx() != frame.Width || decoded.Bounds().Dy() != frame.Height {
+				frame.Release()
+				t.Fatal("invalid compact Vulkan snapshot", err)
+			}
+			frame.Release()
+		}
+		d.SetJPEGRegions(false)
 		if pi {
 			major, minor := d.jpegEncoder.DRMDevice()
 			for _, device := range []struct {

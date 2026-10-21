@@ -174,8 +174,8 @@ static int open_codec(bm_session *s, const AVCodec *codec, AVDictionary **opts, 
 }
 int bm_has_encoder(const char *name) { return avcodec_find_encoder_by_name(name) != NULL; }
 
-bm_session *bm_encoder(const char *name, const char *device, int w, int h, int fps_num, int fps_den,
-                       int bitrate, int audio_ms, char *err, size_t len) {
+static bm_session *encoder_new(const char *name, const char *device, int w, int h, int fps_num, int fps_den,
+                               int bitrate, int audio_ms, int quality, char *err, size_t len) {
     bm_session *s = alloc_session();
     if (!s)
         return NULL;
@@ -346,7 +346,15 @@ bm_session *bm_encoder(const char *name, const char *device, int w, int h, int f
         } else if (!strcmp(name, "mjpeg")) {
             c->pix_fmt = AV_PIX_FMT_YUVJ420P;
             c->color_range = AVCOL_RANGE_JPEG;
+            c->colorspace = AVCOL_SPC_BT470BG;
             c->flags &= ~AV_CODEC_FLAG_LOW_DELAY;
+            if (quality > 0) {
+                // MJPEG uses a quantizer of 1 (best) through 31 (smallest).
+                int quantizer = 1 + (100 - quality) * 30 / 99;
+                c->flags |= AV_CODEC_FLAG_QSCALE;
+                c->global_quality = quantizer * FF_QP2LAMBDA;
+                c->qmin = c->qmax = quantizer;
+            }
         }
     }
     if (open_codec(s, codec, &opts, err, len) < 0)
@@ -363,6 +371,15 @@ fail:
     bm_close(s);
     return NULL;
 }
+bm_session *bm_encoder(const char *name, const char *device, int w, int h, int fps_num, int fps_den,
+                       int bitrate, int audio_ms, char *err, size_t len) {
+    return encoder_new(name, device, w, h, fps_num, fps_den, bitrate, audio_ms, 0, err, len);
+}
+
+bm_session *bm_jpeg_encoder(int w, int h, int quality, char *err, size_t len) {
+    return encoder_new("mjpeg", "", w, h, 1, 1, 0, 0, quality, err, len);
+}
+
 bm_session *bm_decoder(const char *name, char *err, size_t len) {
     bm_session *s = alloc_session();
     if (!s)
@@ -716,14 +733,16 @@ int bm_encode(bm_session *s, const uint8_t *data, size_t size, int w, int h, con
             return error_code(err, len, "video buffer", result);
         // Fit and center the source, retaining even chroma offsets.
         int dw = c->width, dh = c->height;
-        if ((int64_t)w * dh > (int64_t)h * dw)
-            dh = (int)((int64_t)h * dw / w) & ~1;
-        else
-            dw = (int)((int64_t)w * dh / h) & ~1;
-        if (dw < 2)
-            dw = 2;
-        if (dh < 2)
-            dh = 2;
+        // Same-size images need no chroma-aligned resize. In particular JPEG
+        // supports odd dimensions and 1-pixel edges.
+        if (w != dw || h != dh) {
+            if ((int64_t)w * dh > (int64_t)h * dw)
+                dh = (int)((int64_t)h * dw / w) & ~1;
+            else
+                dw = (int)((int64_t)w * dh / h) & ~1;
+            if (dw < 2) dw = 2;
+            if (dh < 2) dh = 2;
+        }
         ptrdiff_t lines[4] = {f->linesize[0], f->linesize[1], f->linesize[2], f->linesize[3]};
         av_image_fill_black(f->data, lines, f->format, c->color_range, c->width, c->height);
         int x = ((c->width - dw) / 2) & ~1, y = ((c->height - dh) / 2) & ~1;
@@ -742,7 +761,7 @@ int bm_encode(bm_session *s, const uint8_t *data, size_t size, int w, int h, con
         if (!s->scale)
             return error_code(err, len, "scale context", AVERROR(EINVAL));
         const int *src_coeff = sws_getCoefficients(SWS_CS_DEFAULT),
-                  *dst_coeff = sws_getCoefficients(SWS_CS_ITU709);
+                  *dst_coeff = sws_getCoefficients(c->colorspace);
         result = sws_setColorspaceDetails(s->scale, src_coeff, src_range, dst_coeff, dst_range, 0,
                                           1 << 16, 1 << 16);
         if (result < 0)
@@ -753,6 +772,7 @@ int bm_encode(bm_session *s, const uint8_t *data, size_t size, int w, int h, con
             return error_code(err, len, "scale", result);
     }
     f->pts = s->pts;
+    f->quality = c->global_quality;
     s->pts += s->audio ? f->nb_samples : 1;
     if (idr) {
         f->pict_type = AV_PICTURE_TYPE_I;

@@ -2,26 +2,26 @@
 
 ## Requirements
 
-Use Go 1.24.5 or newer, Python 3 and a target C compiler.
-Linux CGO builds compile Vulkan shaders using DXC/glslang on PATH, or a pinned,
-checksum-verified glslang downloaded into `build/toolchains/`. Automatic shader
-tool preparation supports macOS and amd64 Linux/Windows hosts; other build
-hosts need an installed DXC/glslang.
-Full media builds require CGO. The optional `viewer` tag also requires SDL2.
+Use Go 1.24.5 or newer, Python 3 and a target C compiler. Full media builds
+require CGO; `viewer` also requires SDL2. The build script downloads missing
+CMake, Ninja and supported shader tools into `build/toolchains/`.
+NASM enables TurboJPEG x86 SIMD. macOS FFmpeg builds also need Make and pkg-config.
 
 - **macOS:** Apple SDK/Command Line Tools. Native screen capture requires macOS
   12.3+; system-audio capture requires macOS 13+. Building macOS from another OS
-  requires a separately supplied Apple SDK and compatible compiler.
+  requires a separately supplied Apple SDK and compatible compiler; automatic
+  macOS runtime packaging is supported only on a macOS host.
 - **Linux:** native builds need a C toolchain, pkg-config, V4L2 and ALSA headers
   (`build-essential pkg-config libv4l-dev libasound2-dev` on Debian), plus
   `libsdl2-dev` for the viewer. Debian 12 cross-build sysroots target glibc 2.36+.
-- **Windows:** the desktop build script prepares LLVM-MinGW. Windows ARM64
-  viewer builds also need CMake, and Ninja when built on Windows. The separate
-  PowerShell builder expects a MinGW-compatible compiler already on PATH.
+- **Windows:** the desktop build script prepares LLVM-MinGW and the CMake/Ninja
+  tools used for runtime libraries and ARM64 SDL2. The separate PowerShell
+  builder expects a MinGW-compatible compiler already on PATH.
 
 The optional Linux `spice` tag requires spice-client-glib, EGL, GBM and libdrm
 development packages. See [SPICE upstream](spice-source.md) for build and runtime
-requirements; these extra system libraries are not bundled by the build script.
+requirements. The build script bundles their runtime libraries; the development
+packages are still needed to compile this optional feature.
 
 ## Desktop build script
 
@@ -41,17 +41,21 @@ Outputs are `build/releases/<os>-<arch>/anykvm` (`anykvm.exe` on Windows).
 `--output` changes that directory. Failed targets return a nonzero status;
 other targets are still attempted and existing binaries survive failed builds.
 
-The script restores pinned sources, compiles Linux Vulkan shaders when needed,
-and prepares supported cross toolchains under
-`build/toolchains/`. Initial setup needs network access;
-verified downloads are cached. macOS/Windows viewer builds bundle matching SDL2
-libraries; Linux viewers use the target system's SDL2 runtime.
-Linux releases also need V4L2/ALSA runtime libraries, such as `libv4l-0`,
-`libv4lconvert0` and `libasound2` on Debian 12.
+The script caches verified sources and tools under `build/toolchains/` and
+packages runtime libraries and licenses alongside the executable:
 
-`--no-bootstrap` uses installed/custom toolchains and cached dependencies without
-automatic downloads. It also skips automatic cross compiler/sysroot configuration;
-set the overrides below to reuse a toolchain under `build/toolchains/` explicitly.
+- Default builds include TurboJPEG; `ffmpeg` builds use FFmpeg 9 instead.
+- Native Windows builds include Opus; `viewer` builds include SDL2.
+- Linux builds include V4L2/ALSA and dependencies for selected features.
+  Debian 12 runtime bundles require glibc 2.36+; GPU drivers remain system-provided.
+
+Failed builds preserve existing outputs. Successful rebuilds remove obsolete
+runtime files previously staged by the script.
+
+`--no-bootstrap` disables downloads and automatic cross-toolchain setup. Supply
+custom toolchain settings below; required dependencies must already be cached.
+Use `ANYKVM_BUILD_<OS>_<ARCH>_FFMPEG_LIBDIR` or
+`ANYKVM_BUILD_<OS>_<ARCH>_TURBOJPEG_LIBDIR` for custom target libraries.
 Per-target overrides use
 `ANYKVM_BUILD_<OS>_<ARCH>_<VARIABLE>`, for example:
 
@@ -81,11 +85,12 @@ It writes `build/windows/anykvm.exe`; `-Compiler` and `-Output` are optional.
 GitHub Actions builds Linux, Windows and macOS for amd64 and arm64. Pushes to
 `main`, pull requests and manual runs produce downloadable build artifacts.
 
-Push a `v*` tag to publish a Release after all six builds succeed:
+After pushing `main` and verifying all six builds, tag the tested commit.
+The tag run rebuilds all targets and publishes a Release only if they pass:
 
 ```sh
-git tag -a v0.1.0-beta.1 -m "AnyKVM v0.1.0-beta.1"
-git push origin main refs/tags/v0.1.0-beta.1
+git tag -a v0.1.1-beta.1 -m "AnyKVM v0.1.1-beta.1"
+git push origin refs/tags/v0.1.1-beta.1
 ```
 
 Tags containing `-` are marked as prereleases. Packages include the executable,
@@ -93,8 +98,8 @@ runtime files, licenses and documentation: ZIP for Windows, tar.gz for Linux
 and macOS, plus `SHA256SUMS` for verification.
 
 Release builds use native media support without `ffmpeg`, `viewer` or `spice`.
-Linux requires V4L2/ALSA runtime libraries and glibc 2.35+ (amd64) or 2.36+
-(arm64). Windows includes Opus but needs its matching Visual C++ runtime.
+Linux packages include V4L2/ALSA libraries and require glibc 2.36+.
+Windows includes the MinGW-built Opus runtime.
 macOS packages are not notarized.
 
 To package a local build:
@@ -119,27 +124,16 @@ also need `python3 tools/build_shaders.py`; macOS, Windows and CGO-disabled
 portability builds do not embed SPIR-V. Add `--ffmpeg` when preparing sources
 for a `go build -tags ffmpeg` or `-tags viewer,ffmpeg` build.
 
-Use an `.exe` output name on Windows. `prepare_sources.py --offline` restores
-from verified cache only. `--platforms linux --ffmpeg` restricts restoration to
-one platform including FFmpeg headers; without `--platforms`, all sources are
-restored. `build_shaders.py --compiler /path/to/dxc` selects a compiler outside
-PATH. `build_shaders.py --offline` uses only installed or cached compilers.
-Neither DXC nor glslang is needed on the runtime host.
-
-Versions/checksums are in `tools/sources.lock.json`. Downloaded sources, generated
-SPIR-V and its hash manifest are ignored by Git.
-
-Linux builds use restored DRM UAPI headers for direct `ioctl` access and
-Vulkan/vk_video headers for GPU conversion and encoding. The Vulkan loader is
-resolved at runtime; target systems need no Vulkan SDK or shader compiler.
-Source preparation also restores the hls.js UMD browser bundle with its embedded
-transmuxer worker.
+Use an `.exe` output name on Windows. `prepare_sources.py --offline` and
+`build_shaders.py --offline` use installed or cached inputs only. Source versions
+and checksums are recorded in `tools/sources.lock.json`. Generated sources and
+shaders are ignored by Git; shader tools are not needed at runtime.
 
 ## Native and optional codecs
 
 Default builds provide native hardware video encoding without FFmpeg:
 
-- **macOS:** H.264/HEVC through VideoToolbox; system JPEG and audio codecs.
+- **macOS:** H.264/HEVC through VideoToolbox; native JPEG and audio codecs.
 - **Windows:** H.264/HEVC/AV1 through NVIDIA NVENC, AMD AMF, Intel QSV or
   Media Foundation.
 - **Linux:** H.264/HEVC/AV1 through Vulkan Video; Raspberry Pi also has V4L2 H.264.
@@ -155,37 +149,24 @@ Installing libraries cannot enable these in an untagged binary. Encoded
 passthrough does not require a decoder; [ARD HEVC](ard-client.md) and
 [CoreDevice pixel/JPEG output](iphone-coredevice.md) do.
 
-JPEG uses built-in anyjpeg (AVX2/SSE2 or ARM64 NEON) with Go JPEG fallback;
-macOS ARM64 retains ImageIO pending NEON benchmarks. No external JPEG library
-is required. FFmpeg media paths remain independent.
+Default JPEG uses TurboJPEG, with Go and macOS ImageIO fallbacks. FFmpeg builds use
+FFmpeg JPEG and never load TurboJPEG. GPU JPEG and restart-based lossless
+cropping remain available in both builds; other MJPEG uses whole-frame
+passthrough when lossless cropping is unavailable.
 
-Native Windows GameStream audio loads `opus.dll` from `ANYKVM_OPUS_LIBDIR`,
-then executable `lib/` and the executable directory. Build scripts package the
-pinned DLL; its matching Visual C++ runtime is also needed. Missing
-or failed audio encoders leave video/input available. Tagged builds use
-libavcodec/libopus instead. To stage a DLL separately:
-
-```sh
-python3 tools/package_opus.py --arch amd64 --output build/windows/lib
-```
-
-Use `--arch arm64` for ARM64. A PCM source is still required.
+`build.py` packages native Windows audio as `lib/opus.dll`. Custom JPEG and Opus
+library locations can be set with `ANYKVM_JPEG_LIBDIR` and `ANYKVM_OPUS_LIBDIR`.
 
 ## FFmpeg libraries and packaging
 
-Source preparation restores the FFmpeg 9 public API headers and generates
-`avconfig.h` and `ffversion.h` for little-endian amd64/arm64 targets. The headers
-are used only by builds with CGO and the `ffmpeg` tag.
+`build.py --tags ffmpeg` prepares FFmpeg 9 headers and shared libraries
+automatically. FFmpeg 7/8 libraries are incompatible. The application loads
+libraries in process; an `ffmpeg` executable is not a substitute.
 
-Tagged builds load **FFmpeg 9** shared libraries in process; production does not
-run an `ffmpeg` executable. Required ABI majors are libavcodec/libavformat/
-libavdevice 63, libavutil 61, libswscale 10 and libswresample 7. The packager also
-stages libavfilter 12. FFmpeg 7/8 libraries are incompatible.
-
+For custom builds, stage matching OS/CPU libraries with the standalone packager.
 Search order includes `ANYKVM_FFMPEG_LIBDIR`, executable `lib/`, the executable
 directory and system paths; macOS also checks Homebrew FFmpeg paths. Libraries,
-codec dependencies and application must match OS/CPU. A standalone executable
-cannot substitute for shared libraries.
+codec dependencies and application must match OS/CPU.
 
 ```sh
 python3 tools/package_ffmpeg.py /path/to/ffmpeg9/lib /path/to/app/lib

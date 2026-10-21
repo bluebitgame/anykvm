@@ -11,10 +11,11 @@ import "C"
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"unsafe"
+
+	"anykvm/internal/logging"
 )
 
 type wasapiAudioDevice struct {
@@ -43,7 +44,7 @@ func (d *wasapiAudioDevice) Open() error {
 	if nameLabel == "" {
 		nameLabel = "default multimedia playback device"
 	}
-	log.Printf("capture: WASAPI loopback %q -> 48000Hz stereo S16LE", nameLabel)
+	logging.Infof("capture: WASAPI loopback %q -> 48000Hz stereo S16LE", nameLabel)
 	return nil
 }
 func (d *wasapiAudioDevice) Capture() (*AudioFrame, error) {
@@ -78,7 +79,7 @@ func ListWASAPILoopbackDevices() []string {
 	var msg [512]C.char
 	names := C.bk_wasapi_devices(&msg[0], C.size_t(len(msg)))
 	if names == nil {
-		log.Printf("capture: %s", C.GoString(&msg[0]))
+		logging.Infof("capture: %s", C.GoString(&msg[0]))
 		return []string{"wasapi"}
 	}
 	defer C.free(unsafe.Pointer(names))

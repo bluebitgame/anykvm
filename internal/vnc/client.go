@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"image"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -15,14 +15,17 @@ import (
 	"anykvm/internal/framebuf"
 	"anykvm/internal/hid"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/pixelops"
 	"anykvm/internal/videotiming"
 )
 
 type client struct {
-	codecs *CodecOptions // immutable policy captured when accepted
-	conn   net.Conn
-	server *Server
+	damageState jpegcodec.DesktopDamageState
+	rawCopySafe bool
+	codecs      *CodecOptions // immutable policy captured when accepted
+	conn        net.Conn
+	server      *Server
 
 	width  uint16
 	height uint16
@@ -74,6 +77,9 @@ type client struct {
 	prevH     int
 	needFull  bool // force a full (non-incremental) update next frame
 
+	jpegPrevious   *compressedJPEGState // writeLoop-owned, committed after a successful update
+	jpegCropLogged bool
+
 	pixelNeed    bool // whether this client currently needs raw pixels
 	pixelNeedSet bool // whether pixelNeed has been reported at least once
 
@@ -107,12 +113,17 @@ type client struct {
 }
 
 type frameData struct {
-	timing videotiming.Delivery
-	buffer *framebuf.Buffer
-	format capture.VideoFormat
-	data   []byte
-	width  uint16
-	height uint16
+	tightFills  map[rectangle]uint32 // exact BGR colors, prepared after dirty detection
+	copies      []copyRectangle
+	damage      *jpegcodec.DesktopDamage
+	jpegRegions *jpegcodec.RestartJPEG
+	jpegRects   map[rectangle][]byte // prepared lossless payloads; only used by sendFrame
+	timing      videotiming.Delivery
+	buffer      *framebuf.Buffer
+	format      capture.VideoFormat
+	data        []byte
+	width       uint16
+	height      uint16
 }
 
 func (f *frameData) release() {
@@ -246,7 +257,7 @@ func (c *client) jpegQualityValue() int {
 
 func (c *client) logf(format string, args ...interface{}) {
 	prefix := fmt.Sprintf("vnc: %s: ", c.conn.RemoteAddr())
-	log.Printf(prefix+format, args...)
+	logging.Infof(prefix+format, args...)
 }
 
 func (c *client) close() {
@@ -697,6 +708,18 @@ func (c *client) offerFrameWithStop(fd *frameData, stop <-chan struct{}) {
 		c.h264Q = nil
 		c.h264QCond.Broadcast()
 	}
+	// Merge advisory damage for raw/GPU JPEG pictures and discard dropped moves.
+	// GPU snapshots retain their independent compressed baseline; H.264 stays ordered.
+	// Missing metadata poisons the accumulated interval.
+	if c.latest != nil && fd.format == c.latest.format && (fd.format == capture.FormatRaw || (fd.jpegRegions != nil && c.latest.jpegRegions != nil)) {
+		if fd.width == c.latest.width && fd.height == c.latest.height {
+			fd.damage = jpegcodec.MergeDesktopDamage(c.latest.damage, fd.damage)
+		} else if fd.damage != nil {
+			invalid := *fd.damage
+			invalid.Valid, invalid.Rects = false, nil
+			fd.damage = &invalid
+		}
+	}
 	c.latest.release()
 	c.latest = fd
 	c.hasLatest = true
@@ -841,19 +864,32 @@ func (c *client) sendFrame(frame *frameData) {
 	// frame races with the raw-pixel request), then encode dirty rectangles at
 	// the locked quality instead of silently forwarding source-quality JPEG.
 	if frame.format == capture.FormatJPEG && (c.jpegLock > 0 || (enc != encJPEG && enc != encTight)) {
-		pixels, w, h, err := jpegcodec.DecodeBGRA(frame.data)
+		data := frame.data
+		if frame.jpegRegions != nil {
+			var err error
+			data, err = frame.jpegRegions.Crop(image.Rect(0, 0, int(frame.width), int(frame.height)))
+			if err != nil {
+				c.close()
+				return
+			}
+		}
+		pixels, w, h, err := jpegcodec.DecodeBGRA(data)
 		if err != nil || w != int(frame.width) || h != int(frame.height) {
 			c.close()
 			return
 		}
 		decoded := *frame
 		decoded.data, decoded.format = pixels, capture.FormatRaw
+		decoded.damage = nil
 		frame = &decoded
 	}
 
 	// Open H.264 forwards the capture-produced access unit directly as a single
 	// full-framebuffer rectangle, bypassing the dirty-rect machinery.
 	if enc == encH264 {
+		c.damageState.Commit(nil)
+		c.rawCopySafe = false
+		c.jpegPrevious = nil
 		c.logEncoding(enc, pf, frame.format)
 		// Each frame.data from readH264Frame is already a complete access unit
 		// (extracted by the push-based Annex-B parser in capture_ffmpeg.go).
@@ -862,7 +898,7 @@ func (c *client) sendFrame(frame *frameData) {
 	}
 
 	// Raw pixels share 64px dirty detection, including JPEG rectangle encoding.
-	// Already compressed MJPEG remains whole-frame passthrough.
+	// Compressed JPEG uses an independent, lossless compressed-domain baseline.
 	effTile := c.effectiveTileSize(enc)
 	if frame.format == capture.FormatJPEG {
 		effTile = 0
@@ -875,9 +911,28 @@ func (c *client) sendFrame(frame *frameData) {
 	c.needFull = false
 	c.encMu.Unlock()
 
+	copies := c.planCopies(frame, full, enc)
+	preparedFrame := *frame
+	preparedFrame.copies = copies
+	frame = &preparedFrame
+	comparison := c.prevFrame
+	if len(copies) > 0 && frame.format == capture.FormatRaw {
+		comparison = copyPixelBaseline(c.prevFrame, int(frame.width), copies)
+	}
 	var rects []rectangle
+	var jpegNext *compressedJPEGState
+	compressed := frame.format == capture.FormatJPEG
+	if compressed {
+		var payloads map[rectangle][]byte
+		jpegNext, rects, payloads = c.prepareCompressedJPEGWithCopies(frame, full, copies)
+		prepared := *frame
+		prepared.jpegRects = payloads
+		frame = &prepared
+	}
 	fullRect := []rectangle{{0, 0, int(frame.width), int(frame.height)}}
-	if effTile <= 0 {
+	if compressed {
+		// Rectangles and standalone JPEG payloads are already prepared.
+	} else if effTile <= 0 {
 		// Dirty-region detection disabled for this encoding: send full frame.
 		rects = fullRect
 	} else if len(frame.data) == 0 {
@@ -887,22 +942,28 @@ func (c *client) sendFrame(frame *frameData) {
 		c.prevW != int(frame.width) || c.prevH != int(frame.height) {
 		rects = fullRect
 	} else {
-		rects = computeDirtyRects(c.prevFrame, frame.data,
-			int(frame.width), int(frame.height), c.pixelTol)
-		if len(rects) == 0 {
-			// Nothing changed within tolerance: keep the existing baseline
-			// (do NOT overwrite it, so sub-tolerance drift accumulates against
-			// the last transmitted pixels and self-corrects once it exceeds
-			// the tolerance) and skip sending. Preserve the outstanding request
-			// so a later changed frame can satisfy a request-driven viewer.
-			c.stateMu.Lock()
-			c.pendingReq = true
-			c.stateMu.Unlock()
-			return
-		}
+		candidates, filtered := c.damageState.CandidateTiles(frame.damage, int(frame.width), int(frame.height), 0)
+		rects = computeDirtyRectsCandidates(comparison, frame.data,
+			int(frame.width), int(frame.height), c.pixelTol, candidates, filtered)
+	}
+	if !compressed && len(copies) > 0 {
+		rects = omitCopyDestinations(rects, copies)
+	}
+	if len(rects) == 0 && len(copies) == 0 {
+		c.damageState.Commit(frame.damage)
+		// Keep the last transmitted baseline and outstanding request. Cursor
+		// updates remain independent and may satisfy the request in writeLoop.
+		c.stateMu.Lock()
+		c.pendingReq = true
+		c.stateMu.Unlock()
+		return
 	}
 
-	if effTile > 0 && (enc == encJPEG || enc == encTight) {
+	if enc == encTight && frame.format == capture.FormatRaw {
+		rects, frame.tightFills = prepareTightRects(frame.data, int(frame.width), rects)
+	} else if enc == encTight && compressed {
+		rects = c.prepareCompressedTight(frame, jpegNext, rects)
+	} else if effTile > 0 && (enc == encJPEG || enc == encTight) {
 		rects = splitJPEGRects(rects)
 	}
 	c.logEncoding(enc, pf, frame.format)
@@ -920,6 +981,18 @@ func (c *client) sendFrame(frame *frameData) {
 
 	if !c.sendFrameUpdate(enc, curEnc, curData, curW, curH, curHotX, curHotY, frame, pf, rects) {
 		return
+	}
+	c.jpegPrevious = jpegNext
+	c.damageState.Commit(frame.damage)
+	if !compressed && len(copies) > 0 {
+		c.prevFrame = comparison
+	}
+	if !compressed && len(rects) > 0 {
+		refreshed := full || c.prevFrame == nil || c.prevW != int(frame.width) || c.prevH != int(frame.height)
+		c.rawCopySafe = losslessPixelEncoding(enc) && (c.rawCopySafe || refreshed)
+	}
+	if compressed {
+		c.rawCopySafe = false
 	}
 	if effTile > 0 {
 		// Update the baseline only for the rectangles we actually transmitted.
@@ -1137,7 +1210,7 @@ func (c *client) encodeRect(buf *bytes.Buffer, enc int32, frame *frameData, pf p
 
 	switch enc {
 	case encTight:
-		return c.encodeTightBody(buf, frame, r)
+		return c.encodeTightBody(buf, frame, pf, r)
 	case encJPEG:
 		return c.encodeJPEGBody(buf, frame, r)
 	case encZRLE:
@@ -1379,24 +1452,45 @@ func (c *client) sendDesktopSize(width, height uint16) bool {
 }
 
 func (c *client) sendFrameUpdate(pixelEnc, curEnc int32, curData []byte, curW, curH, curHotX, curHotY uint16, frame *frameData, pf pixelFormat, rects []rectangle) bool {
-	nr := uint16(len(rects))
+	total := len(rects) + len(frame.copies)
 	hasCursor := curEnc != 0
 	if hasCursor {
-		nr++
+		total++
 	}
 
 	var buf bytes.Buffer
-	buf.WriteByte(msgFramebufferUpdate)
-	buf.WriteByte(0)
-	var nrBuf [2]byte
-	binary.BigEndian.PutUint16(nrBuf[:], nr)
-	buf.Write(nrBuf[:])
-
+	// RFB limits each update to 65,535 rectangles. Keep cursor, copies, and
+	// pixels in order across updates so CopyRect sources remain valid.
+	remaining := total
+	inUpdate := 0
+	startUpdate := func() {
+		count := min(remaining, 65535)
+		buf.WriteByte(msgFramebufferUpdate)
+		buf.WriteByte(0)
+		var countBuf [2]byte
+		binary.BigEndian.PutUint16(countBuf[:], uint16(count))
+		buf.Write(countBuf[:])
+		inUpdate = count
+	}
+	nextRectangle := func() {
+		if inUpdate == 0 {
+			startUpdate()
+		}
+		inUpdate--
+		remaining--
+	}
+	startUpdate()
 	if hasCursor {
+		nextRectangle()
 		c.writeCursorRectHeader(&buf, curEnc, curW, curH, curHotX, curHotY)
 		buf.Write(curData)
 	}
+	for _, move := range frame.copies {
+		nextRectangle()
+		writeCopyRectangle(&buf, move)
+	}
 	for _, r := range rects {
+		nextRectangle()
 		if err := c.encodeRect(&buf, pixelEnc, frame, pf, r); err != nil {
 			c.logf("encode rectangle: %v", err)
 			c.close()
@@ -1428,13 +1522,37 @@ func (c *client) encodeRawBody(buf *bytes.Buffer, frame *frameData, pf pixelForm
 // rectangle from raw BGRA at the client's negotiated (or locked) quality.
 func (c *client) jpegForRect(frame *frameData, r rectangle) ([]byte, error) {
 	if frame.format == capture.FormatJPEG {
+		if frame.jpegRects != nil {
+			data, ok := frame.jpegRects[r]
+			if !ok {
+				return nil, fmt.Errorf("missing prepared JPEG rectangle")
+			}
+			return data, nil
+		}
+		if frame.jpegRegions != nil {
+			return frame.jpegRegions.Crop(image.Rect(r.x, r.y, r.x+r.w, r.y+r.h))
+		}
 		return frame.data, nil
 	}
 	return encodeJPEG(cropBGRA(frame.data, int(frame.width), r), r.w, r.h, c.jpegQualityValue())
 }
 
-// encodeTightBody appends a Tight(JPEG) rectangle body for rect r.
-func (c *client) encodeTightBody(buf *bytes.Buffer, frame *frameData, r rectangle) error {
+// encodeTightBody appends either an exact Fill or a JPEG rectangle body.
+func (c *client) encodeTightBody(buf *bytes.Buffer, frame *frameData, pf pixelFormat, r rectangle) error {
+	if color, ok := frame.tightFills[r]; ok {
+		buf.WriteByte(tightFill)
+		red, green, blue := byte(color>>16), byte(color>>8), byte(color)
+		// TPIXEL uses RGB byte order for 32bpp/depth24 RGB888, regardless
+		// of the negotiated PIXEL endianness or channel shifts.
+		if pf.trueColor && pf.bpp == 4 && pf.depth == 24 && pf.redMax == 255 && pf.greenMax == 255 && pf.blueMax == 255 {
+			buf.Write([]byte{red, green, blue})
+		} else {
+			var pixel [4]byte
+			pf.putPixel(pixel[:], red, green, blue)
+			buf.Write(pixel[:pf.bpp])
+		}
+		return nil
+	}
 	jpegData, err := c.jpegForRect(frame, r)
 	if err != nil {
 		return err
@@ -1592,7 +1710,7 @@ func (c *client) handlePointerEvent(buttons uint8, x, y uint16) {
 		threshold := (int(c.width) + int(c.height)) / 8
 		if abs(dx) > threshold || abs(dy) > threshold {
 			c.mouseRelative = false
-			log.Printf("vnc: client left relative mouse mode (detected ungrab)")
+			logging.Infof("vnc: client left relative mouse mode (detected ungrab)")
 		} else {
 			if oldX != int(x) || oldY != int(y) {
 				c.server.config.HID.MouseMoveRel(dx, dy)

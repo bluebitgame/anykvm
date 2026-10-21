@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
 
 	"anykvm/internal/avmedia"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 const maxPayload = 64 << 20
@@ -107,7 +107,7 @@ func (c *Client) OpenWithFormat(w, h, fps int) error {
 	}
 	err = c.openSession(password, standard, w, h, fps)
 	if !standard && errors.Is(err, ErrUnsupported) && c.opts.Fallback == "vnc" {
-		log.Printf("ard: High Performance unavailable (%v); using configured VNC fallback", err)
+		logging.Infof("ard: High Performance unavailable (%v); using configured VNC fallback", err)
 		err = c.openSession(password, true, w, h, fps)
 	}
 	return err
@@ -135,7 +135,7 @@ func (c *Client) openSession(password string, standard bool, w, h, fps int) erro
 		}
 	}
 	if w > 0 || h > 0 {
-		log.Printf("ard: requested %dx%d; mirror source retains remote %dx%d", w, h, s.w, s.h)
+		logging.Infof("ard: requested %dx%d; mirror source retains remote %dx%d", w, h, s.w, s.h)
 	}
 	if err = s.initialize(); err != nil {
 		s.stop(err)
@@ -152,14 +152,14 @@ func (c *Client) openSession(password string, standard bool, w, h, fps int) erro
 		go s.mediaLoop()
 	}
 	if standard {
-		log.Printf("ard: ordinary RFB fallback active %dx%d", s.w, s.h)
+		logging.Infof("ard: ordinary RFB fallback active %dx%d", s.w, s.h)
 		return nil
 	}
 	timer := time.NewTimer(c.opts.Timeout)
 	defer timer.Stop()
 	select {
 	case <-s.ready:
-		log.Printf("ard: single-picture HEVC decoded; output=BGRA")
+		logging.Infof("ard: single-picture HEVC decoded; output=BGRA")
 		return nil
 	case <-s.done:
 		err = s.failure()

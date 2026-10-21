@@ -10,11 +10,11 @@ import (
 	"crypto/aes"
 	"errors"
 	"io"
-	"log"
 	"time"
 
 	"anykvm/internal/bridge"
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 func (x *streamSession) videoLoop() {
@@ -44,12 +44,12 @@ func (x *streamSession) videoLoopUsing(newEncoder func(videoenc.Options) (videoe
 	case first = <-x.frames:
 	case <-fallback:
 		waitingForSource = true
-		log.Printf("gamestream: sending waiting video until capture supplies its first picture")
+		logging.Infof("gamestream: sending waiting video until capture supplies its first picture")
 		first = bridge.Frame{Format: capture.FormatRaw, Width: x.options.Width, Height: x.options.Height, Data: make([]byte, x.options.Width*x.options.Height*4)}
 	}
 	v := &videoPacketizer{}
 	v.pacer.mbps = x.server.cfg.VideoPacingMbps
-	log.Printf("gamestream: UDP burst pacing %d Mbps", v.pacer.bytesPerSecond()*8/1000000)
+	logging.Infof("gamestream: UDP burst pacing %d Mbps", v.pacer.bytesPerSecond()*8/1000000)
 	if x.options.Encryption&2 != 0 {
 		v.gcm = x.gcm
 	}
@@ -78,10 +78,10 @@ func (x *streamSession) videoLoopUsing(newEncoder func(videoenc.Options) (videoe
 				epoch = next.CapturedAt.Add(-time.Since(epoch))
 			}
 			waitingForSource = false
-			log.Printf("gamestream: capture ready; replacing waiting video")
+			logging.Infof("gamestream: capture ready; replacing waiting video")
 		}
 		if err != nil && x.ctx.Err() == nil {
-			log.Printf("gamestream: video encoder: %v", err)
+			logging.Infof("gamestream: video encoder: %v", err)
 			x.stop("video encoder failed")
 			return
 		}
@@ -240,7 +240,7 @@ func (x *streamSession) encodeVideoUsing(first bridge.Frame, v *videoPacketizer,
 		}
 		now := time.Now()
 		if lastSent.IsZero() {
-			log.Printf("gamestream: first encoded picture frame=%d output=%dx%d rtp_timestamp=%d", v.frame, o.Width, o.Height, timestamp)
+			logging.Infof("gamestream: first encoded picture frame=%d output=%dx%d rtp_timestamp=%d", v.frame, o.Width, o.Height, timestamp)
 		}
 		maxSend = max(maxSend, now.Sub(sendStart))
 		if !lastSent.IsZero() {
@@ -252,7 +252,7 @@ func (x *streamSession) encodeVideoUsing(first bridge.Frame, v *videoPacketizer,
 			idrs++
 		}
 		if elapsed := now.Sub(statsStart); elapsed >= 5*time.Second {
-			log.Printf("gamestream: video %.1f fps source=%dx%d output=%dx%d idrs=%d max_gap=%.1fms max_encode=%.1fms max_pacing=%.1fms max_packetize_send=%.1fms", float64(frames)/elapsed.Seconds(), current.Width, current.Height, o.Width, o.Height, idrs, float64(maxGap)/float64(time.Millisecond), float64(maxEncode)/float64(time.Millisecond), float64(maxPacing)/float64(time.Millisecond), float64(maxSend)/float64(time.Millisecond))
+			logging.Debugf("gamestream: video %.1f fps source=%dx%d output=%dx%d idrs=%d max_gap=%.1fms max_encode=%.1fms max_pacing=%.1fms max_packetize_send=%.1fms", float64(frames)/elapsed.Seconds(), current.Width, current.Height, o.Width, o.Height, idrs, float64(maxGap)/float64(time.Millisecond), float64(maxEncode)/float64(time.Millisecond), float64(maxPacing)/float64(time.Millisecond), float64(maxSend)/float64(time.Millisecond))
 			statsStart, frames, idrs = now, 0, 0
 			maxGap, maxEncode, maxPacing, maxSend = 0, 0, 0, 0
 		}
@@ -325,7 +325,7 @@ func (x *streamSession) audioLoop() {
 		if !avmedia.Enabled {
 			return nil, err
 		}
-		log.Printf("gamestream: system Opus unavailable: %v; using in-process libopus", err)
+		logging.Infof("gamestream: system Opus unavailable: %v; using in-process libopus", err)
 		session, err := avmedia.NewAudioEncoder(x.options.AudioDuration, opusBitrateKbps)
 		if err != nil {
 			return nil, err
@@ -333,7 +333,7 @@ func (x *streamSession) audioLoop() {
 		return &libraryOpusEncoder{session: session}, nil
 	}); err != nil && x.ctx.Err() == nil {
 		// Audio is optional: capture or codec failures must not stop video/input.
-		log.Printf("gamestream: audio disabled: %v", err)
+		logging.Infof("gamestream: audio disabled: %v", err)
 	}
 }
 

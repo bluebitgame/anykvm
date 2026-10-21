@@ -24,7 +24,7 @@ def package(target, source, output, root=ROOT):
     # Stage separately so packaging never changes the original build directory.
     with tempfile.TemporaryDirectory(prefix="anykvm-release-") as temporary:
         staging = Path(temporary) / name
-        shutil.copytree(source, staging)
+        shutil.copytree(source, staging, symlinks=True)
         shutil.copy2(root / "LICENSE", staging / "LICENSE")
         shutil.copy2(root / "README.md", staging / "README.md")
         shutil.copytree(root / "docs", staging / "docs", ignore=shutil.ignore_patterns("plans"))

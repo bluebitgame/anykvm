@@ -1,4 +1,4 @@
-//go:build darwin && cgo && !amd64 && !anykvm_jpeg_simd
+//go:build darwin && cgo
 
 #import <Foundation/Foundation.h>
 #import <CoreVideo/CoreVideo.h>

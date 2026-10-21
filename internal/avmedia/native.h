@@ -16,6 +16,7 @@ void bm_media_close(bm_media*);
 int bm_load(const char *dir,char *err,size_t len);
 bm_session *bm_encoder(const char *name,const char *device,int w,int h,int fps_num,int fps_den,int bitrate,int audio_ms,char *err,size_t len);
 bm_session *bm_decoder(const char *name,char *err,size_t len);
+bm_session *bm_jpeg_encoder(int w,int h,int quality,char *err,size_t len);
 bm_session *bm_audio_decoder(const char *name,const uint8_t *config,size_t size,int rate,int channels,char *err,size_t len);
 bm_session *bm_source(const char *format,const char *url,const char *options,int audio,const char *passthrough,char *err,size_t len);
 int bm_encode(bm_session*,const uint8_t*,size_t,int,int,const char*,int,uint8_t**,int*,char*,size_t);

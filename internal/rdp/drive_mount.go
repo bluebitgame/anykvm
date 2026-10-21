@@ -2,10 +2,11 @@ package rdp
 
 import (
 	"context"
-	"log"
 	"strings"
 	"time"
 	"unicode"
+
+	"anykvm/internal/logging"
 )
 
 type driveVolume interface {
@@ -44,18 +45,18 @@ func (c *client) startDriveMount() {
 		stop()
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("rdp: cannot automatically mount client drives: %v", err)
+				logging.Infof("rdp: cannot automatically mount client drives: %v", err)
 			}
 			return
 		}
 		if ctx.Err() == nil {
-			log.Printf("rdp: client drives mounted at %s", volume.Path())
+			logging.Infof("rdp: client drives mounted at %s", volume.Path())
 		}
 		<-ctx.Done()
 		if err := volume.Close(); err != nil {
-			log.Printf("rdp: cannot unmount client drives at %s: %v", volume.Path(), err)
+			logging.Infof("rdp: cannot unmount client drives at %s: %v", volume.Path(), err)
 		} else {
-			log.Printf("rdp: client drives unmounted")
+			logging.Infof("rdp: client drives unmounted")
 		}
 	}()
 }

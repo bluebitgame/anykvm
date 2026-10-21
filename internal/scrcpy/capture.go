@@ -4,12 +4,12 @@ import (
 	"anykvm/internal/avmedia"
 	"anykvm/internal/jpegcodec"
 	"fmt"
-	"log"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // RequestKeyframe restarts only the Android video encoder, preserving audio.
@@ -65,7 +65,7 @@ func (c *Capture) OpenWithFormat(width, height, fps int) error {
 	// H.264-capable clients (browser WebCodecs, VNC Open H.264) still work.
 	if codec != "h264" && codec != "hevc" {
 		if _, ok := capture.ResolveFFmpeg(); !ok {
-			log.Printf("scrcpy: FFmpeg shared libraries not found; falling back to H.264 passthrough (JPEG/raw clients will not get video)")
+			logging.Infof("scrcpy: FFmpeg shared libraries not found; falling back to H.264 passthrough (JPEG/raw clients will not get video)")
 			codec = "h264"
 		}
 	}
@@ -86,7 +86,7 @@ func (c *Capture) OpenWithFormat(width, height, fps int) error {
 	c.closed.Store(false)
 
 	if codec == "h264" || codec == "hevc" {
-		log.Printf("scrcpy: %s passthrough", codec)
+		logging.Infof("scrcpy: %s passthrough", codec)
 		return nil
 	}
 	if err := c.startTranscoder(codec, qscale); err != nil {

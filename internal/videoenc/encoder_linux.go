@@ -4,8 +4,8 @@ package videoenc
 
 import (
 	"anykvm/internal/avmedia"
+	"anykvm/internal/logging"
 	"fmt"
-	"log"
 )
 
 func newPlatformEncoder(o Options) (Encoder, error) {
@@ -18,7 +18,7 @@ func newPlatformEncoder(o Options) (Encoder, error) {
 		if vulkanErr == nil {
 			return e, nil
 		}
-		log.Printf("encoder Vulkan Video: %v", vulkanErr)
+		logging.Infof("encoder Vulkan Video: %v", vulkanErr)
 		if o.Codec == "h264" {
 			if e, err := openRaspberryPi(o); err == nil {
 				return e, nil

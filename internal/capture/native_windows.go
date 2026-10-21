@@ -14,10 +14,11 @@ import (
 	"anykvm/internal/framerate"
 	"anykvm/internal/gpuconv"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 	"anykvm/internal/videotiming"
 	"fmt"
-	"log"
+	"image"
 	"os"
 	"strings"
 	"sync"
@@ -43,6 +44,8 @@ type windowsDevice struct {
 	jpegLeases                    atomic.Int32
 	adapter                       videoenc.WindowsAdapter
 	gpuJPEG                       windowsGPUJPEG
+	desktopDamage                 jpegcodec.DesktopDamageAccumulator
+	collectDesktopDamage          bool
 	timingStatsAt                 time.Time
 	timingCPU, accumulatedUpdates uint64
 }
@@ -75,6 +78,7 @@ func (d *windowsDevice) SetDecodeImage(v bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.enc.SetDecodeImage(v)
+	d.updateDamageCollection()
 }
 func (d *windowsDevice) SetJPEGQuality(q int)                        { d.enc.quality = q }
 func (d *windowsDevice) SetVideoBitrate(kbps int)                    { d.enc.SetVideoBitrate(kbps) }
@@ -84,9 +88,16 @@ func (d *windowsDevice) SetVideoStreamOptions(o *VideoStreamOptions) { d.enc.Set
 func (d *windowsDevice) SetOutputDownscaleOnly(v bool)               { d.enc.outputDownscaleOnly = v }
 func (d *windowsDevice) SetOutputSize(w, h int)                      { d.enc.targetW, d.enc.targetH = w, h }
 func (d *windowsDevice) SetOutputSizeLimit(w, h int)                 { d.enc.SetOutputSizeLimit(w, h) }
-func (d *windowsDevice) SetGPUSurface(v bool)                        { d.enc.gpuSurface = v }
-func (d *windowsDevice) PreserveCaptureMode() bool                   { return !isScreenDevice(d.id) }
-func (d *windowsDevice) SupportsGameStreamHEVC() bool                { return videoenc.SupportsHEVC() }
+func (d *windowsDevice) SetOutputScale(scale float64) error {
+	if scale != 0 && scale != 1 && !isScreenDevice(d.id) {
+		return fmt.Errorf("proportional scaling requires a local screen source")
+	}
+	d.enc.outputScale = scale
+	return nil
+}
+func (d *windowsDevice) SetGPUSurface(v bool)         { d.enc.gpuSurface = v }
+func (d *windowsDevice) PreserveCaptureMode() bool    { return !isScreenDevice(d.id) }
+func (d *windowsDevice) SupportsGameStreamHEVC() bool { return videoenc.SupportsHEVC() }
 func (d *windowsDevice) SupportsVideoCodec(c string) bool {
 	switch c {
 	case "", "mjpeg", "rawvideo", "h264":
@@ -179,6 +190,7 @@ func (d *windowsDevice) OpenWithFormat(w, h, fps int) error {
 	}
 	d.adapter = videoenc.WindowsAdapter{}
 	if isScreenDevice(d.id) {
+		d.updateDamageCollection()
 		var luid C.uint64_t
 		var vendor C.uint32_t
 		if C.bk_win_adapter(d.ptr, &luid, &vendor) == 0 {
@@ -187,7 +199,7 @@ func (d *windowsDevice) OpenWithFormat(w, h, fps int) error {
 			return fmt.Errorf("Windows desktop adapter identity unavailable")
 		}
 		d.adapter = videoenc.WindowsAdapter{LUID: uint64(luid), VendorID: uint32(vendor), Set: true}
-		log.Printf("capture: Windows desktop %q adapter=%s", d.id, d.adapter)
+		logging.Infof("capture: Windows desktop %q adapter=%s", d.id, d.adapter)
 	}
 	d.timingStatsAt = time.Now()
 	if videotiming.Enabled {
@@ -218,11 +230,12 @@ func (d *windowsDevice) OpenWithFormat(w, h, fps int) error {
 	}
 	d.enc.closed.Store(false)
 	d.capturePacer = framePacer{}
+	d.desktopDamage.Consumed()
 	backend := "Media Foundation"
 	if isScreenDevice(d.id) {
 		backend = "DXGI Desktop Duplication"
 	}
-	log.Printf("capture: Windows %s %q device_rate=%d/%d capture_rate=%d/%d input_format=%s", backend, d.id, deviceRate.Num, deviceRate.Den, rate.Num, rate.Den, C.GoString(C.bk_win_input_format(d.ptr)))
+	logging.Infof("capture: Windows %s %q device_rate=%d/%d capture_rate=%d/%d input_format=%s", backend, d.id, deviceRate.Num, deviceRate.Den, rate.Num, rate.Den, C.GoString(C.bk_win_input_format(d.ptr)))
 	return nil
 }
 func (d *windowsDevice) Capture() (*Frame, error) {
@@ -255,6 +268,11 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 	}
 	encodedOutput := outputCodec == "h264" || outputCodec == "hevc" || outputCodec == "av1"
 	lease := &windowsFrame{ptr: native, adapter: d.adapter, gpuJPEG: &d.gpuJPEG, surfaceLeases: &d.enc.gpuSurfaceLeases}
+	if isScreenDevice(d.id) && (d.enc.jpegRegions || d.collectDesktopDamage) && !encodedOutput {
+		lease.damage = d.desktopDamage.Add(lease.desktopDamage(), int(C.bk_win_frame_rotation(native)))
+	} else {
+		d.desktopDamage.Consumed()
+	}
 	if C.bk_win_frame_kind(native) == 2 && !encodedOutput && !d.enc.shouldDecode() && d.lastNativePath != "mjpeg" {
 		d.enc.outputLog.start("jpeg", "passthrough")
 		d.lastNativePath = "mjpeg"
@@ -317,6 +335,12 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 		d.capturePacer.accepted(time.Now(), d.captureRate.Interval())
 	}
 	out, err := d.enc.encodeMediaFrame(f)
+	if err == nil && out != nil {
+		if (out.Format == FormatRaw || out.Format == FormatSurface || out.JPEGRegions != nil) && lease.damage != nil {
+			out.Damage = jpegcodec.MapDesktopDamage(lease.damage, out.Width, out.Height, int(C.bk_win_frame_rotation(native)))
+		}
+		d.desktopDamage.Consumed()
+	}
 	if out != nil && f.Timing != nil {
 		t := f.Timing
 		t.Ready = time.Now()
@@ -341,7 +365,7 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 		t.Capture()
 	}
 	if lease.path != "" && lease.path != d.lastNativePath {
-		log.Printf("capture: Windows path=%s", lease.path)
+		logging.Infof("capture: Windows path=%s", lease.path)
 		d.lastNativePath = lease.path
 	}
 	if lease.materialized {
@@ -364,7 +388,7 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 		if _, ok := d.enc.encoder.(interface{ LastNativeTiming() videotiming.Native }); ok {
 			model = "native_one_inflight"
 		}
-		log.Printf("video-timing: Windows desktop=%q adapter=%s cumulative_texture_frames=%d cumulative_cpu_readbacks=%d cumulative_unencoded_drops=%d cumulative_accumulated_updates=%d encoder_model=%s process_cpu_core_percent=%s", d.id, d.adapter, d.textureFrames, d.readbacks, d.enc.skippedEncodeInputs, d.accumulatedUpdates, model, cpuText)
+		logging.Debugf("video-timing: Windows desktop=%q adapter=%s cumulative_texture_frames=%d cumulative_cpu_readbacks=%d cumulative_unencoded_drops=%d cumulative_accumulated_updates=%d encoder_model=%s process_cpu_core_percent=%s", d.id, d.adapter, d.textureFrames, d.readbacks, d.enc.skippedEncodeInputs, d.accumulatedUpdates, model, cpuText)
 		d.timingStatsAt, d.timingCPU = now, cpu
 	}
 	if out != nil && out.nativeBuffer != nil {
@@ -379,6 +403,7 @@ func (d *windowsDevice) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.gpuJPEG.close()
+	d.desktopDamage.Consumed()
 	if d.ptr != nil {
 		C.bk_win_close(d.ptr)
 		if !isScreenDevice(d.id) {
@@ -390,6 +415,7 @@ func (d *windowsDevice) Close() error {
 }
 
 type windowsFrame struct {
+	damage                    *jpegcodec.DesktopDamage
 	surfaceLeases             *atomic.Int32
 	gpuJPEG                   *windowsGPUJPEG
 	adapter                   videoenc.WindowsAdapter
@@ -436,30 +462,69 @@ func (j *windowsGPUJPEG) close() {
 func (*windowsFrame) JPEGEncoderName() string { return "D3D11 Compute JPEG" }
 
 func (f *windowsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer, bool, error) {
+	buffer, _, handled, err := f.encodeJPEG(width, height, quality, false)
+	return buffer, handled, err
+}
+func (f *windowsFrame) EncodeJPEGRegions(width, height, quality int) (*jpegcodec.RestartJPEG, bool, error) {
+	_, snapshot, handled, err := f.encodeJPEG(width, height, quality, true)
+	return snapshot, handled, err
+}
+
+func (f *windowsFrame) desktopDamage() *jpegcodec.DesktopDamage {
+	if f.damage != nil {
+		return f.damage
+	}
+	var damage C.bk_win_damage
+	C.bk_win_frame_damage(f.ptr, &damage)
+	d := &jpegcodec.DesktopDamage{Stream: uint64(damage.stream), Previous: uint64(damage.previous), Sequence: uint64(damage.sequence), SourceWidth: int(damage.width), SourceHeight: int(damage.height), Valid: damage.valid != 0}
+	if damage.count > 1<<20 || (damage.count > 0 && damage.rects == nil) || damage.move_count > 1<<20 || (damage.move_count > 0 && damage.moves == nil) {
+		d.Valid = false
+		return d
+	}
+	if d.Valid {
+		for _, m := range unsafe.Slice(damage.moves, int(damage.move_count)) {
+			d.Moves = append(d.Moves, jpegcodec.DesktopMove{Source: image.Rect(int(m.source.left), int(m.source.top), int(m.source.right), int(m.source.bottom)), Destination: image.Rect(int(m.destination.left), int(m.destination.top), int(m.destination.right), int(m.destination.bottom))})
+		}
+		for _, r := range unsafe.Slice(damage.rects, int(damage.count)) {
+			d.Rects = append(d.Rects, image.Rect(int(r.left), int(r.top), int(r.right), int(r.bottom)))
+		}
+	}
+	return d
+}
+
+func (f *windowsFrame) encodeJPEG(width, height, quality int, regions bool) (*framebuf.Buffer, *jpegcodec.RestartJPEG, bool, error) {
 	j := f.gpuJPEG
 	if j == nil || j.disabled || !f.adapter.Set || os.Getenv("ANYKVM_WINDOWS_GPU_JPEG") == "0" {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	handle := uintptr(C.bk_win_frame_handle(f.ptr))
 	if handle == 0 {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	var err error
 	if j.encoder == nil {
 		j.encoder, err = jpegcodec.NewD3D11Encoder(f.adapter.LUID)
 	}
 	var data []byte
+	var snapshot *jpegcodec.RestartJPEG
 	if err == nil {
-		data, err = j.encoder.EncodeTexture(handle, int(C.bk_win_frame_rotation(f.ptr)), width, height, quality)
+		if regions {
+			snapshot, err = j.encoder.EncodeRegionsWithDamage(handle, int(C.bk_win_frame_rotation(f.ptr)), width, height, quality, f.desktopDamage())
+		} else {
+			data, err = j.encoder.EncodeTexture(handle, int(C.bk_win_frame_rotation(f.ptr)), width, height, quality)
+		}
 	}
 	if err != nil {
 		j.close()
 		j.disabled = true
-		log.Printf("capture: D3D11 JPEG unavailable; using CPU JPEG: %v", err)
-		return nil, false, nil
+		logging.Infof("capture: D3D11 JPEG unavailable; using CPU JPEG: %v", err)
+		return nil, nil, false, nil
 	}
 	f.textureUsed, f.path = true, "D3D11 Compute JPEG (compressed readback)"
-	return framebuf.New(data, nil), true, nil
+	if regions {
+		return nil, snapshot, true, nil
+	}
+	return framebuf.New(data, nil), nil, true, nil
 }
 
 func (f *windowsFrame) WindowsAdapter() videoenc.WindowsAdapter { return f.adapter }
@@ -563,7 +628,7 @@ func windowsDevices(audio bool) []string {
 	}
 	names := C.bk_win_devices(C.int(kind), &msg[0], C.size_t(len(msg)))
 	if names == nil {
-		log.Printf("capture: Media Foundation enumeration: %s", C.GoString(&msg[0]))
+		logging.Infof("capture: Media Foundation enumeration: %s", C.GoString(&msg[0]))
 		return []string{}
 	}
 	defer C.free(unsafe.Pointer(names))
@@ -629,4 +694,32 @@ func (d *windowsAudioDevice) Close() error {
 		d.ptr = nil
 	}
 	return nil
+}
+
+func (d *windowsDevice) updateDamageCollection() {
+	if d.ptr == nil {
+		return
+	}
+	codec := d.enc.videoCodec
+	if d.enc.streamOptions != nil {
+		codec = d.enc.streamOptions.Codec
+	}
+	enabled := C.int(0)
+	if (d.enc.jpegRegions || d.collectDesktopDamage) && (codec == "" || codec == "mjpeg" || codec == "rawvideo") {
+		enabled = 1
+	}
+	C.bk_win_collect_damage(d.ptr, enabled)
+}
+func (d *windowsDevice) SetJPEGRegions(v bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.enc.jpegRegions = v
+	d.updateDamageCollection()
+}
+
+func (d *windowsDevice) SetDesktopDamage(v bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.collectDesktopDamage = v
+	d.updateDamageCollection()
 }

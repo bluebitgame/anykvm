@@ -19,8 +19,18 @@ static_prefix="$output_prefix/static-deps"
 for tool in clang make pkg-config; do
     command -v "$tool" >/dev/null
 done
-if [[ $(uname -m) == x86_64 ]]; then
-    command -v nasm >/dev/null
+target_arch=${ANYKVM_FFMPEG_ARCH:-$(uname -m)}
+deployment_target=${MACOSX_DEPLOYMENT_TARGET:-12.3}
+case "$target_arch" in
+    x86_64) ffmpeg_arch=x86_64 ;;
+    arm64) ffmpeg_arch=aarch64 ;;
+    *) echo "Unsupported macOS architecture: $target_arch" >&2; exit 1 ;;
+esac
+arch_options=(--arch="$ffmpeg_arch" --cc=clang --enable-cross-compile
+              --extra-cflags="-arch $target_arch -mmacosx-version-min=$deployment_target"
+              --extra-ldflags="-arch $target_arch -mmacosx-version-min=$deployment_target")
+if [[ $target_arch == x86_64 ]] && ! command -v nasm >/dev/null; then
+    arch_options+=(--disable-x86asm)
 fi
 if ! grep -Eq '^#define LIBAVCODEC_VERSION_MAJOR +63$' "$ffmpeg_source/libavcodec/version_major.h"; then
     echo "FFmpeg 9 sources (libavcodec 63) are required" >&2
@@ -53,6 +63,7 @@ export PKG_CONFIG_LIBDIR="$static_prefix/lib/pkgconfig"
 export PKG_CONFIG_PATH=""
 cd "$build_dir"
 "$ffmpeg_source/configure" \
+    "${arch_options[@]}" \
     --prefix="$output_prefix" \
     --disable-autodetect --disable-everything --disable-programs \
     --disable-doc --disable-debug --disable-static \

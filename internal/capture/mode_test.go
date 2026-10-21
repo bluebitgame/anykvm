@@ -7,11 +7,16 @@ func TestCaptureModeParsing(t *testing.T) {
 		value string
 		mode  Mode
 	}{
-		{"", Mode{}},
-		{"1920x1080@59.94:guid_123456780001000280001234567890ab", Mode{Width: 1920, Height: 1080, FPS: 59.94, PixelFormat: "guid_123456780001000280001234567890ab"}}, {"1920x1080@60:nv12", Mode{Width: 1920, Height: 1080, FPS: 60, PixelFormat: "nv12"}},
-		{"1920x1080:nv12", Mode{Width: 1920, Height: 1080, PixelFormat: "nv12"}},
-		{"@59.94", Mode{FPS: 59.94}}, {" AUTO@30 ", Mode{FPS: 30, FollowClient: true}},
-		{"1920x1080@30:fourcc_76323130", Mode{Width: 1920, Height: 1080, FPS: 30, PixelFormat: "fourcc_76323130"}},
+		{"", Mode{Scale: 1}},
+		{"0.5", Mode{Scale: 0.5}},
+		{"0.75@30", Mode{Scale: 0.75, FPS: 30}},
+		{" .5@59.94 ", Mode{Scale: 0.5, FPS: 59.94}},
+		{"1.0", Mode{Scale: 1}},
+		{"1.5@60", Mode{Scale: 1.5, FPS: 60}},
+		{"1920x1080@59.94:guid_123456780001000280001234567890ab", Mode{Scale: 1, Width: 1920, Height: 1080, FPS: 59.94, PixelFormat: "guid_123456780001000280001234567890ab"}}, {"1920x1080@60:nv12", Mode{Scale: 1, Width: 1920, Height: 1080, FPS: 60, PixelFormat: "nv12"}},
+		{"1920x1080:nv12", Mode{Scale: 1, Width: 1920, Height: 1080, PixelFormat: "nv12"}},
+		{"@59.94", Mode{Scale: 1, FPS: 59.94}}, {" AUTO@30 ", Mode{Scale: 1, FPS: 30, FollowClient: true}},
+		{"1920x1080@30:fourcc_76323130", Mode{Scale: 1, Width: 1920, Height: 1080, FPS: 30, PixelFormat: "fourcc_76323130"}},
 	} {
 		got, err := ParseMode(tc.value)
 		if err != nil || got != tc.mode {
@@ -22,6 +27,17 @@ func TestCaptureModeParsing(t *testing.T) {
 		if _, err := ParseMode(value); err == nil {
 			t.Errorf("accepted invalid mode %q", value)
 		}
+	}
+}
+
+func TestScaleModeValidation(t *testing.T) {
+	for _, value := range []string{"0.0", "-0.5", "NaN", "Inf", "0.5@0", "0.5:nv12", "0.5x0.5", "0.5@", "0.5@30oops"} {
+		if _, err := ParseMode(value); err == nil {
+			t.Errorf("accepted %q", value)
+		}
+	}
+	if w, h, fps := ParseResolution("0.75@30"); w != 0 || h != 0 || fps != 30 || ResolutionFollowsClient("0.75@30") {
+		t.Fatalf("scale confused with explicit size or client mode: %dx%d@%d", w, h, fps)
 	}
 }
 

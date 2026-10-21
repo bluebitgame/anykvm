@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 )
 
 // AudioDevice subscribes to the audio socket of this capture session. Keep
@@ -95,23 +95,23 @@ func receiveAudio(conn net.Conn, frames chan *capture.AudioFrame, epoch uint64, 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var codec uint32
 	if err := binary.Read(r, binary.BigEndian, &codec); err != nil {
-		log.Printf("scrcpy: audio unavailable: %v", err)
+		logging.Infof("scrcpy: audio unavailable: %v", err)
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
 	if codec == 0 || codec == 1 {
-		log.Printf("scrcpy: device disabled audio (status=%d); continuing video", codec)
+		logging.Infof("scrcpy: device disabled audio (status=%d); continuing video", codec)
 		return
 	}
 	if codec != codecIDRaw {
-		log.Printf("scrcpy: unexpected audio codec 0x%08x; continuing video", codec)
+		logging.Infof("scrcpy: unexpected audio codec 0x%08x; continuing video", codec)
 		return
 	}
 	for {
 		frame, err := readAudioPacket(r, modern)
 		if err != nil {
 			if err != io.EOF && !errors.Is(err, net.ErrClosed) {
-				log.Printf("scrcpy: audio stopped: %v", err)
+				logging.Infof("scrcpy: audio stopped: %v", err)
 			}
 			return
 		}

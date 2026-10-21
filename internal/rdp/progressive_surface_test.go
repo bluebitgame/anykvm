@@ -35,12 +35,15 @@ func (f *surfaceComputeFixture) Run(p []byte, m []uint32) ([]byte, [48]uint32, e
 }
 func (f *surfaceComputeFixture) Close() { f.program.Close() }
 func (f *surfaceComputeFixture) PrepareSurface(s *gpuconv.Surface, w, h int, force bool) ([]uint32, bool, error) {
+	return f.PrepareSurfaceMoves(s, w, h, force, nil)
+}
+func (f *surfaceComputeFixture) PrepareSurfaceMoves(s *gpuconv.Surface, w, h int, force bool, moves []gpuconv.SurfaceMove) ([]uint32, bool, error) {
 	if f.w != w || f.h != h || f.previous == nil {
 		force = true
 		f.previous = make([]byte, w*h*4)
 	}
 	f.w, f.h = w, h
-	current, flags, err := executeSurfaceShader(f.program, s, w, h, force, f.frames[s], f.previous)
+	current, flags, err := executeSurfaceMoveShader(f.program, s, w, h, force, f.frames[s], f.previous, moves)
 	if err != nil {
 		return nil, false, err
 	}
@@ -63,7 +66,10 @@ func (f *surfaceComputeFixture) CommitSurface() error {
 	return nil
 }
 func executeSurfaceShader(program *shaderCompute, s *gpuconv.Surface, w, h int, force bool, raw, previous []byte) ([]byte, []uint32, error) {
-	p, err := gpuconv.SurfaceParameters(s, w, h, force)
+	return executeSurfaceMoveShader(program, s, w, h, force, raw, previous, nil)
+}
+func executeSurfaceMoveShader(program *shaderCompute, s *gpuconv.Surface, w, h int, force bool, raw, previous []byte, moves []gpuconv.SurfaceMove) ([]byte, []uint32, error) {
+	p, err := gpuconv.SurfaceMoveParameters(s, w, h, force, moves)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -78,9 +84,14 @@ func executeSurfaceShader(program *shaderCompute, s *gpuconv.Surface, w, h int, 
 		return nil, nil, fmt.Errorf("invalid surface test input")
 	}
 	m := make([]uint32, 16)
-	copy(m, p[:])
+	copy(m, p[:12])
+	m[14] = uint32(len(p) - 12)
 	m[15] = 0x53555246
-	input := append(append([]byte(nil), raw...), previous...)
+	var input []byte
+	for _, word := range p[12:] {
+		input = binary.LittleEndian.AppendUint32(input, word)
+	}
+	input = append(append(input, raw...), previous...)
 	packed, lengths, err := program.Run(input, m)
 	if err != nil {
 		return nil, nil, err

@@ -3,13 +3,13 @@ package rdp
 import (
 	"errors"
 	"image"
-	"log"
 	"math"
 	"sync"
 	"unicode/utf16"
 
 	"anykvm/internal/bridge"
 	"anykvm/internal/hid"
+	"anykvm/internal/logging"
 )
 
 type inputState struct {
@@ -67,7 +67,7 @@ func (i *inputState) frameGeometry(f bridge.Frame, w, h int) {
 		}
 	}
 	if oldW != i.w || oldH != i.h || oldSourceW != sw || oldSourceH != sh || oldRect != i.contentRect {
-		log.Printf("rdp: pointer geometry desktop=%dx%d source=%dx%d content=%v", w, h, sw, sh, i.contentRect)
+		logging.Infof("rdp: pointer geometry desktop=%dx%d source=%dx%d content=%v", w, h, sw, sh, i.contentRect)
 	}
 }
 func (i *inputState) release() {

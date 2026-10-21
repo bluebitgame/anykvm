@@ -2,8 +2,10 @@ package capture
 
 import (
 	"anykvm/internal/framebuf"
+	"anykvm/internal/jpegcodec"
 	"bytes"
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -73,5 +75,46 @@ func TestJPEGTextureFallbackAndDecodePolicy(t *testing.T) {
 	native := &jpegTextureFixture{err: failure}
 	if _, err := d.encodeMediaFrame(&Frame{Format: FormatRaw, Width: 16, Height: 16, nativeBuffer: native}); !errors.Is(err, failure) {
 		t.Fatalf("lost error: %v", err)
+	}
+}
+
+type jpegRegionTextureFixture struct {
+	jpegTextureFixture
+	regions     *jpegcodec.RestartJPEG
+	regionCalls int
+}
+
+func (f *jpegRegionTextureFixture) EncodeJPEGRegions(w, h, q int) (*jpegcodec.RestartJPEG, bool, error) {
+	f.regionCalls++
+	f.width, f.height, f.quality = w, h, q
+	return f.regions, f.handled, f.err
+}
+func TestJPEGTextureRegionReadbackPolicy(t *testing.T) {
+	data, err := os.ReadFile("../jpegcodec/testdata/restart_base.jpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := jpegcodec.ParseRestartJPEG(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, regions := range []bool{false, true} {
+		for _, decode := range []bool{false, true} {
+			d := &ffmpegDevice{videoCodec: "mjpeg", jpegRegions: regions, decodeImage: decode, quality: 85}
+			native := &jpegRegionTextureFixture{jpegTextureFixture: jpegTextureFixture{handled: true}, regions: snapshot}
+			at := time.Now()
+			out, err := d.encodeMediaFrame(&Frame{Format: FormatRaw, Width: 193, Height: 131, CapturedAt: at, nativeBuffer: native})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer out.Release()
+			if regions && !decode {
+				if native.regionCalls != 1 || native.calls != 0 || native.copied || out.JPEGRegions != snapshot || len(out.Data) != 0 || out.Buffer != nil || out.CapturedAt != at {
+					t.Fatalf("compact GPU path not selected: %+v", out)
+				}
+			} else if native.regionCalls != 0 || out.JPEGRegions != nil {
+				t.Fatal("compact GPU path selected for full JPEG/raw consumer")
+			}
+		}
 	}
 }

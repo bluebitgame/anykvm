@@ -3,7 +3,8 @@ package videoenc
 import (
 	"errors"
 	"fmt"
-	"log"
+
+	"anykvm/internal/logging"
 )
 
 // Vendor backends follow the build tag; Media Foundation stays available even
@@ -19,30 +20,30 @@ func selectWindowsEncoder(o Options, hardware []string,
 		if suffix := windowsVendorEncoder(o.WindowsAdapter.VendorID); suffix != "" {
 			hardware = []string{o.Codec + "_" + suffix}
 		}
-		log.Printf("videoenc: desktop adapter=%s; requesting exact GPU match", o.WindowsAdapter)
+		logging.Infof("videoenc: desktop adapter=%s; requesting exact GPU match", o.WindowsAdapter)
 	}
 	try := func(name string, open func() (Encoder, error)) Encoder {
 		e, err := open()
 		if err == nil {
 			return e
 		}
-		log.Printf("videoenc: %s unavailable: %v", name, err)
+		logging.Infof("videoenc: %s unavailable: %v", name, err)
 		failures = append(failures, fmt.Errorf("%s: %w", name, err))
 		return nil
 	}
 	for _, name := range hardware {
 		if e := try(name, func() (Encoder, error) { return vendor(o, name) }); e != nil {
-			log.Printf("videoenc: selected %s adapter=%s", e.Name(), o.WindowsAdapter)
+			logging.Infof("videoenc: selected %s adapter=%s", e.Name(), o.WindowsAdapter)
 			return e, nil
 		}
 	}
 	if o.WindowsAdapter.Set {
-		log.Printf("videoenc: desktop adapter=%s native texture encoder unavailable; compatibility fallback uses CPU readback/upload, encoder adapter=unbound", o.WindowsAdapter)
+		logging.Infof("videoenc: desktop adapter=%s native texture encoder unavailable; compatibility fallback uses CPU readback/upload, encoder adapter=unbound", o.WindowsAdapter)
 		// Compatibility backends do not promise an exact device binding.
 		o.WindowsAdapter = WindowsAdapter{}
 		for _, name := range compatibilityHardware {
 			if e := try(name+" compatibility", func() (Encoder, error) { return vendor(o, name) }); e != nil {
-				log.Printf("videoenc: compatibility selected %s adapter=unbound; desktop GPU import is not guaranteed", e.Name())
+				logging.Infof("videoenc: compatibility selected %s adapter=unbound; desktop GPU import is not guaranteed", e.Name())
 				return e, nil
 			}
 		}

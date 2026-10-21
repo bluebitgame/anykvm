@@ -3,7 +3,6 @@ package rdp
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +11,7 @@ import (
 
 	"anykvm/internal/capture"
 	"anykvm/internal/clipboard"
+	"anykvm/internal/logging"
 )
 
 const (
@@ -174,7 +174,7 @@ func (c *client) clipboardLoop() {
 			return
 		case <-ticker.C:
 			if err := c.pollClipboard(); err != nil {
-				log.Printf("rdp: clipboard channel: %v", err)
+				logging.Infof("rdp: clipboard channel: %v", err)
 				c.close()
 				return
 			}
@@ -253,7 +253,7 @@ func (c *client) pollClipboard() error {
 	if fileAvailable {
 		files, err = snapshotClipboardFiles(paths)
 		if err != nil {
-			log.Printf("rdp: clipboard file offer: %v", err)
+			logging.Infof("rdp: clipboard file offer: %v", err)
 		}
 		available = false // Do not advertise a file URL as an alternative text copy.
 	} else if !c.clipboardTextAllowed(clipboard.ServerToClient) {
@@ -357,7 +357,7 @@ func (c *client) handleClipboard(p []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if declared != actual && !s.filePaddingLogged {
-		log.Printf("rdp: clipboard file response: ignored 4 trailing bytes outside declared payload")
+		logging.Infof("rdp: clipboard file response: ignored 4 trailing bytes outside declared payload")
 		s.filePaddingLogged = true
 	}
 	select {
@@ -377,14 +377,14 @@ func (c *client) handleClipboard(p []byte) error {
 		s.longNames = capabilities&2 != 0
 		s.peerFiles = capabilities&clipStreamFiles != 0
 		if c.clipboardFilesAllowed() {
-			log.Printf("rdp: clipboard file capabilities: peer_streaming=%t single_file_limit=%d", s.peerFiles, maxClipboardFileBytes)
+			logging.Infof("rdp: clipboard file capabilities: peer_streaming=%t single_file_limit=%d", s.peerFiles, maxClipboardFileBytes)
 		}
 	case clipFormatList:
 		offer, err := parseClipboardFormats(p, s.longNames, flags&4 != 0)
 		if err != nil {
 			return c.sendClipboard(clipFormatListResponse, clipFail, nil)
 		}
-		log.Printf("rdp: clipboard offer formats: %s", strings.Join(offer.names, ", "))
+		logging.Infof("rdp: clipboard offer formats: %s", strings.Join(offer.names, ", "))
 		s.peerReady = true
 		if !c.clipboardTextAllowed(clipboard.ClientToServer) && !c.clipboardReceiveFilesAllowed() && !c.clipboardReceiveRichTextAllowed() && !c.clipboardReceiveImagesAllowed() {
 			s.remoteText = false
@@ -525,7 +525,7 @@ func (c *client) handleClipboard(p []byte) error {
 		if err == nil {
 			s.revision, s.haveRevision = revision, true
 		} else {
-			log.Printf("rdp: clipboard format %#x rejected: %v", s.requestFormat, err)
+			logging.Infof("rdp: clipboard format %#x rejected: %v", s.requestFormat, err)
 		}
 	case clipFileContentsRequest:
 		return c.handleClipboardFileRequest(p)
@@ -635,7 +635,7 @@ func (c *client) writeRemoteClipboardData(format uint32, data []byte) (uint64, e
 // Called with the clipboard mutex held; report failures once until recovery.
 func (c *client) clipboardBackendResult(err error) {
 	if err != nil && !c.clipboard.backendFailed {
-		log.Printf("rdp: host clipboard: %v", err)
+		logging.Infof("rdp: host clipboard: %v", err)
 	}
 	c.clipboard.backendFailed = err != nil
 }

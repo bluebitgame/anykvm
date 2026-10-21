@@ -76,6 +76,20 @@ func NewEncoder(o VideoOptions) (*Session, error) {
 	p := C.bm_encoder(name, device, C.int(o.Width), C.int(o.Height), C.int(o.Rate.Num), C.int(o.Rate.Den), C.int(o.Bitrate), 0, &msg[0], 512)
 	return resultSession(p, &msg[0])
 }
+
+// NewJPEGEncoder preserves source dimensions, including odd and single-pixel edges.
+func NewJPEGEncoder(width, height, quality int) (*Session, error) {
+	if width < 1 || height < 1 || width > 8192 || height > 8192 || quality < 1 || quality > 100 {
+		return nil, fmt.Errorf("invalid JPEG encoder options")
+	}
+	if err := Available(); err != nil {
+		return nil, err
+	}
+	var msg [512]C.char
+	p := C.bm_jpeg_encoder(C.int(width), C.int(height), C.int(quality), &msg[0], 512)
+	return resultSession(p, &msg[0])
+}
+
 func NewAudioEncoder(duration, bitrate int) (*Session, error) {
 	if err := Available(); err != nil {
 		return nil, err

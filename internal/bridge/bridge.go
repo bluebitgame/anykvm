@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"log"
 	"math"
 	"os"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"anykvm/internal/capture"
+	"anykvm/internal/logging"
 	"anykvm/internal/vnc"
 )
 
@@ -49,8 +49,9 @@ type MachineSession struct {
 	FPS             int
 	CapW            int // configured input size; never overwritten by encoded output
 	CapH            int
-	AutoResolution  bool   // video.mode: auto; omitted dimensions retain the device mode
-	MouseMode       string // "auto" | "absolute" | "relative"
+	CapScale        float64 // proportional screen output ceiling
+	AutoResolution  bool    // video.mode: auto; omitted dimensions retain the device mode
+	MouseMode       string  // "auto" | "absolute" | "relative"
 	WheelScale      float64
 	wheelMu         sync.Mutex
 	wheelRemainder  float64
@@ -62,8 +63,10 @@ type MachineSession struct {
 }
 
 type Frame struct {
-	Surface *gpuconv.Surface // Immutable GPU snapshot, owned by Buffer; no CPU Data.
-	Timing  videotiming.Delivery
+	Damage      *jpegcodec.DesktopDamage // Immutable advisory source damage; nil requires full comparison.
+	JPEGRegions *jpegcodec.RestartJPEG
+	Surface     *gpuconv.Surface // Immutable GPU snapshot, owned by Buffer; no CPU Data.
+	Timing      videotiming.Delivery
 	// Buffer owns immutable Data when non-nil. Frame copies borrow this reference.
 	Buffer                    *framebuf.Buffer
 	PreserveSource            bool
@@ -137,14 +140,15 @@ type Bridge struct {
 	needPixels  atomic.Bool
 
 	// Capture output codec selection (follows the single active client).
-	codecMu        sync.Mutex
-	wantH264       bool
-	wantAV1        bool
-	wantHEVC       bool
-	wantNV12       bool // Planar prefers native subsampled pixels when available.
-	wantSurface    bool // Progressive compute can consume immutable GPU snapshots.
-	videoCodec     string
-	webJPEGQuality int // protected by captureMu; applied on future capture opens
+	codecMu           sync.Mutex
+	wantH264          bool
+	wantAV1           bool
+	wantHEVC          bool
+	wantNV12          bool // Planar prefers native subsampled pixels when available.
+	wantDesktopDamage bool
+	wantSurface       bool // Progressive compute can consume immutable GPU snapshots.
+	videoCodec        string
+	webJPEGQuality    int // protected by captureMu; applied on future capture opens
 }
 
 type captureRun struct {
@@ -311,6 +315,7 @@ func (b *Bridge) StartRDPWithDesktop(codec string, size capture.DesktopSize) {
 	b.wantH264, b.wantHEVC, b.wantAV1 = !needPixels, false, false
 	b.wantNV12 = codec == "planar"
 	mode := os.Getenv("ANYKVM_RDP_PROGRESSIVE_BACKEND")
+	b.wantDesktopDamage = codec == "progressive"
 	b.wantSurface = codec == "progressive" && (mode == "gpu" || mode == "vulkan" || mode == "d3d11")
 	b.codecMu.Unlock()
 	b.mu.Lock()
@@ -318,7 +323,7 @@ func (b *Bridge) StartRDPWithDesktop(codec string, size capture.DesktopSize) {
 	b.mu.Unlock()
 	b.updateCodecLocked()
 	b.startCaptureLocked()
-	log.Printf("bridge: RDP capture startup=%.1fms", float64(time.Since(started))/float64(time.Millisecond))
+	logging.Infof("bridge: RDP capture startup=%.1fms", float64(time.Since(started))/float64(time.Millisecond))
 	b.captureMu.Unlock()
 }
 
@@ -571,15 +576,15 @@ func (b *Bridge) SwitchMachine(index int) {
 	}
 
 	if b.gsVideo != nil && !supportsGameStreamCodec(b.machines[index].Capture, b.gsVideo.Codec) {
-		log.Printf("bridge: cannot switch %s session to unsupported target %d", b.gsVideo.Codec, index)
+		logging.Infof("bridge: cannot switch %s session to unsupported target %d", b.gsVideo.Codec, index)
 		return
 	}
 	if b.gsVideo != nil && b.gsVideo.Codec == "av1" && !b.SupportsGameStreamAV1(index) {
-		log.Printf("bridge: cannot switch AV1 session to unsupported target %d", index)
+		logging.Infof("bridge: cannot switch AV1 session to unsupported target %d", index)
 		return
 	}
 	if b.gsVideo != nil && b.gsVideo.Codec == "hevc" && !b.SupportsGameStreamHEVC(index) {
-		log.Printf("bridge: cannot switch HEVC session to unsupported target %d", index)
+		logging.Infof("bridge: cannot switch HEVC session to unsupported target %d", index)
 		return
 	}
 	b.stopCaptureLocked()
@@ -589,7 +594,7 @@ func (b *Bridge) SwitchMachine(index int) {
 	}
 
 	m := b.machines[index]
-	log.Printf("bridge: switching to target %q (%d)", m.Name, index)
+	logging.Infof("bridge: switching to target %q (%d)", m.Name, index)
 
 	b.mu.Lock()
 	b.active = index
@@ -603,7 +608,7 @@ func (b *Bridge) SwitchMachine(index int) {
 			slot = sh.Slot()
 		}
 		if err := ss.SelectSlot(slot); err != nil {
-			log.Printf("bridge: slot select %d for %q: %v", slot, m.Name, err)
+			logging.Infof("bridge: slot select %d for %q: %v", slot, m.Name, err)
 		}
 	}
 
@@ -802,7 +807,7 @@ func (b *Bridge) claimSession(proto string) {
 				b.rdpSrv.CloseClients()
 			}
 		}
-		log.Printf("bridge: %s client took over, kicked %s", proto, prev)
+		logging.Infof("bridge: %s client took over, kicked %s", proto, prev)
 	}
 	// A synchronous disconnect can reduce the old consumer count to zero
 	// and clear ownership before the new protocol registers its consumer.
@@ -874,7 +879,7 @@ func (b *Bridge) RequestVideoKeyframe() {
 	defer b.captureMu.Unlock()
 	if dev, ok := b.activeDevice().(interface{ RequestKeyframe() error }); ok {
 		if err := dev.RequestKeyframe(); err != nil {
-			log.Printf("bridge: video keyframe request: %v", err)
+			logging.Infof("bridge: video keyframe request: %v", err)
 		}
 	}
 }
@@ -1013,7 +1018,7 @@ func (b *Bridge) updateCodecLocked() {
 	b.mu.Lock()
 	b.videoCodec = desired
 	b.mu.Unlock()
-	log.Printf("bridge: capture reconfigured (reopen=%v)", capturing)
+	logging.Infof("bridge: capture reconfigured (reopen=%v)", capturing)
 	if capturing {
 		b.startCaptureLocked()
 	}
@@ -1076,7 +1081,7 @@ func (b *Bridge) OnClientConnected() {
 	b.setConsumersLocked(b.consumers + 1)
 	n := b.consumers
 	b.mu.Unlock()
-	log.Printf("bridge: client connected (consumers=%d), ensuring capture", n)
+	logging.Infof("bridge: client connected (consumers=%d), ensuring capture", n)
 	b.startCaptureLocked()
 }
 
@@ -1087,13 +1092,13 @@ func (b *Bridge) OnClientDisconnected() {
 	b.setConsumersLocked(b.consumers - 1)
 	n := b.consumers
 	b.mu.Unlock()
-	log.Printf("bridge: client disconnected (consumers=%d)", n)
+	logging.Infof("bridge: client disconnected (consumers=%d)", n)
 
 	if n > 0 {
 		return
 	}
 
-	log.Printf("bridge: no consumers, stopping capture")
+	logging.Infof("bridge: no consumers, stopping capture")
 	stopTargetHID(b.activeMachine())
 	b.stopCaptureLocked()
 	b.desktopSize = nil
@@ -1139,7 +1144,7 @@ func stopTargetHID(m *MachineSession) {
 	m.wheelMu.Unlock()
 	if session, ok := m.HID.(interface{ StopSession() error }); ok {
 		if err := session.StopSession(); err != nil {
-			log.Printf("bridge: target %q HID close: %v", m.Name, err)
+			logging.Infof("bridge: target %q HID close: %v", m.Name, err)
 		}
 	}
 }
@@ -1151,7 +1156,7 @@ func (b *Bridge) startCaptureLocked() {
 	if m := b.activeMachine(); controlled && m != nil {
 		if session, ok := m.HID.(interface{ StartSession() error }); ok {
 			if err := session.StartSession(); err != nil {
-				log.Printf("bridge: target %q HID unavailable: %v", m.Name, err)
+				logging.Infof("bridge: target %q HID unavailable: %v", m.Name, err)
 			}
 		}
 	}
@@ -1176,7 +1181,7 @@ func (b *Bridge) startCaptureLocked() {
 
 	dev := m.Capture
 	if dev == nil {
-		log.Printf("bridge: no capture device for target %q", m.Name)
+		logging.Infof("bridge: no capture device for target %q", m.Name)
 		b.pushFallbackLocked()
 		b.mu.Unlock()
 		return
@@ -1186,6 +1191,21 @@ func (b *Bridge) startCaptureLocked() {
 	// and would otherwise block the RDP reader during a slow display switch.
 	b.mu.Unlock()
 
+	if regions, ok := dev.(capture.JPEGRegionsConfigurer); ok {
+		b.sessionMu.Lock()
+		vncOutput := b.activeProto == "vnc"
+		b.sessionMu.Unlock()
+		regions.SetJPEGRegions(vncOutput)
+	}
+	if damage, ok := dev.(capture.DesktopDamageConfigurer); ok {
+		b.sessionMu.Lock()
+		rdp := b.activeProto == "rdp"
+		b.sessionMu.Unlock()
+		b.codecMu.Lock()
+		want := b.wantDesktopDamage
+		b.codecMu.Unlock()
+		damage.SetDesktopDamage(rdp && want)
+	}
 	if surface, ok := dev.(capture.GPUSurfaceConfigurer); ok {
 		b.sessionMu.Lock()
 		rdp := b.activeProto == "rdp"
@@ -1240,7 +1260,7 @@ func (b *Bridge) startCaptureLocked() {
 			}
 			_, err := desktop.SetDesktopSize(request)
 			if err != nil {
-				log.Printf("bridge: desktop resize for %q: %v", m.Name, err)
+				logging.Infof("bridge: desktop resize for %q: %v", m.Name, err)
 			}
 			// Request this output canvas after the physical mode switch. RDP's
 			// downscale-only policy bounds it to the actual mode on open.
@@ -1311,14 +1331,14 @@ func (b *Bridge) startCaptureLocked() {
 	}
 	dev.SetDecodeImage(b.needPixels.Load())
 	if err := dev.OpenWithFormat(w, h, fps); err != nil {
-		log.Printf("bridge: failed to open device for %q: %v, using black placeholder", m.Name, err)
+		logging.Infof("bridge: failed to open device for %q: %v, using black placeholder", m.Name, err)
 		b.restoreDesktopLocked(m)
 		b.mu.Lock()
 		b.pushFallbackLocked()
 		b.mu.Unlock()
 		return
 	}
-	log.Printf("bridge: capture device opened for %q, waiting for first frame", m.Name)
+	logging.Infof("bridge: capture device opened for %q, waiting for first frame", m.Name)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -1354,7 +1374,7 @@ func (b *Bridge) applyVideoFPSLocked() {
 	}
 	if b.vncSrv != nil {
 		b.vncSrv.SetFPS(fps)
-		log.Printf("bridge: effective video fps = %d", fps)
+		logging.Infof("bridge: effective video fps = %d", fps)
 	}
 }
 
@@ -1366,15 +1386,15 @@ func (b *Bridge) startAudioLocked(m *MachineSession, run *captureRun) {
 		return
 	}
 	if b.activeAudioSink == nil {
-		log.Printf("bridge: audio not started — active client has no audio sink")
+		logging.Infof("bridge: audio not started — active client has no audio sink")
 		return
 	}
 	if err := m.AudioDev.Open(); err != nil {
-		log.Printf("bridge: audio disabled for %q: %v", m.Name, err)
+		logging.Infof("bridge: audio disabled for %q: %v", m.Name, err)
 		return
 	}
 	b.audioOn = true
-	log.Printf("bridge: audio capture started for %q", m.Name)
+	logging.Infof("bridge: audio capture started for %q", m.Name)
 	run.wg.Add(1)
 	go b.audioLoop(m, run)
 }
@@ -1404,10 +1424,10 @@ func (b *Bridge) audioLoop(m *MachineSession, run *captureRun) {
 		}
 		if err != nil {
 			if errors.Is(err, capture.ErrStreamStopped) {
-				log.Printf("bridge: source audio stopped for %q", m.Name)
+				logging.Infof("bridge: source audio stopped for %q", m.Name)
 				return
 			}
-			log.Printf("bridge: audio capture error: %v", err)
+			logging.Infof("bridge: audio capture error: %v", err)
 			if !waitCapture(run.stop, 200*time.Millisecond) {
 				return
 			}
@@ -1432,19 +1452,19 @@ func (b *Bridge) audioLoop(m *MachineSession, run *captureRun) {
 			if err := forwarder.push(sink, *af); err != nil {
 				setAudioAvailable(sink, false)
 				if time.Since(lastError) >= 5*time.Second {
-					log.Printf("bridge: audio decode: %v", err)
+					logging.Infof("bridge: audio decode: %v", err)
 					lastError = time.Now()
 				}
 				continue
 			}
 			pushed++
 			if pushed == 1 || pushed%250 == 0 {
-				log.Printf("bridge: audio pushed %d chunks (%d bytes/chunk, source codec=%q)", pushed, len(af.PCM)+len(af.Encoded), af.Codec)
+				logging.Debugf("bridge: audio pushed %d chunks (%d bytes/chunk, source codec=%q)", pushed, len(af.PCM)+len(af.Encoded), af.Codec)
 			}
 		} else {
 			dropped++
 			if dropped == 1 {
-				log.Printf("bridge: audio produced but no active sink (dropping)")
+				logging.Debugf("bridge: audio produced but no active sink (dropping)")
 			}
 		}
 	}
@@ -1466,7 +1486,7 @@ func (b *Bridge) pushFallbackLocked() {
 	} else {
 		data, err := jpegcodec.EncodeBGRA(pixels, w, h, 80)
 		if err != nil {
-			log.Printf("bridge: fallback JPEG: %v", err)
+			logging.Infof("bridge: fallback JPEG: %v", err)
 			return
 		}
 		b.pushFrame(Frame{Format: capture.FormatJPEG, Data: data, Width: w, Height: h,
@@ -1520,6 +1540,12 @@ func (b *Bridge) push(format capture.VideoFormat, data []byte, width, height int
 }
 
 func (b *Bridge) pushFrame(f Frame, stop <-chan struct{}) {
+	if f.JPEGRegions != nil {
+		if b.vncSrv != nil {
+			b.vncSrv.PushFrameWithStop(vnc.Frame{Damage: f.Damage, JPEGRegions: f.JPEGRegions, Timing: f.Timing, Format: f.Format, Width: f.Width, Height: f.Height}, stop)
+		}
+		return
+	}
 	if f.Surface != nil {
 		// Surface capture is requested only for the exclusive Progressive GPU
 		// session. Byte-oriented viewers must never receive empty raw frames.
@@ -1547,7 +1573,7 @@ func (b *Bridge) pushFrame(f Frame, stop <-chan struct{}) {
 	}
 	format, data, width, height := f.Format, f.Data, f.Width, f.Height
 	if b.vncSrv != nil {
-		b.vncSrv.PushFrameWithStop(vnc.Frame{Timing: f.Timing, Buffer: f.Buffer, Format: format, Data: data, Width: width, Height: height}, stop)
+		b.vncSrv.PushFrameWithStop(vnc.Frame{Damage: f.Damage, Timing: f.Timing, Buffer: f.Buffer, Format: format, Data: data, Width: width, Height: height}, stop)
 	}
 	if b.gsSrv != nil {
 		if srv, ok := b.gsSrv.(interface{ PushFrameWithStop(Frame, <-chan struct{}) }); ok {
@@ -1597,18 +1623,18 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 					idle.lastFrame = time.Now()
 					continue
 				}
-				log.Printf("bridge: capture terminated: %v; closing session, reconnect to retry", err)
+				logging.Infof("bridge: capture terminated: %v; closing session, reconnect to retry", err)
 				// Cleanup waits for this worker, so run it after we return.
 				go b.closeFailedCapture(run)
 				return
 			}
-			log.Printf("bridge: capture error: %v", err)
+			logging.Infof("bridge: capture error: %v", err)
 			if !waitCapture(run.stop, time.Second) {
 				return
 			}
 			continue
 		}
-		if frame == nil || (len(frame.Data) == 0 && frame.Surface == nil) {
+		if frame == nil || (len(frame.Data) == 0 && frame.Surface == nil && frame.JPEGRegions == nil) {
 			frame.Release()
 			now := time.Now()
 			if idle.due(now) {
@@ -1617,7 +1643,7 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 					expected, detail = source.CaptureIdleStatus()
 				}
 				if firstFrame || !expected {
-					log.Printf("bridge: no captured frame for %.1fs (waiting_first=%v) %s", now.Sub(idle.lastFrame).Seconds(), firstFrame, detail)
+					logging.Infof("bridge: no captured frame for %.1fs (waiting_first=%v) %s", now.Sub(idle.lastFrame).Seconds(), firstFrame, detail)
 				}
 				idle.lastCheck = now
 			}
@@ -1646,7 +1672,7 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 		recovery.frame(idle.lastFrame)
 		b.mu.Lock()
 		if firstFrame || frame.Width != m.FallbackW || frame.Height != m.FallbackH {
-			log.Printf("bridge: first captured frame %dx%d (was %dx%d)",
+			logging.Infof("bridge: first captured frame %dx%d (was %dx%d)",
 				frame.Width, frame.Height, m.CapW, m.CapH)
 			m.FallbackW = frame.Width
 			m.FallbackH = frame.Height
@@ -1687,12 +1713,13 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 		if source, ok := m.Capture.(interface{ BufferH264Presentation() bool }); ok && frame.Format == capture.FormatH264 {
 			bufferH264 = source.BufferH264Presentation()
 		}
-		b.pushFrame(Frame{Surface: frame.Surface, Timing: videotiming.Delivery{Trace: frame.Timing}, BufferH264Presentation: bufferH264, PreserveSource: preserve, CaptureScalesOutput: scalesOutput, OutputMaxW: m.CapW, OutputMaxH: m.CapH, CaptureFPS: sourceFPS, CaptureRate: sourceRate, Buffer: frame.Buffer, CapturedAt: frame.CapturedAt, Format: frame.Format, PixFmt: frame.PixFmt, Data: frame.Data, Width: frame.Width, Height: frame.Height, Rotation: frame.Rotation, SourceWidth: frame.SourceWidth, SourceHeight: frame.SourceHeight, ContentRect: frame.ContentRect}, run.stop)
+		maxW, maxH := m.outputLimit(frame)
+		b.pushFrame(Frame{Damage: frame.Damage, JPEGRegions: frame.JPEGRegions, Surface: frame.Surface, Timing: videotiming.Delivery{Trace: frame.Timing}, BufferH264Presentation: bufferH264, PreserveSource: preserve, CaptureScalesOutput: scalesOutput, OutputMaxW: maxW, OutputMaxH: maxH, CaptureFPS: sourceFPS, CaptureRate: sourceRate, Buffer: frame.Buffer, CapturedAt: frame.CapturedAt, Format: frame.Format, PixFmt: frame.PixFmt, Data: frame.Data, Width: frame.Width, Height: frame.Height, Rotation: frame.Rotation, SourceWidth: frame.SourceWidth, SourceHeight: frame.SourceHeight, ContentRect: frame.ContentRect}, run.stop)
 		frame.Release()
 		maxPush = max(maxPush, time.Since(pushStart))
 		frames++
 		if elapsed := time.Since(statsStart); elapsed >= 5*time.Second {
-			log.Printf("bridge: video %.1f fps max_read=%.1fms max_push=%.1fms", float64(frames)/elapsed.Seconds(), float64(maxRead)/float64(time.Millisecond), float64(maxPush)/float64(time.Millisecond))
+			logging.Debugf("bridge: video %.1f fps max_read=%.1fms max_push=%.1fms", float64(frames)/elapsed.Seconds(), float64(maxRead)/float64(time.Millisecond), float64(maxPush)/float64(time.Millisecond))
 			statsStart, frames, maxRead, maxPush = time.Now(), 0, 0, 0
 		}
 	}
@@ -1760,5 +1787,7 @@ func (f *Frame) Release() {
 		f.Buffer = nil
 		f.Data = nil
 		f.Surface = nil
+		f.JPEGRegions = nil
+		f.Damage = nil
 	}
 }

@@ -158,7 +158,7 @@ func (cfg *TargetConfig) UnmarshalYAML(node *yaml.Node) error {
 // VideoConfig defines the video capture source.
 type VideoConfig struct {
 	Source          string `yaml:"source"`
-	Mode            string `yaml:"mode"`   // "WxH[@FPS][:format]", "auto[@FPS]" (client), "@FPS" or "" (native)
+	Mode            string `yaml:"mode"`   // "WxH[@FPS][:format]", "0.75[@FPS]" (screen scale), "auto[@FPS]", "@FPS" or native
 	CursorRendering string `yaml:"cursor"` // client (default) or remote
 }
 
@@ -412,8 +412,12 @@ func validateConfig(cfg Config) error {
 		default:
 			return fmt.Errorf("target %q video.cursor must be remote or client", machine.Name)
 		}
-		if _, err := capture.ParseMode(machine.Video.Mode); err != nil {
+		mode, err := capture.ParseMode(machine.Video.Mode)
+		if err != nil {
 			return fmt.Errorf("target %q video.mode: %w", machine.Name, err)
+		}
+		if mode.Scale != 1 && !capture.IsScreenDevice(machine.Video.Source) {
+			return fmt.Errorf("target %q video.mode: proportional scaling requires a local screen source", machine.Name)
 		}
 		if err := validateAirPlayMachine(machine); err != nil {
 			return err

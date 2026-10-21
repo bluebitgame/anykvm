@@ -19,6 +19,9 @@ jobs:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -30,10 +33,10 @@ jobs:
             runner: ubuntu-22.04
             artifact: linux-arm64
           - target: windows/amd64
-            runner: ubuntu-22.04
+            runner: windows-2022
             artifact: windows-amd64
           - target: windows/arm64
-            runner: ubuntu-22.04
+            runner: windows-2022
             artifact: windows-arm64
           - target: darwin/amd64
             runner: macos-15-intel
@@ -48,27 +51,32 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: Install Linux build dependencies
         if: matrix.target == 'linux/amd64'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libv4l-dev libasound2-dev
       - name: Check release packaging
-        run: python3 -m unittest discover -s tools -p test_package_release.py
+        run: python -m unittest discover -s tools -p test_package_release.py
+      - name: Check DMA-BUF header compatibility
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tools -p test_dma_buf_compat.py
       - name: Build with native media support
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: python3 tools/build.py --targets "$BUILD_TARGET"
+        run: python tools/build.py --targets "$BUILD_TARGET"
       - name: Require Windows audio runtime
         if: startsWith(matrix.target, 'windows/')
         env:
-          BUILD_TARGET: ${{ matrix.target }}
           ARTIFACT: ${{ matrix.artifact }}
-        run: python3 tools/package_opus.py --arch "${BUILD_TARGET#*/}" --output "build/releases/$ARTIFACT/lib"
+        run: test -f "build/releases/$ARTIFACT/lib/opus.dll"
       - name: Package executable, runtime libraries and licenses
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: python3 tools/package_release.py --target "$BUILD_TARGET"
+        run: python tools/package_release.py --target "$BUILD_TARGET"
       - uses: actions/upload-artifact@v7
         with:
           name: anykvm-${{ matrix.artifact }}

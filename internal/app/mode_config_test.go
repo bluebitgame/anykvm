@@ -37,6 +37,33 @@ func TestVideoModeConfig(t *testing.T) {
 	}
 }
 
+func TestScreenScaleConfigRoundTrip(t *testing.T) {
+	for _, mode := range []string{"0.5", "0.75@30"} {
+		cfg := DefaultConfig()
+		if err := yaml.Unmarshal([]byte("targets: [{video: {source: screen:0, mode: "+mode+"}}]"), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		data, err := yaml.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored Config
+		if err := yaml.Unmarshal(data, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if restored.Targets[0].Video.Mode != mode {
+			t.Fatalf("scale changed: %q", restored.Targets[0].Video.Mode)
+		}
+		cfg.Targets[0].Video.Source = "vnc://localhost"
+		if err := validateConfig(cfg); err == nil {
+			t.Fatal("unsupported network scaling accepted")
+		}
+	}
+}
+
 func TestWebVideoModeDiscovery(t *testing.T) {
 	previous := listWebVideoModes
 	defer func() { listWebVideoModes = previous }()

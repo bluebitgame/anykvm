@@ -43,13 +43,64 @@ For raw sources, JPEG output sends only changed regions; initial frames, resize
 and full-refresh requests send the whole picture. `vnc.pixel_tolerance: 0`
 (default) uses exact pixel comparisons.
 
-`vnc.jpeg_quality: 0` (Auto) forwards encoded MJPEG unchanged and uses the
-viewer-negotiated quality for raw sources. A nonzero value forces that quality,
-including decoding and re-encoding MJPEG. Reconnect after changing it.
+Tight output classifies changed raw-pixel blocks on the same 64×64 grid.
+Exactly uniform RGB blocks use lossless Tight Fill (`0x80`); adjacent blocks of
+the same color merge into larger rectangles. Alpha is ignored. Other blocks
+use JPEG (`0x90`), bounded to 2048×256 rectangles. Unchanged blocks are skipped
+before classification. Compressed baseline YCbCr/grayscale JPEG also supports
+Fill: a coefficient-only Huffman probe proves all AC coefficients are zero and
+each component's DC is constant, then derives the color from dequantized DC.
+No pixel image, upsampling or IDCT is performed. For self-generated GPU JPEG,
+the existing 64×64 change scan also checks exact RGB uniformity per 16×16 MCU,
+reusing each texture sample. Uniform MCUs calculate quantized DC directly with
+the same color conversion and signed rounding as the full AAN DCT, then skip
+both DCT and Huffman encoding. They enter only the changed-record queue; a
+separate DCT queue excludes them before indirect transform dispatch,
+so an all-solid update schedules zero DCT groups. Nonuniform MCUs still run DCT;
+a post-DCT AC-mask/DC check compacts a separate Huffman queue, excluding MCUs
+that quantization made constant before entropy dispatch. Both kinds of solid
+MCUs therefore schedule no Huffman work. A solid MCU emits only
+its 12-byte record (index, tag and packed 33-bit quantized DC color descriptor):
+no Huffman coding, entropy-buffer access or entropy payload readback occurs.
+CPU snapshots derive RGB once and retain the exact DCs for unchanged MCUs. Tight
+classifies these records at 16×16 MCU granularity and sends Fill directly, even
+inside an otherwise textured 64×64 dirty tile. Only if a JPEG consumer needs
+that MCU does cropping synthesize its small DC/EOB stream on the CPU, preserving
+the original coefficients and byte-identical JPEG output without pixels or
+requantization. Standalone GPU JPEG output keeps its complete entropy encoding.
+Other regions keep lossless JPEG crops. Progressive/unsupported scans, uncertain
+color metadata and invalid entropy conservatively remain JPEG.
+
+`vnc.jpeg_quality: 0` (Auto) retains the source MJPEG quantization and uses the
+viewer-negotiated quality for raw sources. Self-generated GPU JPEG is compared
+on a 64×64 grid. For the exclusive VNC session, Windows D3D11 and Linux Vulkan
+read back only changed MCU records and keep an immutable CPU compressed snapshot;
+no full-frame JPEG is packed on the GPU or transferred to the CPU. VNC packages
+rectangles from those segments, including a full refresh from cached segments
+when requested. A compact GPU work list drives indirect encoding dispatches and
+packing indexes, so unchanged tiles have no subsequent encoding tasks or
+metadata scan. A static frame launches no encoding or packing thread groups;
+Windows Desktop Duplication metadata further restricts change detection to
+candidate tiles from dirty regions and both ends of moves. Skipped acquisitions
+or missing metadata fall back to full comparison. The compressed data is split by copying independently coded MCU
+bytes, without re-encoding. Tight additionally entropy-probes changed blocks for
+Fill as described above. Adjacent dirty tiles are merged; unchanged
+regions are not sent. External MJPEG attempts TurboJPEG lossless coefficient-domain
+cropping, with one source coefficient decode shared by all tile crops. Only
+changed tiles are sent, without a pixel decode, DCT or requantization. This
+optional runtime is searched in `ANYKVM_JPEG_LIBDIR`, executable `lib/`, executable
+directory, standard macOS Homebrew locations and platform library paths. It can
+also be used in FFmpeg builds. If unavailable or unsupported, full-frame JPEG
+passthrough is retained; byte-identical frames are still suppressed. Compressed
+domain comparisons are exact and do not apply `vnc.pixel_tolerance`.
+
+A nonzero `vnc.jpeg_quality` forces that quality, including decoding and
+re-encoding MJPEG. Reconnect after changing it.
 Tight JPEG requires viewer JPEG support. Web UI quality levels differ from the
 numeric YAML encoder quality.
 
 Audio requires a viewer with QEMU Audio support.
+
 
 For using a remote VNC desktop as a capture source, see
 [VNC upstream sources](network-sources.md#vnc-support-and-wake-on-lan).

@@ -2,9 +2,10 @@
 package awdl
 
 import (
-	"log"
 	"sync"
 	"time"
+
+	"anykvm/internal/logging"
 )
 
 type networkInterface interface {
@@ -82,7 +83,7 @@ func (g *Guard) run(iface networkInterface, interval time.Duration) {
 	report := func(action string, err error) {
 		message := action + ": " + err.Error()
 		if message != lastError {
-			log.Printf("awdl: %s", message)
+			logging.Infof("awdl: %s", message)
 			lastError = message
 		}
 	}
@@ -111,7 +112,7 @@ func (g *Guard) run(iface networkInterface, interval time.Duration) {
 				}
 				changed = true
 				lastError = ""
-				log.Printf("awdl: disabled awdl0 while a client is connected")
+				logging.Infof("awdl: disabled awdl0 while a client is connected")
 			}
 			continue
 		}
@@ -123,7 +124,7 @@ func (g *Guard) run(iface networkInterface, interval time.Duration) {
 					continue
 				}
 			} else {
-				log.Printf("awdl: restored awdl0 after the last client disconnected")
+				logging.Infof("awdl: restored awdl0 after the last client disconnected")
 			}
 		}
 		haveOriginal, originalUp, changed = false, false, false

@@ -55,11 +55,12 @@ import "C"
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
 	"unsafe"
+
+	"anykvm/internal/logging"
 )
 
 // Register with the system mDNSResponder. It owns multicast sockets, correct
@@ -120,7 +121,7 @@ func registerBonjour(name, service string, port int, records []string, index int
 			default:
 			}
 			if code := C.anykvm_airplay_process(handle, 200); code != 0 {
-				log.Printf("airplay: Bonjour service %q ended: error %d", name, code)
+				logging.Infof("airplay: Bonjour service %q ended: error %d", name, code)
 				return
 			}
 		}

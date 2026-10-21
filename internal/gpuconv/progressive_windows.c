@@ -207,13 +207,13 @@ static HRESULT surface_buffer_ensure(bk_d3d_progressive *p,progressive_buffer *b
     }
     b->bytes=bytes;return S_OK;
 }
-int bk_d3d_progressive_surface_prepare(bk_d3d_progressive *p,uintptr_t handle,const uint32_t *parameters,uint32_t *flags,char *error,size_t capacity) {
-    if(!p||!p->surface_shader||!handle||!flags||!bk_progressive_surface_validate(parameters)){
+int bk_d3d_progressive_surface_prepare(bk_d3d_progressive *p,uintptr_t handle,const uint32_t *parameters,size_t words,uint32_t *flags,char *error,size_t capacity) {
+    if(!p||!p->surface_shader||!handle||!flags||!bk_progressive_surface_moves_validate(parameters,words)){
         snprintf(error,capacity,"invalid immutable GPU surface");return -1;
     }
     HRESULT hr=S_OK;ID3D11Texture2D *texture=NULL;ID3D11ShaderResourceView *view=NULL;IDXGIKeyedMutex *mutex=NULL;
     int locked=0;D3D11_MAPPED_SUBRESOURCE mapped;
-    uint32_t values[12];memcpy(values,parameters,48);UINT w=values[4],h=values[5],tiles=((w+63)/64)*((h+63)/64);
+    uint32_t *values=malloc(words*4);if(!values)return -1;memcpy(values,parameters,words*4);UINT w=values[4],h=values[5],tiles=((w+63)/64)*((h+63)/64);
     p->prepared=0;
     TRY(ID3D11Device_OpenSharedResource(p->device,(HANDLE)handle,&IID_ID3D11Texture2D,(void **)&texture));
     D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(texture,&desc);
@@ -231,13 +231,14 @@ int bk_d3d_progressive_surface_prepare(bk_d3d_progressive *p,uintptr_t handle,co
     TRY(surface_buffer_ensure(p,&p->current,w*h*4,1,1,0));
     TRY(surface_buffer_ensure(p,&p->previous,w*h*4,0,1,0));
     TRY(surface_buffer_ensure(p,&p->dirty,tiles*4,0,1,1));
-    TRY(surface_buffer_ensure(p,&p->surface_parameters,48,1,0,0));
+    TRY(surface_buffer_ensure(p,&p->surface_parameters,(UINT)words*4,1,0,0));
     if(p->dirty_readback_bytes<tiles*4) {
         DROP(ID3D11Buffer,p->dirty_readback);p->dirty_readback_bytes=0;
         D3D11_BUFFER_DESC buffer={.ByteWidth=tiles*4,.Usage=D3D11_USAGE_STAGING,.CPUAccessFlags=D3D11_CPU_ACCESS_READ};
         TRY(ID3D11Device_CreateBuffer(p->device,&buffer,NULL,&p->dirty_readback));p->dirty_readback_bytes=tiles*4;
     }
-    ID3D11DeviceContext_UpdateSubresource(p->context,(ID3D11Resource *)p->surface_parameters.buffer,0,NULL,values,0,0);
+    D3D11_BOX parameters_box={.right=(UINT)words*4,.bottom=1,.back=1};
+    ID3D11DeviceContext_UpdateSubresource(p->context,(ID3D11Resource *)p->surface_parameters.buffer,0,&parameters_box,values,0,0);
     hr=IDXGIKeyedMutex_AcquireSync(mutex,0,1000);if(hr!=S_OK){hr=E_FAIL;goto done;}locked=1;
     ID3D11ShaderResourceView *inputs[]={view,p->surface_parameters.srv};
     ID3D11UnorderedAccessView *outputs[]={p->current.uav,p->previous.uav,p->dirty.uav};
@@ -256,6 +257,7 @@ done:
     if(locked){HRESULT released=IDXGIKeyedMutex_ReleaseSync(mutex,0);if(SUCCEEDED(hr))hr=released;}
     DROP(IDXGIKeyedMutex,mutex);DROP(ID3D11ShaderResourceView,view);DROP(ID3D11Texture2D,texture);
     if(FAILED(hr)&&!error[0])snprintf(error,capacity,"D3D11 surface prepare: 0x%08lx",(unsigned long)hr);
+    free(values);
     return FAILED(hr)?-1:0;
 }
 int bk_d3d_progressive_surface_commit(bk_d3d_progressive *p,char *error,size_t capacity) {

@@ -2,9 +2,9 @@ package capture
 
 import (
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"errors"
 	"fmt"
-	"log"
 	"runtime"
 	"strings"
 	"sync"
@@ -172,7 +172,7 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 			return fmt.Errorf("capture: %w", err)
 		}
 		if name != s.captureID {
-			log.Printf("capture: ios device resolved to %q", name)
+			logging.Infof("capture: ios device resolved to %q", name)
 			s.captureID = name
 			s.native = newNativeDevice(name)
 		}
@@ -200,7 +200,7 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 	w, h, r := width, height, fps
 	if s.caps.ok {
 		w, h, r = s.caps.width, s.caps.height, s.caps.fps
-		log.Printf("capture: device caps %dx%d@%d mjpeg=%v h264=%v", w, h, r, s.caps.mjpeg, s.caps.h264)
+		logging.Infof("capture: device caps %dx%d@%d mjpeg=%v h264=%v", w, h, r, s.caps.mjpeg, s.caps.h264)
 	}
 	// AVFoundation plus the JPEG backend/VideoToolbox covers normal Mac inputs without
 	// FFmpeg. Try it first even when optional libraries are installed.
@@ -210,7 +210,7 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 		} else if s.explicitMode || !ffmpegAvailable() {
 			return err
 		} else {
-			log.Printf("capture: native media failed (%v); trying FFmpeg", err)
+			logging.Infof("capture: native media failed (%v); trying FFmpeg", err)
 		}
 	}
 
@@ -230,10 +230,10 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 				s.native.SetDecodeImage(false)
 				if err := s.native.OpenWithFormat(w, h, r); err == nil {
 					s.setDevice(s.native)
-					log.Printf("capture: native H.264 passthrough")
+					logging.Infof("capture: native H.264 passthrough")
 					return nil
 				} else {
-					log.Printf("capture: native H.264 failed (%v); falling back to ffmpeg", err)
+					logging.Infof("capture: native H.264 failed (%v); falling back to ffmpeg", err)
 				}
 			}
 		}
@@ -241,10 +241,10 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 		// device output).
 		if ffmpegAvailable() {
 			if err := s.openFFmpegCodec(w, h, r, "h264"); err == nil {
-				log.Printf("capture: ffmpeg H.264 encode")
+				logging.Infof("capture: ffmpeg H.264 encode")
 				return nil
 			} else {
-				log.Printf("capture: ffmpeg H.264 failed (%v); using MJPEG", err)
+				logging.Infof("capture: ffmpeg H.264 failed (%v); using MJPEG", err)
 			}
 		}
 		// Fall through to MJPEG if H.264 is unavailable.
@@ -259,19 +259,19 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 			s.native.SetDecodeImage(false)
 			if e := s.native.OpenWithFormat(w, h, r); e == nil {
 				s.setDevice(s.native)
-				log.Printf("capture: native YUV passthrough")
+				logging.Infof("capture: native YUV passthrough")
 				return nil
 			} else {
-				log.Printf("capture: native YUV failed (%v); falling back to ffmpeg UYVY", e)
+				logging.Infof("capture: native YUV failed (%v); falling back to ffmpeg UYVY", e)
 				yp.SetYUVPassthrough(false)
 			}
 		}
 		if ffmpegAvailable() {
 			if err := s.openFFmpegCodec(w, h, r, "uyvy"); err == nil {
-				log.Printf("capture: ffmpeg UYVY output")
+				logging.Infof("capture: ffmpeg UYVY output")
 				return nil
 			} else {
-				log.Printf("capture: ffmpeg UYVY failed (%v); using rawvideo", err)
+				logging.Infof("capture: ffmpeg UYVY failed (%v); using rawvideo", err)
 			}
 		}
 		// Fall through to rawvideo if uyvy is unavailable.
@@ -283,10 +283,10 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 	if s.videoCodec == "rawvideo" {
 		if ffmpegAvailable() {
 			if err := s.openFFmpegCodec(w, h, r, "rawvideo"); err == nil {
-				log.Printf("capture: ffmpeg rawvideo output")
+				logging.Infof("capture: ffmpeg rawvideo output")
 				return nil
 			} else {
-				log.Printf("capture: ffmpeg rawvideo failed (%v); using MJPEG", err)
+				logging.Infof("capture: ffmpeg rawvideo failed (%v); using MJPEG", err)
 			}
 		}
 		// Fall through to MJPEG if rawvideo is unavailable.
@@ -299,7 +299,7 @@ func (s *smartDevice) OpenWithFormat(width, height, fps int) error {
 		if err := s.openFFmpeg(w, h, r); err == nil {
 			return nil
 		} else {
-			log.Printf("capture: ffmpeg backend failed (%v); using native backend", err)
+			logging.Infof("capture: ffmpeg backend failed (%v); using native backend", err)
 		}
 	}
 
@@ -365,7 +365,7 @@ func (s *smartDevice) openNativeMedia(width, height, fps int) error {
 			return err
 		}
 		s.setDevice(pe)
-		log.Printf("capture: native capture + VideoToolbox %s", codec)
+		logging.Infof("capture: native capture + VideoToolbox %s", codec)
 	case "rawvideo", "uyvy":
 		setYUVPassthrough(s.native, codec == "uyvy")
 		s.native.SetDecodeImage(codec == "rawvideo")
@@ -382,7 +382,7 @@ func (s *smartDevice) openNativeMedia(width, height, fps int) error {
 			return err
 		}
 		s.setDevice(j)
-		log.Printf("capture: native capture + %s (device JPEG passthrough)", jpegcodec.Backend())
+		logging.Infof("capture: native capture + %s (device JPEG passthrough)", jpegcodec.Backend())
 	default:
 		return fmt.Errorf("capture: unsupported native codec %q", codec)
 	}
@@ -453,7 +453,7 @@ func (s *smartDevice) probe(wantW, wantH, wantFPS int) deviceCaps {
 	}
 	caps, err := prober.ProbeCaps(wantW, wantH, wantFPS)
 	if err != nil {
-		log.Printf("capture: capability probe failed: %v", err)
+		logging.Infof("capture: capability probe failed: %v", err)
 		return deviceCaps{}
 	}
 	return caps

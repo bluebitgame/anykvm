@@ -18,8 +18,9 @@ static int bk_set_input_qos(unsigned int qos, int relative) {
 import "C"
 
 import (
-	"log"
 	"runtime"
+
+	"anykvm/internal/logging"
 )
 
 // QoS belongs to an OS thread, not a goroutine. Pin the control/input worker
@@ -33,12 +34,12 @@ func prioritizeInputThread() func() {
 		previous, relative = C.QOS_CLASS_DEFAULT, 0
 	}
 	if code := C.bk_set_input_qos(C.QOS_CLASS_USER_INTERACTIVE, 0); code != 0 {
-		log.Printf("gamestream: could not prioritize input thread: %d", int(code))
+		logging.Infof("gamestream: could not prioritize input thread: %d", int(code))
 	}
 	return func() {
 		if code := C.bk_set_input_qos(previous, relative); code != 0 {
 			// Keep this thread locked; Go discards it when the worker exits.
-			log.Printf("gamestream: could not restore input thread priority: %d", int(code))
+			logging.Infof("gamestream: could not restore input thread priority: %d", int(code))
 			return
 		}
 		runtime.UnlockOSThread()

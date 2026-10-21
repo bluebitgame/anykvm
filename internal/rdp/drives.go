@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/webdav"
+
+	"anykvm/internal/logging"
 )
 
 // DriveRedirectionOptions exposes client-selected drives through loopback WebDAV.
@@ -230,10 +231,10 @@ func (c *client) startDriveWebDAV() error {
 	go func() {
 		defer c.s.wg.Done()
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("rdp: drive WebDAV: %v", err)
+			logging.Infof("rdp: drive WebDAV: %v", err)
 		}
 	}()
-	log.Printf("rdp: client drives WebDAV: %s (local access, permissions=%d)", url, c.s.cfg.DriveRedirection.Permissions)
+	logging.Infof("rdp: client drives WebDAV: %s (local access, permissions=%d)", url, c.s.cfg.DriveRedirection.Permissions)
 	return nil
 }
 
@@ -358,7 +359,7 @@ func (c *client) handleDrivePDU(p []byte) error {
 			}
 		}
 		if err := c.startDriveWebDAV(); err != nil {
-			log.Printf("rdp: cannot expose client drives: %v", err)
+			logging.Infof("rdp: cannot expose client drives: %v", err)
 		}
 	case driveDevices:
 		if !d.capable || len(p) < 4 {
@@ -406,7 +407,7 @@ func (c *client) handleDrivePDU(p []byte) error {
 				d.devices[id] = &redirectedDrive{id: id, name: name}
 				d.mu.Unlock()
 				status = 0
-				log.Printf("rdp: client drive available: %s", name)
+				logging.Infof("rdp: client drive available: %s", name)
 			}
 			if err := c.sendDrive(driveReply, join(u32(id), u32(status))); err != nil {
 				return err

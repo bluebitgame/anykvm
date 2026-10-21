@@ -9,6 +9,8 @@ import (
 )
 
 type serverOptions struct {
+	info           bool
+	debug          bool
 	configPath     string
 	genConfig      string
 	listDevices    bool
@@ -24,6 +26,8 @@ type serverOptions struct {
 // Service and device settings are read exclusively from YAML.
 func registerServerFlags(fs *flag.FlagSet) *serverOptions {
 	opts := &serverOptions{}
+	fs.BoolVar(&opts.info, "info", false, "log connections and runtime events")
+	fs.BoolVar(&opts.debug, "debug", false, "log everything, including connections and periodic statistics")
 	fs.StringVar(&opts.configPath, "config", "", "YAML config file (default: config.yaml beside the executable; created if missing)")
 	fs.StringVar(&opts.genConfig, "gen-config", "", "write the default configuration (Web on 127.0.0.1:8080, other listeners disabled) to this path and exit")
 	fs.BoolVar(&opts.listDevices, "list-devices", false, "list capture/audio/HID devices and exit")

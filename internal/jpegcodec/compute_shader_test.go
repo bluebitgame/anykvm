@@ -16,10 +16,16 @@ func TestJPEGComputeShaderABI(t *testing.T) {
 		bindings []uint32
 		group    [3]uint32
 	}{
-		{"main", []uint32{0, 1, 2}, [3]uint32{8, 8, 1}},
-		{"encodeMCUs", []uint32{1, 2, 3, 4}, [3]uint32{64, 1, 1}},
-		{"indexSegments", []uint32{2, 4, 7}, [3]uint32{1, 1, 1}},
-		{"packJPEG", []uint32{2, 3, 4, 5, 6}, [3]uint32{64, 1, 1}},
+		{"compareTiles", []uint32{0, 2, 4, 6, 7, 8, 9}, [3]uint32{64, 1, 1}},
+		{"prepareWork", []uint32{2, 7, 9}, [3]uint32{1, 1, 1}},
+		{"main", []uint32{0, 1, 2, 4, 9}, [3]uint32{8, 8, 1}},
+		{"selectEntropy", []uint32{1, 2, 4, 6, 9}, [3]uint32{64, 1, 1}},
+		{"prepareEntropy", []uint32{2, 7, 9}, [3]uint32{1, 1, 1}},
+		{"encodeMCUs", []uint32{1, 2, 3, 4, 6, 9}, [3]uint32{64, 1, 1}},
+		{"indexSegments", []uint32{2, 4, 9}, [3]uint32{256, 1, 1}},
+		{"scanSegmentGroups", []uint32{2, 4, 7, 9}, [3]uint32{256, 1, 1}},
+		{"addSegmentOffsets", []uint32{2, 4, 9}, [3]uint32{256, 1, 1}},
+		{"packJPEG", []uint32{2, 3, 4, 5, 6, 9}, [3]uint32{64, 1, 1}},
 	} {
 		t.Run(stage.entry, func(t *testing.T) { checkJPEGShaderABI(t, stage.entry, stage.bindings, stage.group) })
 	}
@@ -120,7 +126,7 @@ func checkJPEGShaderProgramABI(t *testing.T, sourceName, source, entry string, e
 	if !constantBuffer {
 		return
 	}
-	want := []uint32{0, 8, 16, 20, 24, 28, 32, 40, 48, 560}
+	want := []uint32{0, 8, 16, 20, 24, 28, 32, 40, 48, 560, 12848}
 	for _, members := range offsets {
 		if len(members) != len(want) {
 			continue

@@ -15,9 +15,9 @@ import (
 	"anykvm/internal/framerate"
 	"anykvm/internal/gpuconv"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"strconv"
@@ -53,6 +53,7 @@ func (d *kmsDevice) SetVideoStreamOptions(v *VideoStreamOptions) { d.enc.SetVide
 func (d *kmsDevice) SetOutputDownscaleOnly(v bool)               { d.enc.outputDownscaleOnly = v }
 func (d *kmsDevice) SetOutputSize(w, h int)                      { d.enc.targetW, d.enc.targetH = w, h }
 func (d *kmsDevice) SetOutputSizeLimit(w, h int)                 { d.enc.SetOutputSizeLimit(w, h) }
+func (d *kmsDevice) SetOutputScale(scale float64) error          { return d.enc.SetOutputScale(scale) }
 func (d *kmsDevice) SetGPUSurface(v bool)                        { d.enc.gpuSurface = v }
 
 func (d *kmsDevice) SupportsVideoCodec(codec string) bool { return d.enc.SupportsVideoCodec(codec) }
@@ -122,7 +123,7 @@ func (d *kmsDevice) OpenWithFormat(w, h, fps int) error {
 		d.enc.targetW, d.enc.targetH = w, h
 	}
 	d.enc.closed.Store(false)
-	log.Printf("capture: Linux KMS %q %s connector=%d primary-plane=%d %dx%d@%d/%d (DMA-BUF; cursor omitted)", d.id, C.GoString(&d.output.card[0]), d.output.connector, d.output.plane, d.output.width, d.output.height, rate.Num, rate.Den)
+	logging.Infof("capture: Linux KMS %q %s connector=%d primary-plane=%d %dx%d@%d/%d (DMA-BUF; cursor omitted)", d.id, C.GoString(&d.output.card[0]), d.output.connector, d.output.plane, d.output.width, d.output.height, rate.Num, rate.Den)
 	return nil
 }
 func (d *kmsDevice) Capture() (*Frame, error) {
@@ -243,21 +244,35 @@ func (f *kmsFrame) EncodeTexture(e videoenc.Encoder, key bool) ([]byte, bool, er
 func (*kmsFrame) JPEGEncoderName() string { return "Vulkan Compute JPEG" }
 
 func (f *kmsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer, bool, error) {
+	buffer, _, handled, err := f.encodeJPEG(width, height, quality, false)
+	return buffer, handled, err
+}
+func (f *kmsFrame) EncodeJPEGRegions(width, height, quality int) (*jpegcodec.RestartJPEG, bool, error) {
+	_, snapshot, handled, err := f.encodeJPEG(width, height, quality, true)
+	return snapshot, handled, err
+}
+
+func (f *kmsFrame) encodeJPEG(width, height, quality int, regions bool) (*framebuf.Buffer, *jpegcodec.RestartJPEG, bool, error) {
 	d := f.device
 	if d.jpegDisabled || os.Getenv("ANYKVM_LINUX_GPU_JPEG") == "0" {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	var err error
 	if d.jpegEncoder == nil {
 		d.jpegEncoder, err = jpegcodec.NewVulkanEncoder(f.source.DeviceMajor, f.source.DeviceMinor)
 		if err == nil {
 			major, minor := d.jpegEncoder.DRMDevice()
-			log.Printf("capture: Vulkan JPEG DRM source=%d:%d renderer=%d:%d", f.source.DeviceMajor, f.source.DeviceMinor, major, minor)
+			logging.Infof("capture: Vulkan JPEG DRM source=%d:%d renderer=%d:%d", f.source.DeviceMajor, f.source.DeviceMinor, major, minor)
 		}
 	}
 	var data []byte
+	var snapshot *jpegcodec.RestartJPEG
 	if err == nil {
-		data, err = d.jpegEncoder.EncodeSource(f.source, width, height, quality)
+		if regions {
+			snapshot, err = d.jpegEncoder.EncodeRegions(f.source, width, height, quality)
+		} else {
+			data, err = d.jpegEncoder.EncodeSource(f.source, width, height, quality)
+		}
 	}
 	if err != nil {
 		if d.jpegEncoder != nil {
@@ -265,11 +280,14 @@ func (f *kmsFrame) EncodeJPEG(width, height, quality int) (*framebuf.Buffer, boo
 			d.jpegEncoder = nil
 		}
 		d.jpegDisabled = true
-		log.Printf("capture: Vulkan JPEG unavailable; using CPU JPEG: %v", err)
-		return nil, false, nil
+		logging.Infof("capture: Vulkan JPEG unavailable; using CPU JPEG: %v", err)
+		return nil, nil, false, nil
 	}
 	d.gpuFrames++
-	return framebuf.New(data, nil), true, nil
+	if regions {
+		return nil, snapshot, true, nil
+	}
+	return framebuf.New(data, nil), nil, true, nil
 }
 func (f *kmsFrame) Materialize(out *Frame) error {
 	d := f.device
@@ -279,7 +297,7 @@ func (f *kmsFrame) Materialize(out *Frame) error {
 			return err
 		}
 		d.converter = converter
-		log.Printf("capture: KMS Vulkan BGRA readback for CPU/JPEG or non-DMA-BUF encoder consumer")
+		logging.Infof("capture: KMS Vulkan BGRA readback for CPU/JPEG or non-DMA-BUF encoder consumer")
 	}
 	w, h := d.enc.fitOutputSize(out.Width, out.Height)
 	converted, err := d.converter.Convert(f.source, w, h, false)
@@ -314,3 +332,5 @@ func ListScreens() []Screen {
 	}
 	return result
 }
+
+func (d *kmsDevice) SetJPEGRegions(v bool) { d.enc.jpegRegions = v }

@@ -3,12 +3,13 @@ package vnc
 import (
 	"crypto/tls"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 
 	"anykvm/internal/capture"
 	"anykvm/internal/framebuf"
+	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/netstats"
 	"anykvm/internal/videotiming"
 )
@@ -51,12 +52,14 @@ type HIDSender interface {
 
 // Frame is one video frame: a single format tag + shared byte buffer (single-client model)
 type Frame struct {
-	Timing videotiming.Delivery
-	Buffer *framebuf.Buffer
-	Format capture.VideoFormat
-	Data   []byte
-	Width  int
-	Height int
+	Damage      *jpegcodec.DesktopDamage // Immutable advisory source damage; nil requires full comparison.
+	JPEGRegions *jpegcodec.RestartJPEG
+	Timing      videotiming.Delivery
+	Buffer      *framebuf.Buffer
+	Format      capture.VideoFormat
+	Data        []byte
+	Width       int
+	Height      int
 }
 
 // Server is the VNC server.
@@ -113,7 +116,7 @@ func (s *Server) Start() error {
 	s.ln = netstats.WrapListener(s.ln)
 	if s.config.CursorCapture != nil {
 		if err := s.config.CursorCapture.Open(); err != nil {
-			log.Printf("vnc: cursor capture unavailable: %v", err)
+			logging.Infof("vnc: cursor capture unavailable: %v", err)
 		}
 	}
 	go s.acceptLoop()
@@ -128,12 +131,14 @@ func (s *Server) PushFrame(frame Frame) {
 // PushFrameWithStop cancels backpressure when a capture session ends.
 func (s *Server) PushFrameWithStop(frame Frame, stop <-chan struct{}) {
 	fd := &frameData{
-		timing: frame.Timing.Enqueue(),
-		buffer: frame.Buffer,
-		format: frame.Format,
-		data:   frame.Data,
-		width:  uint16(frame.Width),
-		height: uint16(frame.Height),
+		jpegRegions: frame.JPEGRegions,
+		damage:      frame.Damage,
+		timing:      frame.Timing.Enqueue(),
+		buffer:      frame.Buffer,
+		format:      frame.Format,
+		data:        frame.Data,
+		width:       uint16(frame.Width),
+		height:      uint16(frame.Height),
 	}
 
 	s.mu.Lock()
@@ -203,7 +208,7 @@ func (s *Server) addClient(c *client) {
 	// advertised its encodings (see client.markReady), so capture opens directly
 	// in the negotiated codec (e.g. H.264) instead of MJPEG first then switching.
 	c.firstConsumer = old == nil
-	log.Printf("vnc: client added (%s)", c.conn.RemoteAddr())
+	logging.Infof("vnc: client added (%s)", c.conn.RemoteAddr())
 }
 
 // clientReady fires OnClientConnected (which starts capture) once the given
@@ -243,7 +248,7 @@ func (s *Server) UpdateFramebufferSize(width, height int) {
 	s.config.Height = height
 	s.mu.Unlock()
 
-	log.Printf("vnc: framebuffer size set to %dx%d", width, height)
+	logging.Infof("vnc: framebuffer size set to %dx%d", width, height)
 }
 
 // SetFPS records the effective capture frame rate used to configure the H.264
@@ -312,7 +317,7 @@ func (s *Server) acceptLoop() {
 		if err != nil {
 			return
 		}
-		log.Printf("vnc: client connected from %s", conn.RemoteAddr())
+		logging.Infof("vnc: client connected from %s", conn.RemoteAddr())
 		s.mu.Lock()
 		pixelTol, jpegLock, forceContinuous, cursorCap := s.config.PixelTol, s.config.JPEGQuality, s.config.ForceContinuous, s.config.CursorCapture
 		codecs := s.config.Codecs

@@ -6,10 +6,10 @@ import (
 	"anykvm/internal/framerate"
 	"anykvm/internal/gpuconv"
 	"anykvm/internal/jpegcodec"
+	"anykvm/internal/logging"
 	"anykvm/internal/videoenc"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 	"time"
 )
@@ -73,7 +73,29 @@ func (d *ffmpegDevice) fitOutputSize(w, h int) (int, int) {
 	if d.outputDownscaleOnly {
 		tw, th = LimitedOutputSize(w, h, tw, th, d.outputMaxW, d.outputMaxH)
 	}
+	tw, th = d.scaledOutputRequest(tw, th)
+	if d.outputScale > 0 && d.outputScale != 1 && !d.outputDownscaleOnly {
+		return tw, th
+	}
 	return fitCaptureSize(w, h, tw, th)
+}
+
+func (d *ffmpegDevice) scaledOutputRequest(w, h int) (int, int) {
+	if d.outputScale == 0 || d.outputScale == 1 {
+		return w, h
+	}
+	if d.outputDownscaleOnly {
+		return BoundedOutputSize(d.scaledW, d.scaledH, w, h)
+	}
+	return d.scaledW, d.scaledH
+}
+
+func (d *ffmpegDevice) SetOutputScale(scale float64) error {
+	if scale != 0 && scale != 1 && !isScreenDevice(d.device) {
+		return fmt.Errorf("proportional scaling requires a local screen source")
+	}
+	d.outputScale = scale
+	return nil
 }
 
 func (d *ffmpegDevice) SetOutputSize(w, h int)        { d.targetW, d.targetH = w, h }
@@ -81,7 +103,7 @@ func (d *ffmpegDevice) SetOutputDownscaleOnly(v bool) { d.outputDownscaleOnly = 
 func (d *ffmpegDevice) SetOutputSizeLimit(w, h int)   { d.outputMaxW, d.outputMaxH = w, h }
 func (d *ffmpegDevice) RequestKeyframe() error {
 	if d.passthrough.Load() {
-		log.Printf("capture: passthrough waiting for source IDR (device keyframe control unavailable)")
+		logging.Infof("capture: passthrough waiting for source IDR (device keyframe control unavailable)")
 		return nil
 	}
 	d.forceIDR.Store(true)
@@ -134,6 +156,13 @@ func (d *ffmpegDevice) readMediaFrame() (*Frame, error) {
 	return out, err
 }
 func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
+	if d.outputScale > 0 && d.outputScale != 1 {
+		var err error
+		d.scaledW, d.scaledH, err = ScaledResolution(f.Width, f.Height, d.outputScale)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Never rate-limit, resize or re-encode an already compressed source here.
 	// Dropping reference pictures would corrupt subsequent predicted pictures.
 	if f.Format == FormatH264 || f.Format == FormatHEVC || f.Format == FormatAV1 {
@@ -190,6 +219,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 				d.outputMaxW&^1, d.outputMaxH&^1)
 			o.Width, o.Height = (o.Width+1)&^1, (o.Height+1)&^1
 		}
+		o.Width, o.Height = d.scaledOutputRequest(o.Width, o.Height)
 		// USB mirroring can deliver 30 fps while DAL reports a nominal 60 fps.
 		// Keep arrival-time pacing for it; counting every second sample would
 		// halve the actual rate. Fixed-rate capture cards retain decimation.
@@ -298,7 +328,8 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 	}
 	// Native desktop JPEG can consume the texture before Materialize reads the
 	// entire frame into CPU memory. Device-compressed MJPEG keeps its passthrough.
-	if d.gpuSurface && codec == "rawvideo" && f.nativeBuffer != nil {
+	if d.gpuSurface && codec == "rawvideo" && f.nativeBuffer != nil &&
+		((d.outputScale == 0 || d.outputScale == 1) || d.scaledW == f.Width && d.scaledH == f.Height) {
 		if source, ok := f.nativeBuffer.(interface {
 			SnapshotSurface() (*gpuconv.Surface, *framebuf.Buffer, bool, error)
 		}); ok {
@@ -328,6 +359,28 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		}
 	}
 	if f.nativeBuffer != nil && !d.shouldDecode() && (codec == "" || codec == "mjpeg") {
+		if d.jpegRegions {
+			if gpu, ok := f.nativeBuffer.(interface {
+				EncodeJPEGRegions(int, int, int) (*jpegcodec.RestartJPEG, bool, error)
+			}); ok {
+				w, h := d.fitOutputSize(f.Width, f.Height)
+				if d.PreserveCaptureMode() {
+					w, h = f.Width, f.Height
+				}
+				regions, handled, err := gpu.EncodeJPEGRegions(w, h, d.jpegQuality())
+				if err != nil {
+					return nil, err
+				}
+				if handled {
+					if regions == nil {
+						return nil, fmt.Errorf("GPU JPEG regions missing snapshot")
+					}
+					d.outputLog.start("jpeg", "GPU JPEG (changed segment readback)")
+					return &Frame{JPEGRegions: regions, Width: w, Height: h, SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
+				}
+			}
+		}
+
 		if gpu, ok := f.nativeBuffer.(interface {
 			EncodeJPEG(int, int, int) (*framebuf.Buffer, bool, error)
 			JPEGEncoderName() string
@@ -346,6 +399,10 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 					SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
 			}
 		}
+	}
+	sourceW, sourceH := f.SourceWidth, f.SourceHeight
+	if sourceW <= 0 || sourceH <= 0 {
+		sourceW, sourceH = f.Width, f.Height
 	}
 	if f.nativeBuffer != nil {
 		if err := f.nativeBuffer.Materialize(f); err != nil {
@@ -388,7 +445,10 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 				copy(data[(y*w+x)*4:], f.Data[src:src+4])
 			}
 		}
-		f = &Frame{Data: data, Width: w, Height: h, Format: FormatRaw, CapturedAt: f.CapturedAt}
+		f = &Frame{Data: data, Width: w, Height: h, SourceWidth: sourceW, SourceHeight: sourceH, Format: FormatRaw, CapturedAt: f.CapturedAt}
+	}
+	if d.outputScale > 0 && d.outputScale != 1 {
+		f.SourceWidth, f.SourceHeight = sourceW, sourceH
 	}
 	if codec == "rawvideo" || codec == "uyvy" || d.shouldDecode() {
 		d.outputLog.start(f.Format.String(), "none (pixels)")
@@ -399,7 +459,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		return nil, err
 	}
 	d.outputLog.start("jpeg", jpegcodec.Backend())
-	return &Frame{Buffer: jpeg, Data: jpeg.Bytes(), Width: f.Width, Height: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
+	return &Frame{Buffer: jpeg, Data: jpeg.Bytes(), Width: f.Width, Height: f.Height, SourceWidth: f.SourceWidth, SourceHeight: f.SourceHeight, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
 }
 
 func (d *ffmpegDevice) jpegQuality() int {
