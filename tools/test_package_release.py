@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 import package_release
 
@@ -44,6 +45,33 @@ class ReleasePackagingTests(unittest.TestCase):
                 self.assertEqual(archive.with_name(archive.name + ".sha256").read_text(),
                                  f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
                 self.assertFalse((source / "README.md").exists())
+
+    def test_unix_archive_permissions_do_not_depend_on_host(self):
+        original_gettarinfo = tarfile.TarFile.gettarinfo
+
+        def windows_permissions(bundle, *args, **kwargs):
+            member = original_gettarinfo(bundle, *args, **kwargs)
+            member.mode = 0o666
+            return member
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "binary"
+            source.mkdir()
+            executable = source / "anykvm"
+            executable.write_bytes(b"executable")
+            original_mode = executable.stat().st_mode
+            (root / "LICENSE").touch()
+            (root / "README.md").touch()
+            (root / "docs").mkdir()
+            with patch.object(tarfile.TarFile, "gettarinfo", windows_permissions):
+                archive = package_release.package("linux/amd64", source, root / "dist", root)
+            with tarfile.open(archive) as bundle:
+                self.assertEqual(bundle.getmember("anykvm-linux-amd64/anykvm").mode, 0o755)
+                for member in bundle.getmembers():
+                    if member.isdir():
+                        self.assertEqual(member.mode, 0o755)
+            self.assertEqual(executable.stat().st_mode, original_mode)
 
     def test_missing_executable_does_not_produce_release(self):
         with tempfile.TemporaryDirectory() as temporary:

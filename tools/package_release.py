@@ -5,6 +5,7 @@ import argparse
 import hashlib
 from pathlib import Path
 import shutil
+import tarfile
 import tempfile
 
 
@@ -28,11 +29,21 @@ def package(target, source, output, root=ROOT):
         shutil.copy2(root / "LICENSE", staging / "LICENSE")
         shutil.copy2(root / "README.md", staging / "README.md")
         shutil.copytree(root / "docs", staging / "docs", ignore=shutil.ignore_patterns("plans"))
-        if not target.startswith("windows/"):
-            (staging / executable).chmod(0o755)
-        archive_format = "zip" if target.startswith("windows/") else "gztar"
-        archive = Path(shutil.make_archive(str(output.resolve() / name), archive_format,
-                                           root_dir=temporary, base_dir=name))
+        if target.startswith("windows/"):
+            archive = Path(shutil.make_archive(str(output.resolve() / name), "zip",
+                                               root_dir=temporary, base_dir=name))
+        else:
+            archive = output.resolve() / (name + ".tar.gz")
+
+            def archive_permissions(member):
+                # Windows chmod cannot set POSIX execute bits. Set the tar
+                # metadata directly, without changing source permissions.
+                if member.isdir() or member.name == f"{name}/{executable}":
+                    member.mode = 0o755
+                return member
+
+            with tarfile.open(archive, "w:gz") as bundle:
+                bundle.add(staging, arcname=name, filter=archive_permissions)
     checksum = hashlib.sha256()
     with archive.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
