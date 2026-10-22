@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import tempfile
@@ -204,6 +205,26 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("-DCMAKE_SYSTEM_PROCESSOR=aarch64", arguments)
             self.assertIn("-DCMAKE_C_FLAGS=--target=aarch64-linux-gnu --sysroot=/sdk -I/sdk/include", arguments)
             self.assertNotIn("CC", run.call_args_list[0].kwargs["env"])
+
+    def test_cmake_normalizes_windows_tool_paths(self):
+        for arch, cpu in (("amd64", "x86_64"), ("arm64", "aarch64")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / "compiler path"
+                root.mkdir()
+                suffix = ".exe" if os.name == "nt" else ""
+                compiler = root / (cpu + "-w64-mingw32-clang" + suffix)
+                windres = root / (cpu + "-w64-mingw32-windres" + suffix)
+                windres.touch()
+                env = {"CC": '"' + str(compiler).replace("/", "\\") + '"'}
+                with patch.object(runtime, "build_tool", return_value=r"C:\Program Files\tools\ninja.exe"), \
+                        patch.object(runtime.subprocess, "run") as run:
+                    runtime.cmake_build(root, root / "prefix", "windows/" + arch, env)
+                arguments = run.call_args_list[0].args[0]
+                self.assertIn("-DCMAKE_C_COMPILER=" + compiler.as_posix(), arguments)
+                self.assertIn("-DCMAKE_RC_COMPILER=" + windres.as_posix(), arguments)
+                self.assertIn("-DCMAKE_MAKE_PROGRAM=C:/Program Files/tools/ninja.exe", arguments)
+                for argument in arguments[1:]:
+                    self.assertNotIn("\\", argument)
 
     def test_bootstrap_tools_use_host_architecture_and_verified_assets(self):
         for system, arch, name, asset_name in (

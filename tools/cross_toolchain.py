@@ -23,6 +23,11 @@ LLVM_VERSION = "20260616"
 SDL_VERSION = "2.32.10"
 
 
+def cmake_path(path):
+    # CMake writes these values into scripts where backslashes are escapes.
+    return str(path).replace("\\", "/")
+
+
 def command_string(args):
     # Match Go's quoted.Split: quotes group words without unescaping backslashes.
     words = []
@@ -264,14 +269,14 @@ def windows_sdl(arch, host, dry_run):
             build_dir.mkdir(parents=True, exist_ok=True)
             if (build_dir / "CMakeCache.txt").is_file():
                 generator = []
-            subprocess.run(["cmake", *generator, "-S", str(source), "-B", str(build_dir),
+            subprocess.run(["cmake", *generator, "-S", cmake_path(source), "-B", cmake_path(build_dir),
                             "-DCMAKE_SYSTEM_NAME=Windows", "-DCMAKE_SYSTEM_PROCESSOR=ARM64",
-                            "-DCMAKE_C_COMPILER=" + str(compiler / "bin" / ("aarch64-w64-mingw32-clang" + suffix)),
-                            "-DCMAKE_RC_COMPILER=" + str(compiler / "bin" / ("aarch64-w64-mingw32-windres" + suffix)),
-                            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=" + str(directory),
+                            "-DCMAKE_C_COMPILER=" + cmake_path(compiler / "bin" / ("aarch64-w64-mingw32-clang" + suffix)),
+                            "-DCMAKE_RC_COMPILER=" + cmake_path(compiler / "bin" / ("aarch64-w64-mingw32-windres" + suffix)),
+                            "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=" + cmake_path(directory),
                             "-DSDL_SHARED=ON", "-DSDL_STATIC=OFF", "-DSDL_TEST=OFF"], check=True)
-            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "2"], check=True)
-            subprocess.run(["cmake", "--install", str(build_dir)], check=True)
+            subprocess.run(["cmake", "--build", cmake_path(build_dir), "--parallel", "2"], check=True)
+            subprocess.run(["cmake", "--install", cmake_path(build_dir)], check=True)
             (directory / ".ready").write_text(SDL_VERSION + "\n")
         return directory / "include/SDL2", directory / "lib", directory / "bin/SDL2.dll"
     directory = CACHE / f"SDL2-{SDL_VERSION}-windows"

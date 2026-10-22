@@ -111,9 +111,10 @@ def cmake_build(source_dir, prefix, target, env, options=(), allow_download=True
     if (prefix / "work").exists():
         shutil.rmtree(prefix / "work")
     compiler, *flags = compiler_words(env["CC"])
+    compiler = toolchain.cmake_path(compiler)
     flags += compiler_words(env.get("CGO_CFLAGS", ""))
-    arguments = [cmake, "-S", str(source_dir), "-B", str(prefix / "work"),
-                 "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=" + str(prefix),
+    arguments = [cmake, "-S", toolchain.cmake_path(source_dir), "-B", toolchain.cmake_path(prefix / "work"),
+                 "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=" + toolchain.cmake_path(prefix),
                  "-DCMAKE_INSTALL_LIBDIR=lib", "-DCMAKE_C_COMPILER=" + compiler,
                  "-DCMAKE_C_FLAGS=" + toolchain.command_string(flags),
                  "-DCMAKE_SHARED_LINKER_FLAGS=" + env.get("CGO_LDFLAGS", ""),
@@ -124,24 +125,24 @@ def cmake_build(source_dir, prefix, target, env, options=(), allow_download=True
                       "-DCMAKE_OSX_ARCHITECTURES=" + ("x86_64" if arch == "amd64" else "arm64"),
                       "-DCMAKE_OSX_DEPLOYMENT_TARGET=" + env.get("MACOSX_DEPLOYMENT_TARGET", "12.3")]
         if env.get("SDKROOT"):
-            arguments += ["-DCMAKE_OSX_SYSROOT=" + env["SDKROOT"]]
+            arguments += ["-DCMAKE_OSX_SYSROOT=" + toolchain.cmake_path(env["SDKROOT"])]
     else:
         arguments += ["-DCMAKE_SYSTEM_NAME=" + ("Windows" if system == "windows" else "Linux"),
                       "-DCMAKE_SYSTEM_PROCESSOR=" + ("x86_64" if arch == "amd64" else "aarch64")]
-    arguments += ["-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=" + ninja]
+    arguments += ["-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=" + toolchain.cmake_path(ninja)]
     if system == "windows":
         cpu = "x86_64" if arch == "amd64" else "aarch64"
         windres = Path(compiler).parent / (cpu + "-w64-mingw32-windres" + (".exe" if os.name == "nt" else ""))
         if windres.is_file():
-            arguments += ["-DCMAKE_RC_COMPILER=" + str(windres)]
+            arguments += ["-DCMAKE_RC_COMPILER=" + toolchain.cmake_path(windres)]
     # CMake must not interpret Go's compiler command string as an executable.
     build_env = env.copy()
     build_env.pop("CC", None)
     build_env.pop("CXX", None)
     subprocess.run(arguments, env=build_env, check=True)
-    subprocess.run([cmake, "--build", str(prefix / "work"), "--parallel", str(min(os.cpu_count() or 2, 8))],
+    subprocess.run([cmake, "--build", toolchain.cmake_path(prefix / "work"), "--parallel", str(min(os.cpu_count() or 2, 8))],
                    env=build_env, check=True)
-    subprocess.run([cmake, "--install", str(prefix / "work")], env=build_env, check=True)
+    subprocess.run([cmake, "--install", toolchain.cmake_path(prefix / "work")], env=build_env, check=True)
 
 
 def shared_files(directory):
