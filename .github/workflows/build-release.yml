@@ -164,14 +164,15 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: actions/download-artifact@v8
-        if: needs.firmware-plan.outputs.include == 'true'
+        # Firmware publication starts after this desktop-only prerelease.
+        if: needs.firmware-plan.outputs.include == 'true' && github.ref_name != 'v0.1.1-beta.2'
         with:
           pattern: firmware-*
           path: dist
           merge-multiple: true
       - name: Verify packages and collect checksums
         env:
-          INCLUDE_FIRMWARE: ${{ needs.firmware-plan.outputs.include }}
+          INCLUDE_FIRMWARE: ${{ needs.firmware-plan.outputs.include == 'true' && github.ref_name != 'v0.1.1-beta.2' }}
         working-directory: dist
         run: |
           for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do

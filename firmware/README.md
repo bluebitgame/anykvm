@@ -76,8 +76,10 @@ continue, and their previously published images remain available.
 ## Release packages
 
 GitHub Actions builds all eleven targets when firmware sources or build/package
-scripts differ from the previous published ancestor Release. The first Release
-includes firmware; unchanged firmware is omitted from later Releases.
+scripts differ from the previous published ancestor Release containing firmware.
+The first firmware release builds every target; unchanged firmware is omitted
+from later Releases.
+`v0.1.1-beta.2` builds firmware for CI but publishes desktop attachments only.
 
 Each `firmware-<target>.zip` is a separate attachment on the desktop Release,
 with images, SHA-256 metadata, source revision and board guides. Use the package

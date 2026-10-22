@@ -102,7 +102,7 @@ Linux packages include V4L2/ALSA libraries and require glibc 2.36+.
 Windows includes the MinGW-built Opus runtime.
 macOS packages are not notarized. Firmware is attached separately as
 `firmware-<target>.zip` only when firmware sources or build/package scripts
-changed since the previous published ancestor Release. See the
+changed since the previous published ancestor Release containing firmware. See the
 [firmware guide](../firmware/README.md#release-packages).
 
 To package a local build:

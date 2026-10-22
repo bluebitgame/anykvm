@@ -35,6 +35,14 @@ class FirmwareChangesTests(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", "fixture")
 
+    def test_only_releases_with_firmware_are_baselines(self):
+        releases = [
+            {"tag_name": "desktop", "assets": [{"name": "anykvm-linux-amd64.tar.gz"}]},
+            {"tag_name": "draft", "draft": True, "assets": [{"name": "firmware-pico.zip"}]},
+            {"tag_name": "firmware", "prerelease": True, "assets": [{"name": "firmware-pico.zip"}]},
+        ]
+        self.assertEqual(firmware_changes.published_firmware_tags(releases), ["firmware"])
+
     def test_first_release_includes_firmware(self):
         self.assertEqual(firmware_changes.changed([]), (True, ""))
 

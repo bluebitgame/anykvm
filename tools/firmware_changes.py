@@ -2,6 +2,7 @@
 """Decide whether firmware changed since the nearest published ancestor release."""
 
 import os
+import json
 from pathlib import Path
 import subprocess
 
@@ -37,14 +38,21 @@ def changed(tags, current_tag=""):
     return bool(git("diff", "--name-only", commit, "HEAD", "--", *INPUTS)), tag
 
 
+def published_firmware_tags(releases):
+    return [release["tag_name"] for release in releases
+            if not release.get("draft", False) and any(
+                asset.get("name", "").startswith("firmware-") and asset["name"].endswith(".zip")
+                for asset in release.get("assets", []))]
+
+
 def main():
     repository = os.environ["GITHUB_REPOSITORY"]
-    # Include prereleases, but never use unpublished drafts as a baseline.
-    result = subprocess.run(["gh", "api", f"repos/{repository}/releases", "--paginate",
-                             "--jq", ".[] | select(.draft == false) | .tag_name"],
+    # Desktop-only releases must not hide firmware that has not been published.
+    result = subprocess.run(["gh", "api", f"repos/{repository}/releases", "--paginate", "--slurp"],
                             check=True, capture_output=True, text=True)
     current = os.environ.get("GITHUB_REF_NAME", "") if os.environ.get("GITHUB_REF_TYPE") == "tag" else ""
-    include, baseline = changed(result.stdout.splitlines(), current)
+    releases = [release for page in json.loads(result.stdout) for release in page]
+    include, baseline = changed(published_firmware_tags(releases), current)
     print(f"Firmware changed: {str(include).lower()}; baseline: {baseline or 'first release'}")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"include={str(include).lower()}\n")
