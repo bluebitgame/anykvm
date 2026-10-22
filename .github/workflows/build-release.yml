@@ -15,6 +15,27 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  firmware-plan:
+    name: Check firmware changes
+    runs-on: ubuntu-22.04
+    outputs:
+      include: ${{ steps.changes.outputs.include }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Check firmware change detection
+        run: python -m unittest discover -s tools -p test_firmware_changes.py
+      - name: Compare with previous published release
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/firmware_changes.py
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
@@ -85,10 +106,53 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  firmware:
+    needs: firmware-plan
+    if: needs.firmware-plan.outputs.include == 'true'
+    name: Firmware ${{ matrix.target }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [pico, pico2, pico-pio-usb, pico2-pio-usb, pico-ps2, pico2-ps2, rp2350-usb-a, nrf52840-ble, nrf52840-feather, nrf52840-dongle, esp32s3-ble]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install firmware build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git pkg-config libusb-1.0-0-dev device-tree-compiler gperf
+      - name: Check firmware packaging
+        run: python -m unittest discover -s tools -p test_package_firmware.py
+      - name: Build firmware
+        env:
+          FIRMWARE_TARGET: ${{ matrix.target }}
+        run: python tools/build_firmware.py --targets "$FIRMWARE_TARGET" --jobs 2
+      - name: Package firmware and board guides
+        env:
+          FIRMWARE_TARGET: ${{ matrix.target }}
+        run: python tools/package_firmware.py --target "$FIRMWARE_TARGET" --revision "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware-${{ matrix.target }}
+          path: build/dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   release:
     name: Publish Release
-    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
-    needs: build
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request' &&
+      needs.firmware-plan.result == 'success' && needs.build.result == 'success' &&
+      (needs.firmware.result == 'success' ||
+       (needs.firmware-plan.outputs.include == 'false' && needs.firmware.result == 'skipped'))
+    needs: [firmware-plan, build, firmware]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -99,7 +163,15 @@ jobs:
           pattern: anykvm-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v8
+        if: needs.firmware-plan.outputs.include == 'true'
+        with:
+          pattern: firmware-*
+          path: dist
+          merge-multiple: true
       - name: Verify packages and collect checksums
+        env:
+          INCLUDE_FIRMWARE: ${{ needs.firmware-plan.outputs.include }}
         working-directory: dist
         run: |
           for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
@@ -108,6 +180,11 @@ jobs:
           for platform in windows-amd64 windows-arm64; do
             test -s "anykvm-$platform.zip"
           done
+          if [[ "$INCLUDE_FIRMWARE" == "true" ]]; then
+            for board in pico pico2 pico-pio-usb pico2-pio-usb pico-ps2 pico2-ps2 rp2350-usb-a nrf52840-ble nrf52840-feather nrf52840-dongle esp32s3-ble; do
+              test -s "firmware-$board.zip"
+            done
+          fi
           cat *.sha256 > SHA256SUMS
           sha256sum --check SHA256SUMS
           rm -- *.sha256

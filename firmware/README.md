@@ -73,6 +73,17 @@ environment. `--fresh` reconfigures the selected builds; `--jobs N` limits build
 parallelism. Failed targets return a nonzero exit status while other targets
 continue, and their previously published images remain available.
 
+## Release packages
+
+GitHub Actions builds all eleven targets when firmware sources or build/package
+scripts differ from the previous published ancestor Release. The first Release
+includes firmware; unchanged firmware is omitted from later Releases.
+
+Each `firmware-<target>.zip` is a separate attachment on the desktop Release,
+with images, SHA-256 metadata, source revision and board guides. Use the package
+for your exact board and follow its flashing instructions. Release publication
+waits for all required desktop and firmware builds to pass.
+
 ## Shared protocol
 
 All maintained Pico UART, Pico USB-A, nRF52840 and ESP32-S3 adapters use this
