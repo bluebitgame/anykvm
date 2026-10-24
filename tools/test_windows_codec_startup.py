@@ -39,8 +39,12 @@ typedef int HRESULT;
 #define COINIT_MULTITHREADED 0
 #define SUCCEEDED(hr) ((hr)>=0)
 #define INFINITE 0xffffffff
-static int encoded, opened, closed, signaled;
+static int encoded, opened, closed, signaled, phases;
 typedef struct { int width,height,codec; } bk_vendor_options;
+static void bk_vendor_phase(const bk_vendor_options *o, const char *phase) {
+    assert(o && strcmp(phase, "closing encoder") == 0);
+    phases++;
+}
 typedef struct {
     void *(*open)(const bk_vendor_options *,char *,size_t);
     int (*encode)(void *,const uint8_t *,int,uint8_t **,size_t *,char *,size_t);
@@ -72,11 +76,11 @@ static void close_backend(void *e) {assert(e);closed++;}
 int main(void) {
     bk_vendor_api api={.open=open_backend,.encode=encode,.close=close_backend};
     for(int codec=0;codec<=2;codec++) {
-        encoded=opened=closed=signaled=0;
+        encoded=opened=closed=signaled=phases=0;
         // Stop after initialization so any encode call can only be a trial.
         bk_vendor_encoder e={.options={.width=1280,.height=768,.codec=codec},.api=&api,.stop=1};
         bk_vendor_worker(&e);
-        assert(e.result==0 && opened==1 && closed==1 && signaled==1);
+        assert(e.result==0 && opened==1 && closed==1 && signaled==1 && phases==1);
         assert(encoded==(codec==0?1:0));
     }
     return 0;

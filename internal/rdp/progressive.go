@@ -61,7 +61,7 @@ func progressiveWire(rects []bitmapRect, frame uint32, first bool, quantization,
 	if first {
 		header += 22
 	}
-	if layered && !upgrade {
+	if layered && (!upgrade || progressiveOfficialPass(bits)) {
 		header += 16
 	}
 	wire := make([]byte, header+len(tiles)+6)
@@ -90,7 +90,7 @@ func progressiveWire(rects []bitmapRect, frame uint32, first bool, quantization,
 	put8(64)
 	put16(len(rects))
 	put8(1)
-	if layered && !upgrade {
+	if layered && (!upgrade || progressiveOfficialPass(bits)) {
 		put8(1)
 	} else {
 		put8(0)
@@ -111,7 +111,9 @@ func progressiveWire(rects []bitmapRect, frame uint32, first bool, quantization,
 	for range 5 {
 		put8(quantization | quantization<<4)
 	}
-	if layered && !upgrade {
+	if layered && progressiveOfficialPass(bits) {
+		offset += copy(wire[offset:], progressiveQualityTable(bits))
+	} else if layered && !upgrade {
 		put8(50)
 		for i := 0; i < 15; i++ {
 			value := bits | bits<<4

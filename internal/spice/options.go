@@ -1,10 +1,8 @@
-// Package spice provides a Linux local SPICE GL upstream. Raw pixel fallback is
-// deliberately unavailable: successful video output proves DMA-BUF GPU encoding.
+// Package spice provides local SPICE GL and remote SPICE display sources.
 package spice
 
 import (
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,25 +21,11 @@ func IsDevice(raw string) bool {
 	return strings.HasPrefix(strings.ToLower(raw), "spice:")
 }
 
-func socketPath(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	_, address, _ := strings.Cut(raw, ":")
-	// SPICE currently accepts a local protocol:path only. Reserve // authority
-	// syntax for a future remote transport rather than accepting ambiguous URIs.
-	if err != nil || u.Scheme != "spice" || strings.HasPrefix(address, "//") ||
-		u.Host != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
-		u.Fragment != "" || u.Opaque != "" || !filepath.IsAbs(u.Path) ||
-		strings.ContainsAny(u.Path, "\x00\r\n") || len(u.Path) > 107 {
-		return "", fmt.Errorf("SPICE GPU upstream requires a local Unix socket: spice:/absolute/path.sock (TCP cannot carry DMA-BUF)")
-	}
-	return u.Path, nil
-}
-
 func ValidateSource(raw string, o Options) error {
 	if !IsDevice(raw) {
 		return nil
 	}
-	if _, err := socketPath(raw); err != nil {
+	if _, err := parseEndpoint(raw); err != nil {
 		return err
 	}
 	if o.Password != "" && o.PasswordEnv != "" {

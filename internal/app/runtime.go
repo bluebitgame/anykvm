@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"reflect"
 	"syscall"
+	"time"
 
 	"anykvm/internal/airplay"
 	"anykvm/internal/avmedia"
@@ -57,6 +58,9 @@ func runConfiguredApplication(opts *serverOptions, configPath string, cfg Config
 	}
 
 	log.Printf("AnyKVM: JPEG backend %s", jpegcodec.Backend())
+	if err := jpegcodec.PrepareD3D11Shaders(); err != nil {
+		log.Fatalf("AnyKVM: prepare D3D11 JPEG shaders: %v", err)
+	}
 	log.Printf("AnyKVM: pixel operations %s (dirty blocks=%dx%d)", pixelops.Backend(), pixelops.BlockSize, pixelops.BlockSize)
 	if !avmedia.Enabled {
 		log.Printf("AnyKVM: system-native media build (FFmpeg disabled)")
@@ -371,6 +375,8 @@ func runConfiguredApplication(opts *serverOptions, configPath string, cfg Config
 		close(stopViewer)
 	}
 	log.Println("AnyKVM: shutting down...")
+	stopWatch := logging.WatchStall("application shutdown", 5*time.Second)
+	defer stopWatch()
 	if rdpSrv != nil {
 		rdpSrv.Close()
 	}

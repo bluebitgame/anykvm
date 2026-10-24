@@ -23,6 +23,8 @@ SOURCES = (
     PROGRESSIVE_SURFACE_SOURCE,
 )
 GLSLANG_VERSION = "16.6.0"
+GLSLANG_OPTIMIZATION = ("-O",)
+DXC_OPTIMIZATION = ("-O3",)
 GLSLANG_PACKAGES = {
     "darwin": ("macos-universal-release.tar.gz", "4f8c05f2888a73ed0b7b274bc524af9130e09ae94b43c0f3f9ed83cfae852834"),
     "linux-amd64": ("linux-x86_64-release.tar.gz", "2c34071f56ecf39d16233294d3739cf43f981fd39080f2fd9dccb782101191ce"),
@@ -69,14 +71,25 @@ def shader_source(source):
     return text.encode()
 
 
+def compiler_options(backend):
+    if backend == "dxc":
+        return ("-spirv", "-T", "cs_6_0", "-D__spirv__=1",
+                "-fspv-target-env=vulkan1.1", "-fvk-use-dx-layout", *DXC_OPTIMIZATION)
+    if backend == "glslang":
+        return ("-D", "-D__spirv__=1", "-V", "--target-env", "vulkan1.1", "-S", "comp",
+                *GLSLANG_OPTIMIZATION)
+    raise ValueError(f"unknown SPIR-V compiler backend: {backend}")
+
+
 def current(source, entry="main"):
     output = shader_output(source, entry)
     try:
         manifest = json.loads(output.with_suffix(".json").read_text())
         return (manifest.get("entry_point") == entry
+                and manifest["compiler_options"] == list(compiler_options(manifest["compiler_backend"]))
                 and manifest["source_sha256"] == hashlib.sha256(shader_source(source)).hexdigest()
                 and manifest["spirv_sha256"] == hashlib.sha256(output.read_bytes()).hexdigest())
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
@@ -98,12 +111,10 @@ def prepare(compiler=None, dry_run=False, allow_download=True):
 
 def compile_shader(source, compiler, entry="main"):
     output = shader_output(source, entry)
-    if Path(compiler).stem.lower() == "dxc":
-        command = [compiler, "-spirv", "-T", "cs_6_0", "-E", entry, "-D__spirv__=1",
-                   "-fspv-target-env=vulkan1.1", "-fvk-use-dx-layout", "-Fo", str(output), str(source)]
-    else:
-        command = [compiler, "-D", "-D__spirv__=1", "-V", "--target-env", "vulkan1.1",
-                   "-S", "comp", "-e", entry, "-o", str(output), str(source)]
+    backend = "dxc" if Path(compiler).stem.lower() == "dxc" else "glslang"
+    options = compiler_options(backend)
+    entry_flag, output_flag = ("-E", "-Fo") if backend == "dxc" else ("-e", "-o")
+    command = [compiler, *options, entry_flag, entry, output_flag, str(output), str(source)]
     # Runtime D3D and SPIR-V must see identical expanded shared source.
     expanded_source = shader_source(source)
     if expanded_source == source.read_bytes():
@@ -115,7 +126,8 @@ def compile_shader(source, compiler, entry="main"):
             command[-1] = str(expanded)
             subprocess.run(command, check=True)
 
-    manifest = {"entry_point": entry, "source_sha256": hashlib.sha256(shader_source(source)).hexdigest(),
+    manifest = {"entry_point": entry, "compiler_backend": backend, "compiler_options": list(options),
+                "source_sha256": hashlib.sha256(shader_source(source)).hexdigest(),
                 "spirv_sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
     output.with_suffix(".json").write_text(json.dumps(manifest, indent=2) + "\n")
 

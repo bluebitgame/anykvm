@@ -285,7 +285,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 					format = FormatAV1
 				}
 				buffer := framebuf.New(data, nil)
-				return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: o.Width, Height: o.Height, SourceWidth: f.Width, SourceHeight: f.Height, Format: format, CapturedAt: f.CapturedAt}, nil
+				return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: o.Width, Height: o.Height, SourceWidth: f.Width, SourceHeight: f.Height, Format: format, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}, nil
 			}
 			if force {
 				d.forceIDR.Store(true)
@@ -324,7 +324,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		} else if codec == "av1" {
 			format = FormatAV1
 		}
-		return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: o.Width, Height: o.Height, SourceWidth: f.Width, SourceHeight: f.Height, Format: format, CapturedAt: f.CapturedAt}, nil
+		return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: o.Width, Height: o.Height, SourceWidth: f.Width, SourceHeight: f.Height, Format: format, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}, nil
 	}
 	// Native desktop JPEG can consume the texture before Materialize reads the
 	// entire frame into CPU memory. Device-compressed MJPEG keeps its passthrough.
@@ -376,7 +376,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 						return nil, fmt.Errorf("GPU JPEG regions missing snapshot")
 					}
 					d.outputLog.start("jpeg", "GPU JPEG (changed segment readback)")
-					return &Frame{JPEGRegions: regions, Width: w, Height: h, SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
+					return &Frame{JPEGRegions: regions, Width: w, Height: h, SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}, nil
 				}
 			}
 		}
@@ -396,7 +396,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 			if handled {
 				d.outputLog.start("jpeg", gpu.JPEGEncoderName())
 				return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: w, Height: h,
-					SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
+					SourceWidth: f.Width, SourceHeight: f.Height, Format: FormatJPEG, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}, nil
 			}
 		}
 	}
@@ -431,7 +431,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		if err != nil || buffer == nil {
 			return nil, err
 		}
-		return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: f.Width &^ 1, Height: f.Height &^ 1, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
+		return &Frame{Buffer: buffer, Data: buffer.Bytes(), Width: f.Width &^ 1, Height: f.Height &^ 1, Format: FormatJPEG, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}, nil
 	}
 	w, h := d.fitOutputSize(f.Width, f.Height)
 	if d.PreserveCaptureMode() {
@@ -445,7 +445,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 				copy(data[(y*w+x)*4:], f.Data[src:src+4])
 			}
 		}
-		f = &Frame{Data: data, Width: w, Height: h, SourceWidth: sourceW, SourceHeight: sourceH, Format: FormatRaw, CapturedAt: f.CapturedAt}
+		f = &Frame{Data: data, Width: w, Height: h, SourceWidth: sourceW, SourceHeight: sourceH, Format: FormatRaw, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}
 	}
 	if d.outputScale > 0 && d.outputScale != 1 {
 		f.SourceWidth, f.SourceHeight = sourceW, sourceH
@@ -459,7 +459,7 @@ func (d *ffmpegDevice) encodeMediaFrame(f *Frame) (*Frame, error) {
 		return nil, err
 	}
 	d.outputLog.start("jpeg", jpegcodec.Backend())
-	return &Frame{Buffer: jpeg, Data: jpeg.Bytes(), Width: f.Width, Height: f.Height, SourceWidth: f.SourceWidth, SourceHeight: f.SourceHeight, Format: FormatJPEG, CapturedAt: f.CapturedAt}, nil
+	return &Frame{Buffer: jpeg, Data: jpeg.Bytes(), Width: f.Width, Height: f.Height, SourceWidth: f.SourceWidth, SourceHeight: f.SourceHeight, Format: FormatJPEG, CapturedAt: f.CapturedAt, PresentationPTS: f.PresentationPTS}, nil
 }
 
 func (d *ffmpegDevice) jpegQuality() int {

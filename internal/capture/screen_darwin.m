@@ -1341,6 +1341,11 @@ void bk_screen_release(void *lease) {
     [(id)lease release];
 }
 
+long long bk_screen_lease_pts(void *lease) {
+    // Native CoreMedia host-clock playback time; independent of Go diagnostics.
+    return [((NSDictionary *)lease)[@"pts"] longLongValue] / 1000;
+}
+
 void bk_screen_lease_timing(void *lease, long long *present, long long *display, long long *acquired,
                            long long *submitted, long long *completed, long long *now, int *repeated) {
     NSDictionary *entry = lease;

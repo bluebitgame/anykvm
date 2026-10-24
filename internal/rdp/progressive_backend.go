@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"anykvm/internal/logging"
 )
@@ -74,15 +75,19 @@ func normalizeProgressiveQuantization(value int) (int, error) {
 }
 
 type progressiveEncoder struct {
-	native       nativeProgressiveCodec
-	required     bool
-	first        bool
-	w, h         int
-	closed       bool
-	quantization int
-	refineBits   int
-	coefficients []int32
-	pending      []bool
+	native          nativeProgressiveCodec
+	required        bool
+	first           bool
+	w, h            int
+	closed          bool
+	quantization    int
+	refineBits      int
+	coefficients    []int32
+	pending         []bool
+	stages          []uint8 // 1=FIRST 50%, 2=UPGRADE 75%; zero means complete/invalid
+	refineCursor    int
+	upgradeTileCost time.Duration
+	upgradeCostAt   time.Time
 }
 
 func newProgressiveEncoder(quantization int) (*progressiveEncoder, error) {
@@ -125,6 +130,7 @@ func (e *progressiveEncoder) close() {
 	}
 	e.closed = true
 	e.coefficients, e.pending = nil, nil
+	e.stages = nil
 }
 
 func (e *progressiveEncoder) encode(pixels []byte, w, h int, rects []bitmapRect, frame uint32) ([]byte, error) {
@@ -169,6 +175,7 @@ func (e *progressiveEncoder) encodePrepared(pixels []byte, w, h int, rects []bit
 				for y := r.y; y < r.y+r.h; y += 64 {
 					for x := r.x; x < r.x+r.w; x += 64 {
 						e.pending[progressiveTileIndex(w, x, y)] = true
+						e.stages[progressiveTileIndex(w, x, y)] = 1
 					}
 				}
 			}
@@ -219,7 +226,7 @@ func (e *progressiveEncoder) encodeWindow(pixels []byte, w, h int, rects []bitma
 		}
 		bits := 0
 		if len(e.pending) != 0 {
-			bits = e.refineBits
+			bits = progressiveFirst50
 		}
 		output, err := pool.encodeBatches(pixels, w, h, rects, frame, e.first, format, bits, e.coefficients)
 		if err == nil {
@@ -228,6 +235,7 @@ func (e *progressiveEncoder) encodeWindow(pixels []byte, w, h int, rects []bitma
 					for y := r.y; y < r.y+r.h; y += 64 {
 						for x := r.x; x < r.x+r.w; x += 64 {
 							e.pending[progressiveTileIndex(w, x, y)] = true
+							e.stages[progressiveTileIndex(w, x, y)] = 1
 						}
 					}
 				}

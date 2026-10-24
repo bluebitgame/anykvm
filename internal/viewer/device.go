@@ -56,7 +56,7 @@ func (d *Device) PushFrame(f bridge.Frame) {
 		Buffer: owned.Buffer, Data: owned.Data, Format: owned.Format,
 		PixFmt: owned.PixFmt, Width: owned.Width, Height: owned.Height,
 		Rotation: owned.Rotation, SourceWidth: owned.SourceWidth, SourceHeight: owned.SourceHeight,
-		ContentRect: owned.ContentRect, CapturedAt: owned.CapturedAt,
+		ContentRect: owned.ContentRect, CapturedAt: owned.CapturedAt, PresentationPTS: owned.PresentationPTS,
 	}
 	if d.frame != nil {
 		d.frame.Release()

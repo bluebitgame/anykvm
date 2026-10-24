@@ -16,6 +16,13 @@ typedef struct {
   uint64_t modifier;
 } bk_spice_frame;
 
+// Remote bitmap polling returns an owned, tightly packed BGRA snapshot.
+typedef struct {
+  uint8_t *data;
+  size_t size;
+  uint32_t width, height;
+} bk_spice_bitmap;
+
 // Audio and cursor polling return owned buffers; release with the matching API.
 typedef struct {
   uint8_t *data;
@@ -36,7 +43,20 @@ typedef struct {
 // Lifecycle. All entry points dispatch synchronously to the owning GLib thread.
 bk_spice *bk_spice_open(const char *path, const char *password,
                         const char *render_node, char *error, size_t cap);
+bk_spice *bk_spice_open_remote(const char *host, const char *port,
+                               const char *password, char *error, size_t cap);
 void bk_spice_close(bk_spice *session);
+
+// Remote polling transfers either an owned snapshot or a primary-removal event.
+enum {
+  BK_SPICE_BITMAP_ERROR = -1,
+  BK_SPICE_BITMAP_IDLE = 0,
+  BK_SPICE_BITMAP_FRAME = 1,
+  BK_SPICE_BITMAP_RESET = 2,
+};
+int bk_spice_bitmap_next(bk_spice *session, bk_spice_bitmap *bitmap,
+                         char *error, size_t cap);
+void bk_spice_bitmap_release(bk_spice_bitmap *bitmap);
 
 // Video polling: -1 = failure, 0 = idle, 1 = borrowed frame.
 int bk_spice_next(bk_spice *session, bk_spice_frame *frame, char *error,

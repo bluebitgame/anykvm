@@ -42,6 +42,14 @@ static const uint coefficientScanIndex[64] = {
 #define BINDING(index)
 #endif
 
+// Offline DXBC/SPIR-V builds retain full optimization. Only runtime FXC
+// compilation trades optimizer effort for startup latency.
+#if defined(ANYKVM_RUNTIME_COMPILE) && !defined(__spirv__)
+#define ENTROPY_LOOP [loop] [fastopt]
+#else
+#define ENTROPY_LOOP [loop]
+#endif
+
 BINDING(0) Texture2D<float4> sourceTexture : register(t0);
 BINDING(1) RWStructuredBuffer<uint> outputCoefficients : register(u0);
 BINDING(3) RWByteAddressBuffer entropySegments : register(u1);
@@ -158,19 +166,19 @@ void compareFlag(uint index,uint dirty) {
     uint columns = min(4u, mcuColumns - x);
     uint rows = min(4u, (mcuCount / mcuColumns) - y);
     uint computeCount = 0;
-    for (uint row = 0; row < rows; row++) {
-        for (uint column = 0; column < columns; column++) {
-            uint mcu = (y + row) * mcuColumns + x + column;
+    for (uint countRow = 0; countRow < rows; countRow++) {
+        for (uint countColumn = 0; countColumn < columns; countColumn++) {
+            uint mcu = (y + countRow) * mcuColumns + x + countColumn;
             if (tileState.z == 0 || (segmentInfo[mcu * 2] & SOLID_MCU_TAG) == 0) computeCount++;
         }
     }
     uint first, computeFirst = 0;
     dispatchArguments.InterlockedAdd(16, columns * rows, first);
     if (computeCount != 0) dispatchArguments.InterlockedAdd(56, computeCount, computeFirst);
-    for (uint row = 0; row < rows; row++) {
-        for (uint column = 0; column < columns; column++) {
-            uint mcu = (y + row) * mcuColumns + x + column;
-            dirtyTiles[jpegWorkBase() + 1 + first + row * columns + column] = mcu;
+    for (uint writeRow = 0; writeRow < rows; writeRow++) {
+        for (uint writeColumn = 0; writeColumn < columns; writeColumn++) {
+            uint mcu = (y + writeRow) * mcuColumns + x + writeColumn;
+            dirtyTiles[jpegWorkBase() + 1 + first + writeRow * columns + writeColumn] = mcu;
             if (tileState.z == 0 || (segmentInfo[mcu * 2] & SOLID_MCU_TAG) == 0) {
                 dirtyTiles[jpegComputeBase() + 1 + computeFirst++] = mcu;
             }
@@ -391,28 +399,28 @@ void main(uint3 groupID : SV_GroupID, uint3 threadID : SV_GroupThreadID) {
     uint row = threadID.y;
     uint coefficientIndex = row * BLOCK_SIZE + column;
     uint blockIndex = groupID.z;
-    // The Cb group computes both chroma blocks; the Cr group has no work.
-    if (blockIndex == CR_BLOCK) return;
-    if (tileState.w == 0 && !jpegMCUDirty(groupID.y * mcuColumns + groupID.x)) return;
-    if (tileState.z != 0) {
-        if ((segmentInfo[(groupID.y * mcuColumns + groupID.x) * 2] & SOLID_MCU_TAG) != 0) return;
-    }
+    // Compact scheduling already excludes RGB-solid MCUs. Legacy dirty flags
+    // may vary according to FXC's analysis: predicate work, never the barriers.
+    bool active = blockIndex != CR_BLOCK;
+    if (tileState.w == 0) active = active && jpegMCUDirty(groupID.y * mcuColumns + groupID.x);
     uint2 mcuOrigin = groupID.xy * MCU_SIZE;
 
     if (coefficientIndex < 4) nonzeroAC[coefficientIndex] = 0;
 
     // Each thread loads one centered Y, Cb or Cr sample.
-    if (blockIndex < LUMA_BLOCKS_PER_MCU) {
-        blockSamples[coefficientIndex] = lumaSample(mcuOrigin, blockIndex, threadID.xy);
-    } else {
-        float2 chroma = chromaSamples(mcuOrigin, threadID.xy);
-        blockSamples[coefficientIndex] = chroma.x;
-        crSamples[coefficientIndex] = chroma.y;
+    if (active) {
+        if (blockIndex < LUMA_BLOCKS_PER_MCU) {
+            blockSamples[coefficientIndex] = lumaSample(mcuOrigin, blockIndex, threadID.xy);
+        } else {
+            float2 chroma = chromaSamples(mcuOrigin, threadID.xy);
+            blockSamples[coefficientIndex] = chroma.x;
+            crSamples[coefficientIndex] = chroma.y;
+        }
     }
     GroupMemoryBarrierWithGroupSync();
 
     // Eight lanes each compute a complete row; the rest wait at the barrier.
-    if (coefficientIndex < BLOCK_SIZE) {
+    if (active && coefficientIndex < BLOCK_SIZE) {
         transformRow(coefficientIndex, false);
         if (blockIndex == CB_BLOCK) transformRow(coefficientIndex, true);
     }
@@ -421,7 +429,7 @@ void main(uint3 groupID : SV_GroupID, uint3 threadID : SV_GroupThreadID) {
     uint mcuIndex = groupID.y * mcuColumns + groupID.x;
     uint blockOffset = (mcuIndex * BLOCKS_PER_MCU + blockIndex) * COEFFICIENT_WORDS;
     // Four lanes write complete column pairs, without an extra shared pass.
-    if (coefficientIndex < BLOCK_SIZE / 2) {
+    if (active && coefficientIndex < BLOCK_SIZE / 2) {
         uint pairColumn = coefficientIndex * 2;
         storeColumnPair(pairColumn, blockIndex, blockOffset, false);
         if (blockIndex == CB_BLOCK) {
@@ -430,7 +438,7 @@ void main(uint3 groupID : SV_GroupID, uint3 threadID : SV_GroupThreadID) {
     }
     // All 64 lanes must reach the mask barrier, including idle writers.
     GroupMemoryBarrierWithGroupSync();
-    if (coefficientIndex < 2) {
+    if (active && coefficientIndex < 2) {
         uint maskOffset = acMaskOffset(blockOffset);
         outputCoefficients[maskOffset + coefficientIndex] = nonzeroAC[coefficientIndex];
         if (blockIndex == CB_BLOCK) {
@@ -470,7 +478,7 @@ void writeByte(inout EntropyWriter writer, uint value) {
     }
 }
 
-// Append up to three already ordered bytes, issuing a UAV store only when
+// Append up to four already ordered bytes, issuing a UAV store only when
 // a complete word is ready. The caller has checked that no FF needs stuffing.
 void writePackedBytes(inout EntropyWriter writer, uint packed, uint count) {
     if (writer.byteCount + count > SEGMENT_CAPACITY) { writer.failed = true; return; }
@@ -481,24 +489,35 @@ void writePackedBytes(inout EntropyWriter writer, uint packed, uint count) {
     if (writer.wordBytes >= WORD_BYTES) {
         writer.wordBytes -= WORD_BYTES;
         entropySegments.Store(writer.segmentOffset + writer.byteCount - writer.wordBytes - WORD_BYTES, writer.pendingWord);
-        writer.pendingWord = packed >> ((WORD_BYTES - previousBytes) * 8);
+        // Two shifts also handle previousBytes==0 without a shift by 32.
+        writer.pendingWord = (packed >> 8) >> ((WORD_BYTES - 1 - previousBytes) * 8);
     }
 }
 
 void appendBits(inout EntropyWriter writer, uint value, uint count) {
-    writer.pendingBits = (writer.pendingBits << count) | value;
-    writer.bitCount += count;
-    uint bytes = writer.bitCount / 8;
-    if (bytes == 0) return;
-    writer.bitCount &= 7u;
-    uint word = (writer.pendingBits >> writer.bitCount) & ((1u << (bytes * 8)) - 1);
+    uint totalBits = writer.bitCount + count;
+    uint bytes = totalBits / 8;
+    if (bytes == 0) {
+        writer.pendingBits = (writer.pendingBits << count) | value;
+        writer.bitCount = totalBits;
+        return;
+    }
+    uint remaining = totalBits & 7u;
+    // A code has at most 27 bits and the old remainder at most 7. Extract
+    // the complete bytes before joining them, so even 33/34-bit appends fit
+    // uint. Once bytes!=0, count-remaining is positive and never exceeds 27.
+    uint word = (writer.pendingBits << (count - remaining)) | (value >> remaining);
+    writer.pendingBits = value & ((1u << remaining) - 1u);
+    writer.bitCount = remaining;
     uint reversed = (word >> 24) | ((word >> 8) & 0xff00u) | ((word << 8) & 0xff0000u) | (word << 24);
     uint packed = reversed >> (32 - bytes * 8);
     uint inverted = ~packed;
     if (((inverted - 0x01010101u) & packed & 0x80808080u) == 0) {
         writePackedBytes(writer, packed, bytes);
     } else {
-        for (uint i = 0; i < bytes; i++) {
+        // FXC otherwise simulates this data-dependent stuffing loop while
+        // optimizing each inlined Huffman writer.
+        ENTROPY_LOOP for (uint i = 0; i < bytes; i++) {
             uint byteValue = (packed >> (i * 8)) & 255u;
             writeByte(writer, byteValue);
             if (byteValue == 0xff) writeByte(writer, 0);
@@ -508,14 +527,9 @@ void appendBits(inout EntropyWriter writer, uint value, uint count) {
 
 void writeBits(inout EntropyWriter writer, uint value, uint count) {
     if (count == 0) return;
-    // A combined Huffman code/amplitude can contain 27 bits. Split long codes
-    // so pendingBits never overflows a 32-bit Shader Model 5 register.
-    if (count > 24) {
-        appendBits(writer, value >> 16, count - 16);
-        appendBits(writer, value & 0xffffu, 16);
-    } else {
-        appendBits(writer, value, count);
-    }
+    // Keep a single call site: FXC otherwise inlines the complete byte writer
+    // and FF-stuffing path twice at every Huffman emission site.
+    appendBits(writer, value, count);
 }
 
 void writeSymbol(inout EntropyWriter writer, uint table, uint symbol) {
@@ -562,7 +576,7 @@ bool encodeBlock(inout EntropyWriter writer, uint blockOffset, uint dcTable, ino
     }
 
     uint previousIndex = 0;
-    while ((low | high) != 0) {
+    ENTROPY_LOOP while ((low | high) != 0) {
         uint index;
         if (low != 0) {
             index = (uint)firstbitlow(low);
@@ -573,7 +587,7 @@ bool encodeBlock(inout EntropyWriter writer, uint blockOffset, uint dcTable, ino
         }
         uint zeroRun = index - previousIndex - 1;
         int coefficient = loadCoefficient(blockOffset, zigzag[index]);
-        while (zeroRun >= 16) {
+        ENTROPY_LOOP while (zeroRun >= 16) {
             writeSymbol(writer, acTable, 0xf0);
             zeroRun -= 16;
         }
@@ -666,14 +680,17 @@ void encodeMCUs(uint3 threadID : SV_DispatchThreadID) {
     }
     EntropyWriter writer = (EntropyWriter)0;
     writer.segmentOffset = mcu * SEGMENT_CAPACITY;
-    int previousY = 0;
-    int previousCb = 0;
-    int previousCr = 0;
-    for (uint block = 0; block < LUMA_BLOCKS_PER_MCU; block++) {
-        encodeBlock(writer, mcuOffset + block * COEFFICIENT_WORDS, LUMA_DC_TABLE, previousY);
+    int previousDC = 0;
+    // Share the Huffman writer across all six blocks instead of duplicating
+    // its large, variable-length bit-packing control flow in the instruction cache.
+    ENTROPY_LOOP for (uint block = 0; block < BLOCKS_PER_MCU; block++) {
+        bool luma = block < LUMA_BLOCKS_PER_MCU;
+        // Y predicts across its four blocks; each chroma component starts at
+        // zero because this MCU is a complete restart interval.
+        if (!luma) previousDC = 0;
+        encodeBlock(writer, mcuOffset + block * COEFFICIENT_WORDS,
+                    luma ? LUMA_DC_TABLE : CHROMA_DC_TABLE, previousDC);
     }
-    encodeBlock(writer, mcuOffset + CB_BLOCK * COEFFICIENT_WORDS, CHROMA_DC_TABLE, previousCb);
-    encodeBlock(writer, mcuOffset + CR_BLOCK * COEFFICIENT_WORDS, CHROMA_DC_TABLE, previousCr);
 
     // Restart intervals end on a byte boundary, padded with one bits.
     if (writer.bitCount != 0) {

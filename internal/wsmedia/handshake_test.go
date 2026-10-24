@@ -60,3 +60,47 @@ func TestLegacyClientStartsAfterGracePeriod(t *testing.T) {
 		t.Fatal("legacy client never started capture")
 	}
 }
+
+func TestReconnectNegotiationAndRecovery(t *testing.T) {
+	starts, stops, keys := 0, 0, 0
+	var s *Server
+	s = NewServer(Config{
+		OnVideoCodecsChanged: func(bool, bool, bool) {
+			// Last-disconnect cleanup must not run between negotiation and start.
+			if s.lifecycleMu.TryLock() {
+				s.lifecycleMu.Unlock()
+				t.Error("capability selection is outside lifecycle lock")
+			}
+		},
+		OnClientConnected:        func() { starts++ },
+		OnClientDisconnected:     func() { stops++ },
+		OnVideoKeyframeRequested: func() { keys++ },
+	})
+	hello := append([]byte{msgHello}, []byte(`{"h264":true}`)...)
+	first := &wsClient{done: make(chan struct{})}
+	s.addClient(first)
+	s.handleInput(first, hello)
+	// Fast reconnect: new browser joins before the old socket is removed.
+	second := &wsClient{done: make(chan struct{})}
+	s.addClient(second)
+	s.handleInput(second, hello)
+	s.handleInput(second, hello) // Repeated capabilities must not create a consumer.
+	s.removeClient(first)
+	if starts != 1 || stops != 0 || keys != 2 {
+		t.Fatalf("overlap lifecycle %d/%d, recovery=%d", starts, stops, keys)
+	}
+	s.removeClient(second)
+	// A later connection must start capture and request recovery again.
+	third := &wsClient{done: make(chan struct{})}
+	s.addClient(third)
+	s.handleInput(third, hello)
+	s.removeClient(third)
+	if starts != 2 || stops != 2 || keys != 3 {
+		t.Fatalf("reopen lifecycle %d/%d, recovery=%d", starts, stops, keys)
+	}
+	// A stale hello from a removed socket must not reconfigure capture.
+	s.handleInput(first, hello)
+	if starts != 2 || stops != 2 || keys != 3 {
+		t.Fatal("closed socket changed capture")
+	}
+}

@@ -93,6 +93,14 @@ retain source delivery; no frames are duplicated to raise FPS. USB iPhone captur
 uses arrival-time pacing because nominal AVFoundation rates can differ from
 actual delivery. Capture timestamps retain source intervals in RTP.
 
+H.264 and HEVC share the same playback-clock path for native passthrough and
+host encoding. Windows desktop uses QPC-relative microseconds; macOS uses the
+native host clock; Linux uses monotonic driver timestamps when available, or
+native monotonic capture time (KMS does not supply a Present timestamp here).
+These playback timestamps are independent of Go diagnostic time and become
+90 kHz RTP timestamps. The RTP clock survives encoder/capture transitions;
+retained-picture repeats advance the output cadence without reusing an old PTS.
+
 Recovery first requests a keyframe from the encoder/source. A source without
 feedback may use bounded capture restarts only when its backend permits it;
 passive AirPlay is not restarted to force recovery. Direct encoded sources need

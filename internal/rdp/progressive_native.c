@@ -4,6 +4,7 @@
 // MS-RDPEGFX 2.2.4.2 / 3.2.8.1 and MS-RDPRFX 3.1.8.1, matching progressive.go.
 #include "progressive_native.h"
 #include "progressive_simd.h"
+#include "progressive_quality.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -603,7 +604,7 @@ void bk_rfx_close(void *context) {
 }
 
 // SRL from MS-RDPEGFX 3.1.8.1.5, not an RLGR variant with K=0.
-static void srl(rfx_encoder *e, size_t count, unsigned extra_bits) {
+static void srl(rfx_encoder *e, size_t count, unsigned extra_bits, const uint8_t *counts) {
     unsigned kp = 8, maximum = (1u << extra_bits) - 1;
     e->pending = 0; e->used = 0;
     for (size_t i = 0; i < count && !e->failed;) {
@@ -616,6 +617,7 @@ static void srl(rfx_encoder *e, size_t count, unsigned extra_bits) {
         }
         bits(e, 1, 1); bits(e, run, k); kp = kp > 6 ? kp - 6 : 0;
         if (i == count) break;
+        if (counts) maximum=(1u<<counts[i])-1;
         int32_t value = e->coeffs[i++];
         bits(e, value < 0, 1);
         unsigned magnitude = (unsigned)(value < 0 ? -value : value);
@@ -635,7 +637,7 @@ static void upgrade_component(rfx_encoder *e, const int32_t *base, unsigned extr
         unsigned magnitude = (unsigned)(v < 0 ? -v : v);
         if (magnitude <= mask) e->coeffs[count++] = v;
     }
-    srl(e, count, extra_bits);
+    srl(e, count, extra_bits, NULL);
     patch_word(e, length_offset, (uint16_t)(e->length - start));
     start = e->length;
     // LL3 is already at target precision in FIRST: transmit no raw LL3 bits.
@@ -646,6 +648,27 @@ static void upgrade_component(rfx_encoder *e, const int32_t *base, unsigned extr
     }
     finish_bits(e);
     patch_word(e, length_offset + 2, (uint16_t)(e->length - start));
+}
+
+static void upgrade_component_profile(rfx_encoder *e,const int32_t *base,unsigned stage,unsigned c,size_t length_offset) {
+    uint8_t counts[4096]; size_t count=0,start=e->length;
+    for(unsigned i=0;i<4015;++i) {
+        unsigned band=bk_progressive_band(i),from=bk_progressive_qbit(stage-1,c,band),to=bk_progressive_qbit(stage,c,band),n=from-to;
+        unsigned mag=(unsigned)(base[i]<0?-base[i]:base[i]);
+        if(n && !(mag>>from)) {
+            int32_t value=(int32_t)((mag>>to)&((1u<<n)-1));
+            e->coeffs[count]=base[i]<0?-value:value;counts[count++]=(uint8_t)n;
+        }
+    }
+    srl(e,count,1,counts);patch_word(e,length_offset,(uint16_t)(e->length-start));start=e->length;
+    for(unsigned i=0;i<4096;++i) {
+        unsigned band=bk_progressive_band(i),from=bk_progressive_qbit(stage-1,c,band),to=bk_progressive_qbit(stage,c,band),n=from-to;
+        if(!n)continue;
+        unsigned mag=(unsigned)(base[i]<0?-base[i]:base[i]);
+        if(i>=4015) bits(e,((uint32_t)(base[i]>>to))&((1u<<n)-1),n);
+        else if(mag>>from) bits(e,(mag>>to)&((1u<<n)-1),n);
+    }
+    finish_bits(e);patch_word(e,length_offset+2,(uint16_t)(e->length-start));
 }
 
 static int run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
@@ -666,7 +689,8 @@ static int run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
     }
     size_t required_cache = (size_t)((width + 63) / 64) * ((height + 63) / 64) * 3 * 4096;
     if (pass < ANYKVM_RFX_SIMPLE || pass > ANYKVM_RFX_UPGRADE ||
-        (pass != ANYKVM_RFX_SIMPLE && (!cache || cache_count != required_cache || extra_bits < 1 || extra_bits > 4))) {
+        (pass != ANYKVM_RFX_SIMPLE && (!cache || cache_count != required_cache ||
+          ((extra_bits < 1 || extra_bits > 4) && !bk_progressive_valid(extra_bits,pass==ANYKVM_RFX_UPGRADE))))) {
         snprintf(message, capacity, "invalid progressive pass or coefficient cache"); return 0;
     }
     uint16_t tile_count = 0;
@@ -694,14 +718,18 @@ static int run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
         block(e, 0xccc1, 12); dword(e, frame); word(e, 1);
         region = e->length;
         block(e, 0xccc4, 0);
-        byte(e, 64); word(e, (uint16_t)count); byte(e, 1); byte(e, pass == ANYKVM_RFX_FIRST); byte(e, pass != ANYKVM_RFX_SIMPLE);
+        byte(e, 64); word(e, (uint16_t)count); byte(e, 1); byte(e, pass == ANYKVM_RFX_FIRST || bk_progressive_official(extra_bits)); byte(e, pass != ANYKVM_RFX_SIMPLE);
         word(e, tile_count); dword(e, 0);
         for (size_t i = 0; i < count; ++i) {
             const anykvm_rfx_rect *r = &rects[i];
             word(e, r->x); word(e, r->y); word(e, r->width); word(e, r->height);
         }
         for (unsigned q = 0; q < 5; ++q) byte(e, (uint8_t)(e->quantization | (e->quantization << 4)));
-        if (pass == ANYKVM_RFX_FIRST) {
+        if (bk_progressive_official(extra_bits)) {
+            byte(e,extra_bits==0x100?50:extra_bits==0x101?75:100);
+            for(unsigned c=0;c<3;++c) for(unsigned b=0;b<10;b+=2)
+                byte(e,(uint8_t)(bk_progressive_qbit(extra_bits,c,b)|(bk_progressive_qbit(extra_bits,c,b+1)<<4)));
+        } else if (pass == ANYKVM_RFX_FIRST) {
             byte(e, 50);
             // Keep LL3 (first low nibble of each component table) at full precision.
             for (unsigned q = 0; q < 15; ++q)
@@ -723,11 +751,12 @@ static int run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
                 byte(e, 0); byte(e, 0); byte(e, 0);
                 word(e, (uint16_t)(x / 64)); word(e, (uint16_t)(y / 64));
                 if (pass != ANYKVM_RFX_UPGRADE) byte(e, 0); // Original tile flags.
-                if (pass != ANYKVM_RFX_SIMPLE) byte(e, pass == ANYKVM_RFX_UPGRADE ? 255 : 0);
+                if (pass != ANYKVM_RFX_SIMPLE) byte(e, pass == ANYKVM_RFX_UPGRADE && !bk_progressive_official(extra_bits) ? 255 : 0);
                 for (unsigned c = 0; c < (pass == ANYKVM_RFX_UPGRADE ? 6u : 4u); ++c) word(e, 0);
                 for (unsigned c = 0; c < 3 && !e->failed; ++c) {
                     if (pass == ANYKVM_RFX_UPGRADE) {
-                        upgrade_component(e, cache + cache_offset + c * 4096, extra_bits, tile + 14 + 4 * c);
+                        if(bk_progressive_official(extra_bits)) upgrade_component_profile(e,cache+cache_offset+c*4096,extra_bits,c,tile+14+4*c);
+                        else upgrade_component(e, cache + cache_offset + c * 4096, extra_bits, tile + 14 + 4 * c);
                         continue;
                     }
                     if (pass == ANYKVM_RFX_FIRST) {
@@ -740,9 +769,10 @@ static int run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, in
                     } else dwt(e, e->planes[c]);
                     if (pass == ANYKVM_RFX_FIRST) {
                         memcpy(cache + cache_offset + c * 4096, e->coeffs, 4096 * sizeof(int32_t));
-                        for (size_t j = 0; j < 4015; ++j) {
+                        for (size_t j = 0; j < (bk_progressive_official(extra_bits)?4096u:4015u); ++j) {
                             int32_t v = e->coeffs[j];
-                            e->coeffs[j] = v < 0 ? -shift(-v, extra_bits) : shift(v, extra_bits);
+                            unsigned n=bk_progressive_official(extra_bits)?bk_progressive_qbit(extra_bits,c,bk_progressive_band((unsigned)j)):extra_bits;
+                            e->coeffs[j] = j>=4015 ? shift(v,n) : v < 0 ? -shift(-v,n) : shift(v,n);
                         }
                         for (size_t j = 4095; j > 4015; --j) e->coeffs[j] -= e->coeffs[j - 1];
                     }

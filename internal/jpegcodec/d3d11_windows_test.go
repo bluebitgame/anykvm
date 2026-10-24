@@ -4,6 +4,7 @@ package jpegcodec
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image/color"
 	"image/jpeg"
@@ -14,14 +15,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-// Synthetic keyed-mutex textures exercise the production GPU pipeline. A second
-// mode uploads known coefficients to check Huffman/packing byte for byte.
-func TestD3D11JPEGShader(t *testing.T) {
-	if os.Getenv("ANYKVM_TEST_WINDOWS_GPU_JPEG") == "" {
-		t.Skip("set ANYKVM_TEST_WINDOWS_GPU_JPEG=1 on a Windows GPU host")
-	}
+func windowsJPEGFixtureCompiler(t *testing.T) []string {
+	t.Helper()
 	cc, err := exec.Command("go", "env", "CC").Output()
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +32,39 @@ func TestD3D11JPEGShader(t *testing.T) {
 	if len(words) == 0 {
 		t.Fatal("missing C compiler")
 	}
+	return words
+}
+
+// Exercise the actual Windows FXC optimizer without requiring a capture device
+// or GPU. A runaway entropy compilation must fail this test rather than hang.
+func TestD3D11JPEGEntropyCompile(t *testing.T) {
+	words := windowsJPEGFixtureCompiler(t)
+	executable := filepath.Join(t.TempDir(), "jpeg-compile.exe")
+	arguments := append(words[1:], "testdata/d3d11_jpeg_compile.c", "-O2", "-o", executable)
+	if out, err := exec.Command(words[0], arguments...).CombinedOutput(); err != nil {
+		t.Fatalf("build FXC fixture: %v\n%s", err, out)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable)
+	command.Stdin = strings.NewReader(jpegComputeShader)
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("FXC encodeMCUs compilation exceeded 30s: %v\n%s", ctx.Err(), output)
+	}
+	if err != nil {
+		t.Fatalf("FXC encodeMCUs compilation: %v\n%s", err, output)
+	}
+	t.Logf("%s", output)
+}
+
+// Synthetic keyed-mutex textures exercise the production GPU pipeline. A second
+// mode uploads known coefficients to check Huffman/packing byte for byte.
+func TestD3D11JPEGShader(t *testing.T) {
+	if os.Getenv("ANYKVM_TEST_WINDOWS_GPU_JPEG") == "" {
+		t.Skip("set ANYKVM_TEST_WINDOWS_GPU_JPEG=1 on a Windows GPU host")
+	}
+	words := windowsJPEGFixtureCompiler(t)
 	dir := t.TempDir()
 	executable := filepath.Join(dir, "jpeg-fixture.exe")
 	arguments := append(words[1:], "testdata/d3d11_jpeg_fixture.c", "-O2", "-ld3d11", "-ldxgi", "-ldxguid", "-o", executable)

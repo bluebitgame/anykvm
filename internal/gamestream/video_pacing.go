@@ -15,6 +15,27 @@ import (
 type sourceFramePacer struct {
 	fps                    int
 	captured, anchor, last time.Time
+	ptsOrigin              int64
+	ptsAnchor              time.Time
+}
+
+func (p *sourceFramePacer) reservePlayback(pts int64, captured, now time.Time) time.Time {
+	if pts < 0 || pts > 1<<53-1 {
+		return now
+	} // sender rejects invalid PTS
+	if pts <= 0 {
+		p.ptsOrigin = 0
+		return p.reserve(captured, now)
+	}
+	if p.ptsOrigin == 0 {
+		p.ptsOrigin, p.ptsAnchor = pts, now
+	}
+	due := p.ptsAnchor.Add(time.Duration(pts-p.ptsOrigin) * time.Microsecond)
+	if due.Before(now.Add(-250*time.Millisecond)) || due.After(now.Add(time.Second)) {
+		p.ptsOrigin, p.ptsAnchor, due = pts, now, now
+	}
+	p.captured = time.Time{} // re-anchor if a later source uses the legacy clock
+	return p.limit(due, now)
 }
 
 func (p *sourceFramePacer) reserve(captured, now time.Time) time.Time {
@@ -30,6 +51,10 @@ func (p *sourceFramePacer) reserve(captured, now time.Time) time.Time {
 			p.captured, p.anchor, due = captured, now, now
 		}
 	}
+	return p.limit(due, now)
+}
+
+func (p *sourceFramePacer) limit(due, now time.Time) time.Time {
 	if due.Before(now) {
 		due = now
 	}

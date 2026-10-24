@@ -49,36 +49,42 @@ func (e *textureEncoderFixture) Encode(_ []byte, force bool) ([]byte, error) {
 	return []byte{0, 0, 0, 1, 0x65, 2}, nil
 }
 func TestNativeTextureEncodingAvoidsReadback(t *testing.T) {
-	for _, handled := range []bool{true, false} {
-		t.Run(map[bool]string{true: "GPU", false: "CPU fallback"}[handled], func(t *testing.T) {
-			o := videoenc.Options{Width: 4, Height: 4, FPS: 30, Rate: framerate.New(30, 1), Bitrate: 12000, Codec: "h264"}
-			e := &textureEncoderFixture{}
-			d := &ffmpegDevice{videoCodec: "h264", reqFPS: 30, encoder: e, encodeOptions: o}
-			d.forceIDR.Store(true)
-			n := &textureFixture{handled: handled}
-			now := time.Now()
-			f := &Frame{Width: 4, Height: 4, Format: FormatRaw, CapturedAt: now, nativeBuffer: n}
-			out, err := d.encodeMediaFrame(f)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if out == nil {
-				t.Fatal("missing encoded frame")
-			}
-			defer out.Release()
-			if out.Format != FormatH264 || out.CapturedAt != now || len(out.Data) == 0 {
-				t.Fatalf("invalid frame: %+v", out)
-			}
-			if !n.forced {
-				t.Fatal("GPU path did not receive IDR request")
-			}
-			if handled && (n.materialized || e.calls != 0) {
-				t.Fatal("GPU path read back or re-encoded desktop pixels")
-			}
-			if !handled && (!n.materialized || e.calls != 1 || !e.force) {
-				t.Fatal("fallback lost pixels or IDR request")
-			}
-		})
+	for _, codec := range []string{"h264", "hevc"} {
+		for _, handled := range []bool{true, false} {
+			t.Run(codec+"/"+map[bool]string{true: "GPU", false: "CPU fallback"}[handled], func(t *testing.T) {
+				o := videoenc.Options{Width: 4, Height: 4, FPS: 30, Rate: framerate.New(30, 1), Bitrate: 12000, Codec: codec}
+				e := &textureEncoderFixture{}
+				d := &ffmpegDevice{videoCodec: codec, reqFPS: 30, encoder: e, encodeOptions: o}
+				d.forceIDR.Store(true)
+				n := &textureFixture{handled: handled}
+				now := time.Now()
+				f := &Frame{Width: 4, Height: 4, Format: FormatRaw, CapturedAt: now, PresentationPTS: 12345678, nativeBuffer: n}
+				out, err := d.encodeMediaFrame(f)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if out == nil {
+					t.Fatal("missing encoded frame")
+				}
+				defer out.Release()
+				wantFormat := FormatH264
+				if codec == "hevc" {
+					wantFormat = FormatHEVC
+				}
+				if out.Format != wantFormat || out.CapturedAt != now || out.PresentationPTS != 12345678 || len(out.Data) == 0 {
+					t.Fatalf("invalid frame: %+v", out)
+				}
+				if !n.forced {
+					t.Fatal("GPU path did not receive IDR request")
+				}
+				if handled && (n.materialized || e.calls != 0) {
+					t.Fatal("GPU path read back or re-encoded desktop pixels")
+				}
+				if !handled && (!n.materialized || e.calls != 1 || !e.force) {
+					t.Fatal("fallback lost pixels or IDR request")
+				}
+			})
+		}
 	}
 }
 func TestNativeTextureErrorDoesNotSilentlyReadBack(t *testing.T) {

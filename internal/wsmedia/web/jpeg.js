@@ -1,8 +1,9 @@
 // Bound decoding work and retained pictures when the browser falls behind.
 export class JPEGPlayer {
-  constructor(draw, decode = (bytes) => createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))) {
+  constructor(draw, decode = (bytes) => createImageBitmap(new Blob([bytes], { type: 'image/jpeg' })), onError = () => {}) {
     this.draw = draw;
     this.decode = decode;
+    this.onError = onError;
     this.pending = null;
     this.busy = false;
     this.generation = 0;
@@ -28,8 +29,9 @@ export class JPEGPlayer {
         try {
           bitmap = await this.decode(bytes);
           if (generation === this.generation) this.draw(bitmap);
-        } catch (_) {
+        } catch (error) {
           // A damaged JPEG must not stop subsequent pictures.
+          if (generation === this.generation) this.onError(error);
         } finally {
           if (bitmap) bitmap.close();
         }

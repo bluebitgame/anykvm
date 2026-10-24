@@ -95,6 +95,9 @@ struct bk_spice {
   PFNEGLDESTROYIMAGEKHRPROC destroy_image;
   PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC query_image;
   PFNEGLEXPORTDMABUFIMAGEMESAPROC export_image;
+  int remote, bitmap_dirty, bitmap_reset, bitmap_format, bitmap_stride;
+  uint8_t *bitmap_data; // borrowed only until display-primary-destroy
+  const char *host, *port;
   const char *path, *password, *render_node;
 };
 static void fail(bk_spice *s, const char *reason) {
@@ -105,6 +108,7 @@ static void fail(bk_spice *s, const char *reason) {
 
 // Media callbacks share bk_spice state and execute on the same GLib thread.
 #include "native_media_linux.h"
+#include "native_remote_linux.h"
 
 static void channel_event(SpiceChannel *channel, SpiceChannelEvent event,
                           gpointer data) {
@@ -233,7 +237,16 @@ static void channel_new(SpiceSession *session, SpiceChannel *channel,
     if (id != 0 || s->display)
       return;
     s->display = g_object_ref(SPICE_DISPLAY_CHANNEL(channel));
-    g_signal_connect(channel, "gl-draw", G_CALLBACK(draw), s);
+    if (s->remote) {
+      g_signal_connect(channel, "display-primary-create",
+                       G_CALLBACK(bitmap_create), s);
+      g_signal_connect(channel, "display-primary-destroy",
+                       G_CALLBACK(bitmap_destroy), s);
+      g_signal_connect(channel, "display-invalidate",
+                       G_CALLBACK(bitmap_invalidate), s);
+    } else {
+      g_signal_connect(channel, "gl-draw", G_CALLBACK(draw), s);
+    }
   }
   if (type == SPICE_CHANNEL_INPUTS) {
     if (id != 0 || s->inputs)
@@ -264,80 +277,115 @@ static void channel_new(SpiceSession *session, SpiceChannel *channel,
 }
 static void open_session(void *arg) {
   bk_spice *s = arg;
-  s->render_fd = open(s->render_node, O_RDWR | O_CLOEXEC);
-  if (s->render_fd < 0) {
-    fail(s, "cannot open spice.render_node");
-    return;
-  }
-  drmDevicePtr device = NULL;
-  struct stat st;
-  if (drmGetDevice2(s->render_fd, 0, &device) != 0 ||
-      !(device->available_nodes & (1 << DRM_NODE_PRIMARY)) ||
-      stat(device->nodes[DRM_NODE_PRIMARY], &st) < 0) {
-    if (device)
-      drmFreeDevice(&device);
-    fail(s, "cannot identify primary DRM device for SPICE render node");
-    return;
-  }
-  s->frame.device_major = major(st.st_rdev);
-  s->frame.device_minor = minor(st.st_rdev);
-  drmFreeDevice(&device);
-  s->gbm = gbm_create_device(s->render_fd);
-  PFNEGLGETPLATFORMDISPLAYEXTPROC platform =
-      (void *)eglGetProcAddress("eglGetPlatformDisplayEXT");
-  if (!s->gbm || !platform ||
-      (s->egl = platform(EGL_PLATFORM_GBM_KHR, s->gbm, NULL)) ==
-          EGL_NO_DISPLAY ||
-      !eglInitialize(s->egl, NULL, NULL)) {
-    fail(s, "cannot initialize GBM/EGL for SPICE DMA-BUF");
-    return;
-  }
-  const char *extensions = eglQueryString(s->egl, EGL_EXTENSIONS);
-  if (!extensions || !strstr(extensions, "EGL_EXT_image_dma_buf_import") ||
-      !strstr(extensions, "EGL_MESA_image_dma_buf_export")) {
-    fail(s, "SPICE GPU input requires EGL DMA-BUF import and MESA export");
-    return;
-  }
-  s->create_image = (void *)eglGetProcAddress("eglCreateImageKHR");
-  s->destroy_image = (void *)eglGetProcAddress("eglDestroyImageKHR");
-  s->query_image = (void *)eglGetProcAddress("eglExportDMABUFImageQueryMESA");
-  s->export_image = (void *)eglGetProcAddress("eglExportDMABUFImageMESA");
-  if (!s->create_image || !s->destroy_image || !s->query_image ||
-      !s->export_image) {
-    fail(s, "missing EGL DMA-BUF entrypoints");
-    return;
+  if (!s->remote) {
+    s->render_fd = open(s->render_node, O_RDWR | O_CLOEXEC);
+    if (s->render_fd < 0) {
+      fail(s, "cannot open spice.render_node");
+      return;
+    }
+    drmDevicePtr device = NULL;
+    struct stat st;
+    if (drmGetDevice2(s->render_fd, 0, &device) != 0 ||
+        !(device->available_nodes & (1 << DRM_NODE_PRIMARY)) ||
+        stat(device->nodes[DRM_NODE_PRIMARY], &st) < 0) {
+      if (device)
+        drmFreeDevice(&device);
+      fail(s, "cannot identify primary DRM device for SPICE render node");
+      return;
+    }
+    s->frame.device_major = major(st.st_rdev);
+    s->frame.device_minor = minor(st.st_rdev);
+    drmFreeDevice(&device);
+    s->gbm = gbm_create_device(s->render_fd);
+    PFNEGLGETPLATFORMDISPLAYEXTPROC platform =
+        (void *)eglGetProcAddress("eglGetPlatformDisplayEXT");
+    if (!s->gbm || !platform ||
+        (s->egl = platform(EGL_PLATFORM_GBM_KHR, s->gbm, NULL)) ==
+            EGL_NO_DISPLAY ||
+        !eglInitialize(s->egl, NULL, NULL)) {
+      fail(s, "cannot initialize GBM/EGL for SPICE DMA-BUF");
+      return;
+    }
+    const char *extensions = eglQueryString(s->egl, EGL_EXTENSIONS);
+    if (!extensions || !strstr(extensions, "EGL_EXT_image_dma_buf_import") ||
+        !strstr(extensions, "EGL_MESA_image_dma_buf_export")) {
+      fail(s, "SPICE GPU input requires EGL DMA-BUF import and MESA export");
+      return;
+    }
+    s->create_image = (void *)eglGetProcAddress("eglCreateImageKHR");
+    s->destroy_image = (void *)eglGetProcAddress("eglDestroyImageKHR");
+    s->query_image = (void *)eglGetProcAddress("eglExportDMABUFImageQueryMESA");
+    s->export_image = (void *)eglGetProcAddress("eglExportDMABUFImageMESA");
+    if (!s->create_image || !s->destroy_image || !s->query_image ||
+        !s->export_image) {
+      fail(s, "missing EGL DMA-BUF entrypoints");
+      return;
+    }
   }
   s->session = spice_session_new();
-  g_object_set(s->session, "unix-path", s->path, "password", s->password,
-               "enable-audio", TRUE, "enable-usbredir", FALSE,
-               "enable-smartcard", FALSE, NULL);
+  if (s->remote) {
+    g_object_set(s->session, "host", s->host, "port", s->port, "gl-scanout",
+                 FALSE, NULL);
+  } else {
+    g_object_set(s->session, "unix-path", s->path, NULL);
+  }
+  g_object_set(s->session, "password", s->password, "enable-audio", TRUE,
+               "enable-usbredir", FALSE, "enable-smartcard", FALSE, NULL);
   g_signal_connect(s->session, "channel-new", G_CALLBACK(channel_new), s);
   g_signal_connect(s->session, "channel-destroy",
                    G_CALLBACK(media_channel_destroy), s);
   if (!spice_session_connect(s->session))
     fail(s, "SPICE connect failed");
 }
-bk_spice *bk_spice_open(const char *path, const char *password,
-                        const char *render_node, char *error, size_t cap) {
+// Capture the synchronous open result on the GLib thread. Channel callbacks
+// may run immediately after this job, so the caller must never read s->failed
+// or s->error directly while the loop is running.
+typedef struct {
+  bk_spice *s;
+  char *error;
+  size_t cap;
+  int failed;
+} open_job;
+static void open_and_report(void *arg) {
+  open_job *j = arg;
+  open_session(j->s);
+  j->s->path = j->s->host = j->s->port = j->s->password = j->s->render_node =
+      NULL;
+  j->failed = j->s->failed;
+  if (j->failed)
+    snprintf(j->error, j->cap, "%s", j->s->error);
+}
+static bk_spice *new_session(const char *path, const char *host,
+                             const char *port, const char *password,
+                             const char *render_node, char *error, size_t cap) {
   bk_spice *s = calloc(1, sizeof(*s));
   if (!s) {
     snprintf(error, cap, "cannot allocate SPICE session");
     return NULL;
   }
-  s->fd = -1;
-  s->render_fd = -1;
+  s->fd = s->render_fd = -1;
   s->egl = EGL_NO_DISPLAY;
   s->path = path;
+  s->host = host;
+  s->port = port;
+  s->remote = host != NULL;
   s->password = password;
   s->render_node = render_node;
-  call(open_session, s);
-  s->path = s->password = s->render_node = NULL;
-  if (s->failed) {
-    snprintf(error, cap, "%s", s->error);
+  open_job j = {.s = s, .error = error, .cap = cap};
+  call(open_and_report, &j);
+  if (j.failed) {
     bk_spice_close(s);
     return NULL;
   }
   return s;
+}
+bk_spice *bk_spice_open(const char *path, const char *password,
+                        const char *render_node, char *error, size_t cap) {
+  return new_session(path, NULL, NULL, password, render_node, error, cap);
+}
+bk_spice *bk_spice_open_remote(const char *host, const char *port,
+                               const char *password, char *error, size_t cap) {
+  return new_session(NULL, host, port, password, NULL, error, cap);
 }
 typedef struct {
   bk_spice *s;

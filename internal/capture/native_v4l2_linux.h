@@ -12,7 +12,7 @@ int bk_v4l_height(bk_v4l_capture *);
 int bk_v4l_rate_num(bk_v4l_capture *);
 int bk_v4l_rate_den(bk_v4l_capture *);
 const char *bk_v4l_format(bk_v4l_capture *);
-int bk_v4l_read(bk_v4l_capture *,int,uint8_t **,size_t *,int *,char *,size_t);
+int bk_v4l_read(bk_v4l_capture *,int,uint8_t **,size_t *,int *,int64_t *,char *,size_t);
 int bk_v4l_done(bk_v4l_capture *,int,char *,size_t);
 int bk_v4l_convert(bk_v4l_capture *,uint8_t *,size_t,uint8_t *,size_t,char *,size_t);
 int bk_v4l_nv12(bk_v4l_capture *,int,size_t,int *,unsigned *,size_t *);

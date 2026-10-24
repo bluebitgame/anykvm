@@ -18,7 +18,7 @@ func TestJPEGComputeShaderABI(t *testing.T) {
 	}{
 		{"compareTiles", []uint32{0, 2, 4, 6, 7, 8, 9}, [3]uint32{64, 1, 1}},
 		{"prepareWork", []uint32{2, 7, 9}, [3]uint32{1, 1, 1}},
-		{"main", []uint32{0, 1, 2, 4, 9}, [3]uint32{8, 8, 1}},
+		{"main", []uint32{0, 1, 2, 9}, [3]uint32{8, 8, 1}},
 		{"selectEntropy", []uint32{1, 2, 4, 6, 9}, [3]uint32{64, 1, 1}},
 		{"prepareEntropy", []uint32{2, 7, 9}, [3]uint32{1, 1, 1}},
 		{"encodeMCUs", []uint32{1, 2, 3, 4, 6, 9}, [3]uint32{64, 1, 1}},

@@ -116,10 +116,25 @@ Bitmap codecs request pixels, compare a 64x64 grid and skip unchanged blocks.
 ClearCodec/Planar coalesce fully dirty 128x128 groups; Progressive keeps 64x64
 tiles. NV12 checks both Y and UV. Pixel snapshots can be replaced by newer ones;
 compressed reference frames must be decoded in order. Refresh and resize reset
-codec state and repaint static sources. Graphics transfers are bounded, with
-a two-frame ACK window and five-second write/ACK timeout.
+codec state and repaint static sources. Graphics transfers have an adaptive
+ACK window and a five-second write/ACK timeout.
 Output follows capture availability. Uncompressed updates may be replaced by
 newer frames while waiting for the client; compressed frames remain ordered.
+ACKs release individual frame IDs; suspending ACKs clears the window, and
+resuming tracks only newly sent frames. The window starts at two frames and
+adapts to source FPS, measured ACK latency and jitter, with a 32-frame ceiling.
+Its extra flight allowance targets 50ms or one frame interval, whichever is
+larger. Sustained queueing contracts the window to drain outstanding work, and
+ACK throughput measurements account for a slower decoder. A 16MiB pending-data
+threshold also stops new frames; a single frame may exceed that threshold.
+RTT samples start before the final END_FRAME batch, excluding preceding server
+encoding work. Stalled ACKs stop admission; no extra frame timer is used.
+These bounds control server admission, not a guaranteed end-to-end latency:
+transport buffers, individual frame size and client decoding also contribute.
+All graphics codecs, including Progressive refinements, assign START_FRAME a
+packed UTC time of day as required by MS-RDPEGFX. This is separate from source
+playback PTS and diagnostic durations. Refresh requests wake idle pixel sources
+using their retained latest picture.
 
 Clients supporting scaled surface mapping receive source-sized surfaces within
 Target limits, fitted to the requested desktop with matching pointer coordinates.
@@ -235,12 +250,30 @@ rdp:
 `quant` accepts 6..15 (0/omitted uses 6). Larger values discard more detail and
 usually reduce payload; they do not guarantee faster encoding or client FPS.
 `refine` accepts 0..4 and defaults to 2. Zero sends complete SIMPLE tiles.
-Values 1..4 omit extra high-frequency coefficient bits from FIRST, then UPGRADE
-restores configured precision. A value of 2 means two omitted bits, not two
-passes. Low-frequency brightness/chroma retain base precision.
+Values 1..4 enable the same three-stage profile: FIRST 50%, UPGRADE 75%, then
+UPGRADE 100%, using Microsoft's [reference per-component/subband quantization
+tables](https://github.com/microsoft/WindowsProtocolTestSuites/blob/main/ProtoSDK/MS-RDPEGFX/Codecs/RdpegfxTileUtils.cs).
+Existing nonzero values remain accepted for configuration compatibility.
+The percentages label quantization stages, not byte counts or resolution.
+100% restores the configured base quantization; it does not override `quant`.
 
 SIMPLE uses the original DWT; FIRST/UPGRADE uses reduce-extrapolate DWT. New
 captures take priority while available gaps/ACK slots refine pending tiles.
+Refinements leave one ACK-window slot and byte headroom for a fresh capture.
+A one-frame congestion window is reserved entirely for fresh captures; idle
+refinement wakes when the recovery hold expires. Background UPGRADE packets
+are buffered before writing and advance tile quality only after a successful
+write. A queued capture, refresh, or tighter ACK window discards unwritten
+packets without advancing either CPU or GPU tile history. Already submitted
+transport data remains ordered before the next FIRST.
+Normal captures send FIRST only for tiles whose visible pixels changed, using
+CPU comparison or GPU dirty-tile detection. After that check, unchanged tiles
+can advance even while more captures are queued. One small packet may use the
+remaining source-frame time (targeting 2ms of encoding); alongside changed
+tiles it follows their FIRSTs within the same ACK frame. Changed tiles and move
+destinations are excluded. Tile rotation prevents repeated FIRSTs from starving
+an unchanged neighbor's 100% pass. Refinement pauses on congestion or exhausted
+frame/byte budgets; identical captures retain completed quality without resends.
 Replacement, refresh and resize invalidate stale refinements. Coefficient
 caches are bounded to 128 MiB per connection; oversized grids use SIMPLE.
 Temporal sub-band differences are not implemented.
@@ -276,6 +309,11 @@ Experimental GPU encoding supports SIMPLE, FIRST and UPGRADE on Windows
 `ANYKVM_RDP_PROGRESSIVE_BACKEND=gpu`, or explicitly `d3d11`/`vulkan`.
 Forced GPU backends end the session on failure; `auto` uses CPU encoding.
 macOS and builds without CGO use CPU backends.
+
+Windows-host builds through `tools/build.py` or `tools/build_windows.ps1`
+precompile all four Progressive encoding stages and the surface/dirty-detection
+stage with FXC and embed DXBC. These shaders do not compile at runtime in those
+binaries. Windows cross-builds from macOS/Linux retain runtime compilation.
 
 Windows DXGI and Linux KMS sources can keep capture pixels on the GPU through
 scaling, dirty detection and encoding. Other sources upload CPU pixels.
@@ -321,6 +359,17 @@ AVC_DISABLED. Unknown versions are not selected.
 
 Bitmap logs report output FPS, changed tiles and maximum
 encoding/send/ACK waits. Progressive refinements have separate FPS counters.
+Graphics logs also include pending frames/window, pending bytes, ACK RTT and
+baseline, jitter, estimated flow FPS, and client-reported queued bytes.
+ACK bursts are sampled as a group. Their reporting cadence (up to 250ms of
+flight allowance, still bounded by 32 frames/16MiB) is separate from decoder
+queue pressure. Queue snapshots are discounted for this reporting delay.
+Consecutive single-frame reports retire old batch allowance, and an isolated
+probe after desktop idle clears stale cadence and decoder-rate estimates.
+Window changes use a 500ms stability period and one-frame dead band; sustained
+pressure still drains immediately once detected. Late ACKs free their own slot
+without replacing newer queue feedback. Resuming ACKs requires a frame sent
+after the suspend boundary, so old in-flight ACKs cannot reopen that epoch.
 The application-wide `AnyKVM: uplink=… Mbps` log reports total outgoing traffic
 across all output protocols every five seconds, including RDP socket writes.
 Idle desktops send few updates. Measure client display FPS separately from

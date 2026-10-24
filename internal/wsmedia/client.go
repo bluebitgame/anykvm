@@ -18,6 +18,7 @@ type wsClient struct {
 	done            chan struct{}
 	once            sync.Once
 	active          bool            // guarded by Server.mu; capability handshake has started capture.
+	videoRecovery   bool            // guarded by Server.mu; negotiated an inter-frame video codec.
 	audioCodecs     map[string]bool // guarded by Server.mu
 	audioFormats    map[string]bool // nil for legacy codec-only capability messages
 	loggedVideoKind byte

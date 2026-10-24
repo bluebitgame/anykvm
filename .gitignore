@@ -28,7 +28,13 @@ __pycache__/
 
 # Generated shader assets and local benchmark records
 /internal/gpuconv/shaders/*.json
+/internal/gpuconv/progressive_dxbc.h
+/internal/gpuconv/progressive_dxbc.json
+/internal/gpuconv/progressive_surface_dxbc.h
+/internal/gpuconv/progressive_surface_dxbc.json
 /internal/jpegcodec/shaders/*.json
+/internal/jpegcodec/jpeg420_dxbc.h
+/internal/jpegcodec/jpeg420_dxbc.json
 /internal/rdp/shaders/*.json
 /tools/codec-bench/**/results*.json
 

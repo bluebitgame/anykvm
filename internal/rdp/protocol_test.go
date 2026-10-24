@@ -320,7 +320,9 @@ func TestUnencryptedConnectionRejected(t *testing.T) {
 }
 
 func TestFrameWindowDoesNotBlockShutdown(t *testing.T) {
-	c := &client{done: make(chan struct{}), ack: make(chan struct{}, 1), sent: 2}
+	c := &client{done: make(chan struct{}), ack: make(chan struct{}, 1)}
+	c.nextGraphicsFrame()
+	c.nextGraphicsFrame()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

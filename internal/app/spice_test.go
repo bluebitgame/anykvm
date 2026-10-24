@@ -35,6 +35,10 @@ func TestSPICEConfigSecretsAndSource(t *testing.T) {
 		t.Fatalf("SPICE password saved with mode %o", info.Mode().Perm())
 	}
 	cfg.Targets[0].Video.Source = "spice://host:5900"
+	if err = validateConfig(cfg); err != nil {
+		t.Fatalf("remote SPICE config: %v", err)
+	}
+	cfg.Targets[0].Video.Source = "spice://host:0"
 	if err = validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "VM") {
 		t.Fatalf("missing named validation error: %v", err)
 	}

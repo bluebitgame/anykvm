@@ -30,6 +30,7 @@ static void bk_nvenc_close(void *opaque) {
             e->api.nvEncDestroyBitstreamBuffer(e->session, e->bitstream);
         if (e->resource)
             e->api.nvEncUnregisterResource(e->session, e->resource);
+        bk_vendor_phase(&e->options, "NvEncDestroyEncoder");
         e->api.nvEncDestroyEncoder(e->session);
     }
     bk_d3d_converter_close(&e->converter);
@@ -219,6 +220,7 @@ static int bk_nvenc_encode_current(void *opaque, int force, uint8_t **output, si
     NV_ENC_MAP_INPUT_RESOURCE mapped = {0};
     mapped.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
     mapped.registeredResource = e->resource;
+    bk_vendor_phase(&e->options, "mapping input");
     NV_TRY(e->api.nvEncMapInputResource(e->session, &mapped));
     e->mapped = mapped.mappedResource;
     NV_ENC_PIC_PARAMS picture = {0};
@@ -234,14 +236,18 @@ static int bk_nvenc_encode_current(void *opaque, int force, uint8_t **output, si
     if (force)
         picture.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
     BK_MARK(&e->options, encode_submit);
+    bk_vendor_phase(&e->options, "NvEncEncodePicture");
     NV_TRY(e->api.nvEncEncodePicture(e->session, &picture));
     NV_ENC_LOCK_BITSTREAM locked = {0};
     locked.version = NV_ENC_LOCK_BITSTREAM_VER;
     locked.outputBitstream = e->bitstream;
+    bk_vendor_phase(&e->options, "NvEncLockBitstream");
     NV_TRY(e->api.nvEncLockBitstream(e->session, &locked));
     BK_MARK(&e->options, encode_complete);
     int result = bk_vendor_copy(locked.bitstreamBufferPtr, locked.bitstreamSizeInBytes, output, size, error, capacity);
+    bk_vendor_phase(&e->options, "NvEncUnlockBitstream");
     NVENCSTATUS unlocked = e->api.nvEncUnlockBitstream(e->session, e->bitstream);
+    bk_vendor_phase(&e->options, "NvEncUnmapInputResource");
     NVENCSTATUS unmapped = e->api.nvEncUnmapInputResource(e->session, e->mapped);
     e->mapped = NULL;
     if (result || bk_nvenc_status(unlocked, "NvEncUnlockBitstream", error, capacity) ||
@@ -271,6 +277,7 @@ static int bk_nvenc_encode(void *opaque, const uint8_t *input, int force, uint8_
 static int bk_nvenc_encode_texture(void *opaque, uintptr_t handle, int rotation, int force, uint8_t **output,
                                    size_t *size, char *error, size_t capacity) {
     bk_nvenc *e = opaque;
+    bk_vendor_phase(&e->options, "D3D11 texture conversion");
     int status = bk_d3d_convert(&e->converter, e->device, e->context, e->texture, &e->options, handle, rotation, error,
                                 capacity);
     if (status)

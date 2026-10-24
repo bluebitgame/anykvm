@@ -15,8 +15,9 @@ NASM enables TurboJPEG x86 SIMD. macOS FFmpeg builds also need Make and pkg-conf
   (`build-essential pkg-config libv4l-dev libasound2-dev` on Debian), plus
   `libsdl2-dev` for the viewer. Debian 12 cross-build sysroots target glibc 2.36+.
 - **Windows:** the desktop build script prepares LLVM-MinGW and the CMake/Ninja
-  tools used for runtime libraries and ARM64 SDL2. The separate PowerShell
-  builder expects a MinGW-compatible compiler already on PATH.
+  tools used for runtime libraries and ARM64 SDL2. Windows-host builds also
+  require Windows SDK FXC to precompile D3D11 JPEG and RemoteFX shaders. The separate
+  PowerShell builder expects a MinGW-compatible compiler already on PATH.
 
 The optional Linux `spice` tag requires spice-client-glib, EGL, GBM and libdrm
 development packages. See [SPICE upstream](spice-source.md) for build and runtime
@@ -51,6 +52,33 @@ packages runtime libraries and licenses alongside the executable:
 
 Failed builds preserve existing outputs. Successful rebuilds remove obsolete
 runtime files previously staged by the script.
+
+Release builds prioritize runtime performance: both desktop builders append
+`-O3` to `CGO_CFLAGS` and `CGO_CXXFLAGS`, preserving supplied include/ABI flags
+while overriding lower optimization levels. Go retains its default optimizations.
+Vulkan shaders use explicit performance optimization (`glslang -O` or `dxc -O3`).
+Their build manifests include compiler options, so previously generated SPIR-V
+with different options is rebuilt even when the HLSL source has not changed.
+
+When the build host and target are both Windows, both builders run Windows SDK
+`fxc.exe` with `cs_5_0`, `/O3` and `/Ges`, then embed DXBC in the executable using
+the `d3d11_precompiled` build tag. FXC is found on PATH or in the installed Windows
+SDK; `FXC` can specify its full path. The same DXBC works for amd64 and arm64.
+This covers ten JPEG encoding stages, four RemoteFX Progressive encoding stages
+and one Progressive surface/dirty-detection stage.
+The build checks the expanded HLSL source (including the shared tile kernel),
+entry points, compiler options and generated header checksum before invoking Go.
+Changed or missing assets are rebuilt; FXC failure stops that target's build.
+Generated headers and manifests are local build assets ignored by Git.
+
+Windows cross-builds from macOS/Linux keep runtime shader compilation, including
+JPEG's startup warmup and process-wide DXBC cache. Runtime FXC uses O1 with
+strictness in these builds; JPEG also enables `fastopt` for entropy loops.
+Offline DXBC and Vulkan builds omit `fastopt` and keep full optimization.
+JPEG decode shaders that still compile at runtime in an offline-encoder build
+retain O3. Cross-builds do not require FXC at build time and do not use leftover
+offline assets. GitHub Actions' Windows
+runners use offline compilation automatically through `build.py`.
 
 `--no-bootstrap` disables downloads and automatic cross-toolchain setup. Supply
 custom toolchain settings below; required dependencies must already be cached.
@@ -89,19 +117,19 @@ After pushing `main` and verifying all six builds, tag the tested commit.
 The tag run rebuilds all targets and publishes a Release only if they pass:
 
 ```sh
-git tag -a v0.1.1-beta.1 -m "AnyKVM v0.1.1-beta.1"
-git push origin refs/tags/v0.1.1-beta.1
+git tag -a v0.1.1-beta.3 -m "AnyKVM v0.1.1-beta.3"
+git push origin refs/tags/v0.1.1-beta.3
 ```
 
 Tags containing `-` are marked as prereleases. Packages include the executable,
-runtime files, licenses and documentation: ZIP for Windows, tar.gz for Linux
+runtime files and licenses: ZIP for Windows, tar.gz for Linux
 and macOS, plus `SHA256SUMS` for verification.
 
 Release builds use native media support without `ffmpeg`, `viewer` or `spice`.
 Linux packages include V4L2/ALSA libraries and require glibc 2.36+.
 Windows includes the MinGW-built Opus runtime.
 macOS packages are not notarized. Firmware is attached separately as
-`firmware-<target>.zip` only when firmware sources or build/package scripts
+`firmware-<board>.zip` (Pico variants share one package per board) only when firmware sources or build/package scripts
 changed since the previous published ancestor Release containing firmware. See the
 [firmware guide](../firmware/README.md#release-packages).
 
@@ -132,6 +160,16 @@ Use an `.exe` output name on Windows. `prepare_sources.py --offline` and
 and checksums are recorded in `tools/sources.lock.json`. Generated sources and
 shaders are ignored by Git; shader tools are not needed at runtime.
 
+To enable embedded D3D11 JPEG/RemoteFX DXBC in a direct Windows Go build, always run the
+preparation step first so source and build options are checked before embedding:
+
+```powershell
+python tools/build_dxbc.py
+go build -tags d3d11_precompiled -o build/anykvm.exe ./cmd/anykvm
+```
+
+An ordinary direct `go build` without this tag retains startup compilation.
+
 ## Native and optional codecs
 
 Default builds provide native hardware video encoding without FFmpeg:
@@ -144,6 +182,13 @@ Default builds provide native hardware video encoding without FFmpeg:
 Codec availability depends on the GPU and driver; HEVC/AV1 require hardware
 encoding. Windows vendor runtimes must match the executable architecture.
 See [capture setup](capture.md) and [GameStream codec settings](gamestream.md#ports-and-codecs).
+
+Windows binaries built with `d3d11_precompiled` load the JPEG and RemoteFX
+Progressive encoding/surface shaders from embedded DXBC, without running FXC
+at startup or on reconnect. Other Windows builds compile JPEG shaders before
+starting services and retain DXBC in process memory; Progressive shaders compile
+when their D3D11 encoder is created. `-debug` logs JPEG precompiled DXBC loading,
+or compilation stages and cache hits.
 
 `-tags ffmpeg` plus CGO adds FFmpeg decoding/conversion and media paths. It uses
 libavcodec NVENC/AMF/QSV for Windows encoding and adds
@@ -226,6 +271,39 @@ Hardware/browser tests opt in through their documented environment variables.
 `ANYKVM_TEST_FFMPEG` supplies a test-only independent decoder executable.
 Linux/Windows builds with CGO disabled are portability checks, not media releases.
 Native macOS builds require CGO.
+
+To investigate Windows JPEG shader compile time without a GPU, run:
+
+```powershell
+python tools/profile_jpeg_shader.py --repeats 3
+```
+
+This uses the application's system `d3dcompiler_47.dll` and compares the previous
+two-append bit writer with the current single-append writer, plus diagnostic
+variants that isolate optimization, FF stuffing, AC lookup/scanning and solid
+handling. It also compares the release offline O3 policy without `fastopt` and
+the cross-build runtime O1 policy. `build/shader-profile/report.json` records
+compile times, source and compiler hashes, DXBC size, instruction count and
+temporary registers. DXBC and
+assembly listings are saved alongside it. Diagnostic variants are compile-only
+and must not be loaded for rendering. Each compile runs in a separate process
+with a timeout. `--prepare-only` generates the sources on any OS.
+
+The **Profile JPEG shader compilation** workflow runs the same comparison on
+Windows when these sources change or when started manually. Its artifact is
+`jpeg-shader-compile-profile`; it runs independently of release packaging.
+
+For a Vulkan compiler comparison on macOS/Linux/Windows, using the same glslang
+options as production (`-O`) plus default/disabled optimization comparisons:
+
+```sh
+python3 tools/profile_jpeg_shader_vulkan.py --repeats 7
+python3 tools/profile_jpeg_shader_vulkan.py --diagnostics --repeats 5
+```
+
+The report under `build/shader-profile-vulkan/` includes alternating old/new runs,
+wall time, child CPU time where available, and SPIR-V instruction/control-flow
+counts. These timings describe glslang and do not predict FXC compilation time.
 
 For configuration changes, run the focused first-run and writing-policy checks:
 

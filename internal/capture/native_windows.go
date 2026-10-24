@@ -36,6 +36,7 @@ type windowsDevice struct {
 	mode                          Mode
 	hideCursor                    bool
 	capturePacer                  framePacer
+	diagnosticClock               videotiming.QPCClock
 	fps                           int
 	sourceRate                    framerate.Rate
 	captureRate                   framerate.Rate
@@ -131,6 +132,7 @@ func (d *windowsDevice) OpenWithFormat(w, h, fps int) error {
 	if d.ptr != nil {
 		return fmt.Errorf("Windows capture already open")
 	}
+	d.diagnosticClock = videotiming.QPCClock{}
 	id := C.CString(d.id)
 	defer C.free(unsafe.Pointer(id))
 	var msg [512]C.char
@@ -282,18 +284,23 @@ func (d *windowsDevice) Capture() (*Frame, error) {
 	if isScreenDevice(d.id) {
 		var timing C.bk_win_timing
 		C.bk_win_frame_timing(native, &timing)
+		f.PresentationPTS = qpcPresentationPTS(int64(timing.present), int64(timing.acquired), int64(timing.frequency), timing.repeated != 0)
+		if encodedOutput && f.PresentationPTS == 0 {
+			return nil, fmt.Errorf("%w: Windows desktop QPC timestamp unavailable", ErrStreamStopped)
+		}
 		if timing.accumulated_frames > 1 {
 			d.accumulatedUpdates += uint64(timing.accumulated_frames - 1)
 		}
-		anchor := time.Now()
+		d.diagnosticClock.Observe(int64(timing.now), int64(timing.frequency), time.Now())
+		clock := &d.diagnosticClock
 		mapTime := func(t C.int64_t) time.Time {
-			return videotiming.QPCTime(int64(t), int64(timing.frequency), int64(timing.now), anchor)
+			return clock.Time(int64(t))
 		}
 		if at := videotiming.PictureTime(mapTime(timing.present), mapTime(timing.acquired), timing.repeated != 0); !at.IsZero() {
 			f.CapturedAt = at
 		}
 		if videotiming.Sample() {
-			f.Timing = &videotiming.Trace{Present: mapTime(timing.present), AcquireStart: mapTime(timing.acquire_start), Acquired: mapTime(timing.acquired), CopySubmitted: mapTime(timing.copy_submitted), Anchor: anchor, AnchorQPC: int64(timing.now), Frequency: int64(timing.frequency), Repeated: timing.repeated != 0}
+			f.Timing = &videotiming.Trace{Present: mapTime(timing.present), AcquireStart: mapTime(timing.acquire_start), Acquired: mapTime(timing.acquired), CopySubmitted: mapTime(timing.copy_submitted), Anchor: clock.Anchor, AnchorQPC: clock.Counter, Frequency: clock.Frequency, Repeated: timing.repeated != 0}
 		}
 	}
 	if C.bk_win_frame_kind(native) == 2 && !d.enc.shouldDecode() && !encodedOutput {

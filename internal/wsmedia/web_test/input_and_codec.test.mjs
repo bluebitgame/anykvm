@@ -125,16 +125,16 @@ test('forced H.264 suppresses HEVC even when both decoders are available', async
     socket.onopen();
     const caps = JSON.parse(new TextDecoder().decode(socket.sent.subarray(1)));
     assert.deepEqual(caps, { h264: true, hevc: false, av1: false, audioCodecs: [], audioFormats: [], rawPointer: false });
-    // This decoder stub has no configure(): a runtime failure must keep the
-    // explicit native H.264 request instead of renegotiating JPEG/HEVC.
-    const hello = socket.sent;
+    // This decoder stub has no configure(): a runtime failure must fall back
+    // to JPEG, without trying codecs above the requested H.264 starting point.
     const bytes = readFileSync(new URL('../../testdata/passthrough.h264', import.meta.url));
     const message = new Uint8Array(9 + bytes.length);
     message[0] = 0x10;
     new DataView(message.buffer).setBigUint64(1, BigInt(Date.now()) * 1000n, true);
     message.set(bytes, 9);
     socket.onmessage({ data: message.buffer });
-    assert.equal(socket.sent, hello);
+    const fallback = JSON.parse(new TextDecoder().decode(socket.sent.subarray(1)));
+    assert.deepEqual({ h264: fallback.h264, hevc: fallback.hevc, av1: fallback.av1 }, { h264: false, hevc: false, av1: false });
     assert.equal(audioButton.textContent, '🔈');
     assert.equal(audioButton.disabled, true);
     window.AudioContext = class {
@@ -154,6 +154,106 @@ test('forced H.264 suppresses HEVC even when both decoders are available', async
   } finally {
     globalThis.setInterval = intervals;
   }
+});
+
+let codecPage = 0;
+async function loadCodecPage(t, { codec = 'hevc', supported = ['av1', 'hevc', 'h264'], pathname = '/target/test' } = {}) {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  globalThis.window = surface();
+  window.isSecureContext = true;
+  const nodes = new Map();
+  const element = id => {
+    if (!nodes.has(id)) {
+      const node = surface();
+      node.children = [];
+      node.append = (...children) => node.children.push(...children);
+      nodes.set(id, node);
+    }
+    return nodes.get(id);
+  };
+  const links = [];
+  globalThis.document = {
+    documentElement: surface(), addEventListener() {}, getElementById: element,
+    createElement(tag) {
+      const node = surface();
+      node.append = () => {};
+      if (tag === 'a') links.push(node);
+      return node;
+    },
+  };
+  globalThis.location = { pathname, search: `?codec=${codec}&debug=video`, protocol: 'https:', host: 'localhost' };
+  const decoders = [];
+  globalThis.VideoDecoder = class {
+    static async isConfigSupported(config) {
+      const codec = config.codec.startsWith('hvc1') ? 'hevc' : config.codec.startsWith('avc1') ? 'h264' : 'av1';
+      return { supported: supported.includes(codec) };
+    }
+    constructor(callbacks) { this.callbacks = callbacks; this.state = 'unconfigured'; this.decodeQueueSize = 0; decoders.push(this); }
+    configure(config) { this.config = config; this.state = 'configured'; }
+    decode() {}
+    close() { this.state = 'closed'; }
+  };
+  globalThis.EncodedVideoChunk = class { constructor(config) { Object.assign(this, config); } };
+  let socket;
+  globalThis.WebSocket = class {
+    constructor() { socket = this; this.readyState = 1; this.sent = []; }
+    send(bytes) { this.sent.push(bytes); }
+  };
+  await import(`../web/app.js?codec-page=${++codecPage}`);
+  if (socket) socket.onopen();
+  return {
+    socket, decoders, links,
+    caps() {
+      const hello = socket.sent.filter(bytes => bytes[0] === 0x83).at(-1);
+      const { av1, hevc, h264 } = JSON.parse(new TextDecoder().decode(hello.subarray(1)));
+      return { av1, hevc, h264 };
+    },
+    receive(kind, payload) { socket.onmessage({ data: new Uint8Array([kind, ...payload]).buffer }); },
+  };
+}
+
+test('HEVC preference retains H.264 for either endpoint to fall back', async t => {
+  const page = await loadCodecPage(t);
+  assert.deepEqual(page.caps(), { av1: false, hevc: true, h264: true });
+});
+
+test('unsupported HEVC skips directly to H.264 capability, not JPEG', async t => {
+  const page = await loadCodecPage(t, { supported: ['h264'] });
+  assert.deepEqual(page.caps(), { av1: false, hevc: false, h264: true });
+});
+
+test('decoder failures descend AV1 -> HEVC -> H.264 -> JPEG and persist on reconnect', async t => {
+  const page = await loadCodecPage(t, { codec: 'av1' });
+  assert.deepEqual(page.caps(), { av1: true, hevc: true, h264: true });
+  const codec = new TextEncoder().encode('av01.0.08M.08');
+  page.receive(0x12, [1, codec.length, ...codec, 0x12]);
+  page.decoders.at(-1).callbacks.error(new Error('AV1 unavailable'));
+  assert.deepEqual(page.caps(), { av1: false, hevc: true, h264: true });
+  const hevc = readFileSync(new URL('../../testdata/passthrough.hevc', import.meta.url));
+  const timedHEVC = new Uint8Array(8 + hevc.length);
+  new DataView(timedHEVC.buffer).setBigUint64(0, 1791655600123456n, true);
+  timedHEVC.set(hevc, 8);
+  page.receive(0x11, timedHEVC);
+  assert.match(page.decoders.at(-1).config.codec, /^hvc1/);
+  page.decoders.at(-1).callbacks.error(new Error('HEVC unavailable'));
+  assert.deepEqual(page.caps(), { av1: false, hevc: false, h264: true });
+  const h264 = readFileSync(new URL('../../testdata/passthrough.h264', import.meta.url));
+  const timed = new Uint8Array(8 + h264.length);
+  new DataView(timed.buffer).setBigUint64(0, BigInt(Date.now()) * 1000n, true);
+  timed.set(h264, 8);
+  page.receive(0x10, timed);
+  assert.match(page.decoders.at(-1).config.codec, /^avc1/);
+  page.decoders.at(-1).callbacks.error(new Error('H.264 unavailable'));
+  assert.deepEqual(page.caps(), { av1: false, hevc: false, h264: false });
+  page.socket.onopen();
+  assert.deepEqual(page.caps(), { av1: false, hevc: false, h264: false });
+});
+
+test('target picker preserves codec preference and diagnostics in target links', async t => {
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ targets: [{ name: 'Windows PC', cover: '/cover' }] }) }));
+  const page = await loadCodecPage(t, { pathname: '/' });
+  await new Promise(setImmediate);
+  assert.equal(page.links[0].href, '/target/Windows%20PC?codec=hevc&debug=video');
 });
 
 test('keyboard releases held keys when focus moves within the page', async () => {

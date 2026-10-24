@@ -99,7 +99,7 @@ int main(void) {
         int result = bk_kms_next(&k, &f, error, sizeof(error));
         if (scenario == 0) {
             assert(result == 0 && f.fd == 93 && f.rotation == 270 && f.crop_width == 1280 && handles_closed == 1 &&
-                   !fd_closed);
+                   !fd_closed && f.pts_us > 0);
             fixture_close(f.fd);
         } else {
             assert(result < 0 && error[0] && f.fd == -1);

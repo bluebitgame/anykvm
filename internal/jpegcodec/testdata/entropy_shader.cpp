@@ -44,7 +44,43 @@ void InterlockedAdd(uint &destination,uint value,uint &old) {
     std::lock_guard<std::mutex> lock(scanAtomicMutex);old=destination;destination+=value;
 }
 #include "entropy_shader.hpp"
-int main() {
+
+// Independent bit-at-a-time oracle covers every old bit/byte alignment, long
+// 33/34-bit appends, FF stuffing and four-byte writes starting at word offset 0.
+int testBitWriter() {
+    for(uint previousBytes=0;previousBytes<4;previousBytes++)
+    for(uint previousBits=0;previousBits<8;previousBits++)
+    for(uint count=0;count<=27;count++)
+    for(uint pattern : {0u,0xffffffffu,0xaaaaaaaaU,0x55555555U,0xff00ff00U,0x00ff00ffU})
+    for(uint prefix : {0u,0x7fu}) {
+        entropySegments.words.assign(SEGMENT_CAPACITY/4,0);
+        entropySegments.forbidden.clear();
+        EntropyWriter writer{};
+        std::vector<uint8_t> expected;
+        for(uint i=0;i<previousBytes;i++){writeByte(writer,0x5a);expected.push_back(0x5a);}
+        uint byte=0,bits=0;
+        auto reference=[&](uint value,uint n) {
+            for(uint i=n;i>0;i--) {
+                byte=(byte<<1)|((value>>(i-1))&1u);
+                if(++bits==8){expected.push_back(byte);if(byte==255)expected.push_back(0);byte=0;bits=0;}
+            }
+        };
+        uint first=prefix&((1u<<previousBits)-1u),value=pattern&((1u<<count)-1u);
+        reference(first,previousBits);writeBits(writer,first,previousBits);
+        reference(value,count);writeBits(writer,value,count);
+        if(bits){uint n=8-bits;reference((1u<<n)-1u,n);writeBits(writer,(1u<<n)-1u,n);}
+        if(writer.wordBytes)entropySegments.Store(writer.byteCount-writer.wordBytes,writer.pendingWord);
+        const auto *actual=reinterpret_cast<const uint8_t *>(entropySegments.words.data());
+        if(writer.failed||writer.byteCount!=expected.size()||!std::equal(expected.begin(),expected.end(),actual)) {
+            std::cerr<<"bit writer mismatch: bytes="<<previousBytes<<" bits="<<previousBits<<" count="<<count<<" pattern="<<pattern;
+            return 14;
+        }
+    }
+    return 0;
+}
+
+int main(int argc,char **argv) {
+    if(argc==2&&std::string(argv[1])=="writer")return testBitWriter();
     try {
         for (;;) {
             std::cin.read((char *)&mcuCount,4);

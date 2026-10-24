@@ -11,6 +11,7 @@ void *bk_screen_open(int index, unsigned int display_id, int width, int height, 
 int bk_screen_audio_read(void *screen, void *out, int capacity, char *error, int error_size);
 int bk_screen_take_geometry(void *screen, void **lease, void **data, void **pixel, int *size, int *w, int *h, int *sw, int *sh, int *content_rect, long long *age_ns, char *error, int error_size);
 void bk_screen_release(void *lease);
+long long bk_screen_lease_pts(void *lease);
 void bk_screen_lease_timing(void *lease, long long *present, long long *display, long long *acquired, long long *submitted, long long *completed, long long *now, int *repeated);
 void bk_screen_lease_texture_timing(void *lease, long long *ready_start, long long *ready_end, long long *imported);
 int bk_screen_copy_pixel(void *pixel, int nv12, unsigned char *dest, size_t size);
@@ -444,7 +445,7 @@ func (d *screenDevice) Capture() (*Frame, error) {
 	if size <= 0 || size > 256*1024*1024 {
 		return nil, fmt.Errorf("ScreenCaptureKit: invalid frame size")
 	}
-	f := &Frame{CapturedAt: capturedAt, Width: int(w), Height: int(h), SourceWidth: int(sw), SourceHeight: int(sh), Format: FormatRaw}
+	f := &Frame{CapturedAt: capturedAt, PresentationPTS: int64(C.bk_screen_lease_pts(lease)), Width: int(w), Height: int(h), SourceWidth: int(sw), SourceHeight: int(sh), Format: FormatRaw}
 	if pixel != nil && d.jpegRegions && d.codec != "nv12" {
 		var damage C.bk_screen_damage
 		if C.bk_screen_lease_damage(lease, &damage) != 0 {

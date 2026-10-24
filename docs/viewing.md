@@ -10,9 +10,12 @@ The browser uses the configured `web.http`/`web.https` listener. The default is
 [http://127.0.0.1:8080/](http://127.0.0.1:8080/).
 
 H.264/HEVC/AV1 need compatible WebCodecs support on localhost or HTTPS; JPEG
-works without WebCodecs. `?codec=h264`, `hevc`, `av1` or `jpeg` selects a path
-where supported. AV1 also requires `web.codecs.av1: true` and an available
-source/encoder.
+works without WebCodecs. Selection falls back in the order AV1 → HEVC → H.264
+→ JPEG, subject to browser support and the server's enabled codecs. `?codec=av1`,
+`hevc`, `h264` or `jpeg` chooses the starting point: `?codec=hevc` tries HEVC,
+then H.264, then JPEG. Decoder failures also move down this order. Target picker
+links preserve these query parameters. AV1 also requires `web.codecs.av1: true`
+and an available source/encoder.
 
 The toolbar toggles fullscreen. Ctrl+Alt+Shift+X (Control+Option+Shift+X on macOS)
 toggles video-only fullscreen. Escape forwarding depends on browser keyboard-lock
@@ -25,6 +28,15 @@ and AV1: 0=auto (one picture), or 1..8. Capacity 1 presents the latest decoded
 picture on the next browser refresh. Larger values use source timestamps to
 pace a bounded queue, dropping stale decoded pictures when needed. Compressed
 prediction references stay ordered. Changes apply to new Web connections.
+
+H.264 and HEVC carry the server frame's source presentation timestamp through
+WebCodecs to this queue. Windows desktop uses QPC-relative microseconds directly,
+independent of Go diagnostic timestamps, with the same fixed origin across
+capture reopen and codec changes. Browser arrival time is not substituted for
+source PTS; the local browser clock schedules refreshes and measures processing time.
+macOS supplies native host-clock playback time. Linux uses monotonic V4L2 driver
+timestamps when available, or native monotonic capture time for KMS/unknown
+device clocks. KMS capture time is not an actual presentation/vblank timestamp.
 
 Add `?debug=video`, or `&debug=video` after a codec parameter, for H.264/HEVC
 received/decoded/drawn FPS, bitrate, decoder pressure, display-queue depth,

@@ -39,7 +39,7 @@ TARGETS = {
     "pico-ps2": ("pico", "pico-ps2", "pico", "anykvm-ps2"),
     "pico2-ps2": ("pico", "pico-ps2", "pico2", "anykvm-ps2"),
     "rp2350-usb-a": ("pico", "rp2350-usb-a", "pico2", "anykvm"),
-    "nrf52840-ble": ("nrf", "nrf52840-ble", "xiao_ble", "zephyr"),
+    "nrf52840-xiao": ("nrf", "nrf52840-ble", "xiao_ble", "zephyr"),
     "nrf52840-feather": ("nrf", "nrf52840-ble", "adafruit_feather_nrf52840", "zephyr"),
     "nrf52840-dongle": ("nrf", "nrf52840-ble", "nrf52840dongle_nrf52840", "zephyr"),
     "esp32s3-ble": ("esp32", "esp32s3-ble/anykvm_ble", ESP32_FQBN, "anykvm_ble.ino"),

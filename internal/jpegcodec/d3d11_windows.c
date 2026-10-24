@@ -29,6 +29,8 @@ struct bk_jpeg_gpu {
     jpeg_buffer coefficients, segments, segment_info, output, arguments, previous_pixels, dirty_tiles;
     bk_jpeg_parameters cached_parameters;
     int cache_valid;
+    int debug;
+    UINT compile_stage_index;
     uintptr_t handle;
     UINT header_capacity, readback_capacity;
 };
@@ -78,29 +80,223 @@ void bk_jpeg_gpu_close(bk_jpeg_gpu *e) {
 typedef HRESULT (WINAPI *compile_fn)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO *,
     ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
 
+// Retain device-independent bytecode, never devices/textures or DLL-owned
+// blobs. Reopening a capture session must not run the FXC optimizer again.
+typedef struct {
+    char entry[32];
+    char *source;
+    size_t source_size;
+    void *bytes;
+    size_t bytes_size;
+} jpeg_shader_cache_entry;
+static SRWLOCK jpeg_shader_cache_lock = SRWLOCK_INIT;
+static jpeg_shader_cache_entry jpeg_shader_cache[10];
+
+static jpeg_shader_cache_entry *shader_cache_slot(const char *entry) {
+    for (UINT i = 0; i < 10; i++) {
+        if (!jpeg_shader_cache[i].entry[0] || !strcmp(jpeg_shader_cache[i].entry, entry))
+            return &jpeg_shader_cache[i];
+    }
+    return NULL;
+}
+
+static int shader_cache_matches(jpeg_shader_cache_entry *slot, const char *source, size_t size) {
+    return slot && slot->source && slot->source_size == size && !memcmp(slot->source, source, size);
+}
+
+static void shader_cache_save(jpeg_shader_cache_entry *slot, const char *source, size_t size,
+                               const char *entry, const void *bytes, size_t bytes_size) {
+    if (!slot) return;
+    char *saved_source = (char *)malloc(size);
+    void *saved_bytes = malloc(bytes_size);
+    if (!saved_source || !saved_bytes) { free(saved_source); free(saved_bytes); return; }
+    memcpy(saved_source, source, size);
+    memcpy(saved_bytes, bytes, bytes_size);
+    free(slot->source); free(slot->bytes);
+    slot->source = saved_source; slot->source_size = size;
+    slot->bytes = saved_bytes; slot->bytes_size = bytes_size;
+    snprintf(slot->entry, sizeof(slot->entry), "%s", entry);
+}
+
 static HRESULT compile_stage(bk_jpeg_gpu *e, compile_fn compile, const char *source, size_t size,
                               const char *entry, ID3D11ComputeShader **shader, char *error, size_t capacity) {
     ID3DBlob *code = NULL, *messages = NULL;
-    HRESULT hr = compile(source, size, "anykvm-jpeg", NULL, NULL, entry, "cs_5_0",
-        D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &messages);
-    if (SUCCEEDED(hr))
-        hr = ID3D11Device_CreateComputeShader(e->device, ID3D10Blob_GetBufferPointer(code),
-                                              ID3D10Blob_GetBufferSize(code), NULL, shader);
-    if (FAILED(hr) && messages)
-        snprintf(error, capacity, "JPEG %s: %.*s", entry, (int)ID3D10Blob_GetBufferSize(messages),
-                 (char *)ID3D10Blob_GetBufferPointer(messages));
+    UINT stage = ++e->compile_stage_index;
+    ULONGLONG started = GetTickCount64();
+    HRESULT hr = S_OK;
+    AcquireSRWLockExclusive(&jpeg_shader_cache_lock);
+    jpeg_shader_cache_entry *cached = shader_cache_slot(entry);
+    int hit = shader_cache_matches(cached, source, size);
+    if (e->debug) {
+        fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: %s\n", stage, entry,
+                hit ? "bytecode cache hit" : "compile started");
+        fflush(stderr);
+    }
+    const void *bytes = hit ? cached->bytes : NULL;
+    size_t bytes_size = hit ? cached->bytes_size : 0;
+compile_again:
+    if (!hit) {
+#ifdef BK_JPEG_PRECOMPILED
+        // Decode shaders still compile at runtime in an offline-encoder build.
+        // Keep their release optimization level; only cross-builds use O1.
+        const D3D_SHADER_MACRO *macros = NULL;
+        const UINT optimization = D3DCOMPILE_OPTIMIZATION_LEVEL3;
+#else
+        const D3D_SHADER_MACRO macros[] = {{"ANYKVM_RUNTIME_COMPILE", "1"}, {NULL, NULL}};
+        const UINT optimization = D3DCOMPILE_OPTIMIZATION_LEVEL1;
+#endif
+        hr = compile(source, size, "anykvm-jpeg", macros, NULL, entry, "cs_5_0",
+            optimization | D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &messages);
+        if (e->debug) {
+            fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: compile %s in %llums (0x%08lx)\n",
+                    stage, entry, SUCCEEDED(hr) ? "finished" : "failed",
+                    (unsigned long long)(GetTickCount64() - started), (unsigned long)hr);
+            fflush(stderr);
+        }
+        if (SUCCEEDED(hr)) {
+            bytes = ID3D10Blob_GetBufferPointer(code);
+            bytes_size = ID3D10Blob_GetBufferSize(code);
+            shader_cache_save(cached, source, size, entry, bytes, bytes_size);
+        }
+    }
+    if (FAILED(hr)) {
+        const char *diagnostic = messages ? (const char *)ID3D10Blob_GetBufferPointer(messages) : NULL;
+        // Prefer the first error line over warnings preceding it in FXC output.
+        const char *first_error = diagnostic ? strstr(diagnostic, ": error ") : NULL;
+        if (first_error) {
+            while (first_error > diagnostic && first_error[-1] != '\n') first_error--;
+            diagnostic = first_error;
+        }
+        snprintf(error, capacity, "JPEG %s compile (0x%08lx): %s", entry, (unsigned long)hr,
+                 diagnostic ? diagnostic : "no compiler diagnostics");
+    } else if (e->device) {
+        ULONGLONG create_started = GetTickCount64();
+        if (e->debug) {
+            fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: CreateComputeShader started\n", stage, entry);
+            fflush(stderr);
+        }
+        hr = ID3D11Device_CreateComputeShader(e->device, bytes, bytes_size, NULL, shader);
+        if (FAILED(hr) && hit) {
+            if (e->debug) {
+                fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: cached DXBC rejected (0x%08lx); recompiling\n",
+                        stage, entry, (unsigned long)hr);
+                fflush(stderr);
+            }
+            free(cached->source); free(cached->bytes);
+            cached->source = NULL; cached->source_size = 0;
+            cached->bytes = NULL; cached->bytes_size = 0;
+            hit = 0;
+            started = GetTickCount64();
+            goto compile_again;
+        }
+        if (FAILED(hr))
+            snprintf(error, capacity, "JPEG %s CreateComputeShader failed (0x%08lx)", entry, (unsigned long)hr);
+        if (e->debug) {
+            fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: CreateComputeShader %s in %llums (0x%08lx)\n",
+                    stage, entry, SUCCEEDED(hr) ? "finished" : "failed",
+                    (unsigned long long)(GetTickCount64() - create_started), (unsigned long)hr);
+            fflush(stderr);
+        }
+    }
     DROP(ID3D10Blob, code);
     DROP(ID3D10Blob, messages);
+    ReleaseSRWLockExclusive(&jpeg_shader_cache_lock);
     return hr;
 }
 
+#ifdef BK_JPEG_PRECOMPILED
+#include "jpeg420_dxbc.h"
+
+static HRESULT load_encoding_stage(bk_jpeg_gpu *e, compile_fn compile, const char *source, size_t size,
+                                    const char *entry, ID3D11ComputeShader **shader, char *error, size_t capacity) {
+    (void)compile; (void)source; (void)size;
+    UINT stage = ++e->compile_stage_index;
+    const bk_jpeg_dxbc_stage *code = NULL;
+    for (size_t i = 0; i < sizeof(bk_jpeg_dxbc_stages) / sizeof(bk_jpeg_dxbc_stages[0]); i++) {
+        if (!strcmp(bk_jpeg_dxbc_stages[i].entry, entry)) { code = &bk_jpeg_dxbc_stages[i]; break; }
+    }
+    if (!code) { snprintf(error, capacity, "JPEG %s precompiled DXBC missing", entry); return E_FAIL; }
+    if (e->debug) {
+        fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: precompiled DXBC\n", stage, entry);
+        fflush(stderr);
+    }
+    if (!e->device) return S_OK;
+    ULONGLONG started = GetTickCount64();
+    if (e->debug) {
+        fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: CreateComputeShader started\n", stage, entry);
+        fflush(stderr);
+    }
+    HRESULT hr = ID3D11Device_CreateComputeShader(e->device, code->bytes, code->size, NULL, shader);
+    if (FAILED(hr)) snprintf(error, capacity, "JPEG %s CreateComputeShader failed (0x%08lx)", entry, (unsigned long)hr);
+    if (e->debug) {
+        fprintf(stderr, "jpegcodec: D3D11 shader [%u/10] %s: CreateComputeShader %s in %llums (0x%08lx)\n",
+                stage, entry, SUCCEEDED(hr) ? "finished" : "failed",
+                (unsigned long long)(GetTickCount64() - started), (unsigned long)hr);
+        fflush(stderr);
+    }
+    return hr;
+}
+#else
+#define load_encoding_stage compile_stage
+#endif
+
+static HRESULT compile_shaders(bk_jpeg_gpu *e, compile_fn compile, const char *source, size_t size,
+                                char *error, size_t capacity) {
+    HRESULT hr;
+    TRY(load_encoding_stage(e, compile, source, size, "selectEntropy", &e->select_entropy, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "prepareEntropy", &e->prepare_entropy, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "prepareWork", &e->work, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "compareTiles", &e->compare, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "main", &e->transform, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "encodeMCUs", &e->entropy, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "indexSegments", &e->index, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "scanSegmentGroups", &e->scan_groups, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "addSegmentOffsets", &e->add_offsets, error, capacity));
+    TRY(load_encoding_stage(e, compile, source, size, "packJPEG", &e->pack, error, capacity));
+done:
+    return hr;
+}
+
+int bk_jpeg_gpu_prepare_shaders(const char *source, size_t size, int debug, char *error, size_t capacity) {
+    bk_jpeg_gpu pending = {0};
+    pending.debug = debug;
+#ifdef BK_JPEG_PRECOMPILED
+    return SUCCEEDED(compile_shaders(&pending, NULL, source, size, error, capacity));
+#else
+    HMODULE compiler = LoadLibraryExW(L"d3dcompiler_47.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!compiler) {
+        snprintf(error, capacity, "load D3DCompiler for JPEG shaders failed (0x%08lx)",
+                 (unsigned long)HRESULT_FROM_WIN32(GetLastError()));
+        return 0;
+    }
+    compile_fn compile = (compile_fn)(void *)GetProcAddress(compiler, "D3DCompile");
+    HRESULT hr = compile ? compile_shaders(&pending, compile, source, size, error, capacity) : E_NOINTERFACE;
+    // Cache entries own their bytecode; all compiler-owned blobs are already
+    // released, and no D3D device or capture resources were created.
+    FreeLibrary(compiler);
+    if (FAILED(hr) && !error[0]) snprintf(error, capacity, "prepare D3D11 JPEG shaders failed (0x%08lx)", (unsigned long)hr);
+    return SUCCEEDED(hr);
+#endif
+}
+
 bk_jpeg_gpu *bk_jpeg_gpu_open(uint64_t luid, const char *source, size_t size, char *error, size_t capacity) {
+    return bk_jpeg_gpu_open_debug(luid, source, size, 0, error, capacity);
+}
+
+bk_jpeg_gpu *bk_jpeg_gpu_open_debug(uint64_t luid, const char *source, size_t size, int debug, char *error, size_t capacity) {
     bk_jpeg_gpu *e = calloc(1, sizeof(*e));
     if (!e) { snprintf(error, capacity, "GPU JPEG allocation failed"); return NULL; }
+    e->debug = debug;
+    ULONGLONG started = GetTickCount64();
+    if (debug) {
+        fprintf(stderr, "jpegcodec: D3D11 JPEG initialization started (adapter=0x%llx)\n", (unsigned long long)luid);
+        fflush(stderr);
+    }
     HRESULT hr = E_FAIL;
     IDXGIFactory1 *factory = NULL;
     IDXGIAdapter1 *adapter = NULL;
     HMODULE compiler = NULL;
+    compile_fn compile = NULL;
     TRY(CreateDXGIFactory1(&IID_IDXGIFactory1, (void **)&factory));
     for (UINT i = 0;; i++) {
         TRY(IDXGIFactory1_EnumAdapters1(factory, i, &adapter));
@@ -114,20 +310,13 @@ bk_jpeg_gpu *bk_jpeg_gpu_open(uint64_t luid, const char *source, size_t size, ch
     D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;
     TRY(D3D11CreateDevice((IDXGIAdapter *)adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
         D3D11_CREATE_DEVICE_BGRA_SUPPORT, &level, 1, D3D11_SDK_VERSION, &e->device, NULL, &e->context));
+#ifndef BK_JPEG_PRECOMPILED
     compiler = LoadLibraryExW(L"d3dcompiler_47.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!compiler) { hr = HRESULT_FROM_WIN32(GetLastError()); goto done; }
-    compile_fn compile = (compile_fn)(void *)GetProcAddress(compiler, "D3DCompile");
+    compile = (compile_fn)(void *)GetProcAddress(compiler, "D3DCompile");
     if (!compile) { hr = E_NOINTERFACE; goto done; }
-    TRY(compile_stage(e, compile, source, size, "selectEntropy", &e->select_entropy, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "prepareEntropy", &e->prepare_entropy, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "prepareWork", &e->work, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "compareTiles", &e->compare, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "main", &e->transform, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "encodeMCUs", &e->entropy, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "indexSegments", &e->index, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "scanSegmentGroups", &e->scan_groups, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "addSegmentOffsets", &e->add_offsets, error, capacity));
-    TRY(compile_stage(e, compile, source, size, "packJPEG", &e->pack, error, capacity));
+#endif
+    TRY(compile_shaders(e, compile, source, size, error, capacity));
     D3D11_BUFFER_DESC desc = {0};
     desc.ByteWidth = sizeof(bk_jpeg_parameters);
     desc.Usage = D3D11_USAGE_DEFAULT;
@@ -139,6 +328,11 @@ bk_jpeg_gpu *bk_jpeg_gpu_open(uint64_t luid, const char *source, size_t size, ch
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     TRY(ID3D11Device_CreateBuffer(e->device, &desc, NULL, &e->length_readback));
 done:
+    if (debug) {
+        fprintf(stderr, "jpegcodec: D3D11 JPEG initialization %s in %llums (0x%08lx)\n",
+                SUCCEEDED(hr) ? "finished" : "failed", (unsigned long long)(GetTickCount64() - started), (unsigned long)hr);
+        fflush(stderr);
+    }
     if (FAILED(hr) && !error[0]) snprintf(error, capacity, "D3D11 JPEG initialization failed (0x%08lx)", (unsigned long)hr);
     if (compiler) FreeLibrary(compiler);
     DROP(IDXGIAdapter1, adapter);

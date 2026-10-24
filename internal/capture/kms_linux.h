@@ -5,6 +5,7 @@
 typedef struct bk_kms bk_kms;
 typedef struct {
     int fd;
+    int64_t pts_us; /* Native CLOCK_MONOTONIC acquisition time, not a vblank/Present timestamp. */
     uint32_t planes, pitches[4], offsets[4];
     uint32_t width, height, fourcc, pitch, offset, fb_id;
     uint64_t modifier, size;

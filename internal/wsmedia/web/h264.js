@@ -63,7 +63,7 @@ export class H264Player {
   static async supported() {
     if (typeof VideoDecoder !== 'function') return false;
     try {
-      return (await VideoDecoder.isConfigSupported({ codec: 'avc1.42e01f', optimizeForLatency: true })).supported;
+      return (await VideoDecoder.isConfigSupported({ codec: 'avc1.42e01f', optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' })).supported;
     } catch { return false; }
   }
 
@@ -122,6 +122,7 @@ export class H264Player {
       codedWidth: this._w || undefined,
       codedHeight: this._h || undefined,
       optimizeForLatency: true,
+      hardwareAcceleration: 'prefer-hardware',
     });
   }
 

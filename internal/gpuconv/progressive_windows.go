@@ -3,6 +3,7 @@
 package gpuconv
 
 /*
+#cgo d3d11_precompiled CFLAGS: -DBK_PROGRESSIVE_PRECOMPILED
 #cgo LDFLAGS: -ld3d11 -ldxgi -ldxguid
 #include "progressive_windows.h"
 #include <stdlib.h>

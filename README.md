@@ -4,7 +4,7 @@ AnyKVM is a Go application for capturing and remotely controlling computers and
 devices on macOS, Windows and Linux, configured through one YAML file.
 
 - **Capture:** desktop screens, cameras/capture cards, VNC/RTSP/RDP/ARD,
-  Linux local SPICE GL (experimental), Android (scrcpy), and iPhone/iPad
+  Linux SPICE (local GL / remote TCP, experimental), Android (scrcpy), and iPhone/iPad
   (USB, CoreDevice and AirPlay).
 - **View and control:** browser, VNC, RDP, GameStream/Moonlight, or an optional
   SDL2 local viewer, with multiple targets and viewer takeover.
@@ -54,7 +54,7 @@ default. Platform capture/input permissions are covered in the setup guides.
 - [Android capture, audio and control](docs/android.md).
 - Remote sources: [VNC/RTSP/RDP and Wake-on-LAN](docs/network-sources.md),
   [Apple Screen Sharing / ARD](docs/ard-client.md),
-  [Linux SPICE GL / DMA-BUF](docs/spice-source.md).
+  [Linux SPICE](docs/spice-source.md).
 - iPhone/iPad: [USB and CoreDevice](docs/iphone-coredevice.md),
   [AirPlay](docs/iphone-airplay.md).
 - Viewer access: [Web, VNC and local viewer](docs/viewing.md),

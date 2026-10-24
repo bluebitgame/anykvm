@@ -7,6 +7,7 @@ extern void frame_buf_reset(void);
 extern void frame_buf_destroy(void);
 extern void frame_buf_store_sample(CMSampleBufferRef);
 extern int frame_buf_take(void **, long long *, int);
+extern int frame_buf_take_timed(void **, long long *, long long *, int);
 extern int frame_buf_count(void);
 
 // Exercise the actual native queue with a sample requiring no camera or TCC.
@@ -31,7 +32,9 @@ int main(void) {
             frame_buf_reset();
             frame_buf_store_sample(sample);
             assert(frame_buf_count() == before + 1);
-            assert(frame_buf_take(&received, &age, 0) == 1);
+            long long pts_us = 0;
+            assert(frame_buf_take_timed(&received, &age, &pts_us, 0) == 1);
+            assert(pts_us > 0);
             assert(received == (void *)sample);
             CFRelease(received);
 

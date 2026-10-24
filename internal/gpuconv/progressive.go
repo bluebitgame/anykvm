@@ -5,10 +5,12 @@ import "fmt"
 // ProgressiveMetadata validates the shared six-buffer compute ABI. Input is a
 // batch of at most eight padded 64x64 BGRA/NV12 tiles, never a complete desktop.
 // Pass 0 emits SIMPLE, 1 emits FIRST, 2 refines the cached FIRST coefficients.
+// Metadata word 3 selects 0x100/0x101/0x102 for the 50%/75%/100% stages;
+// values 1..4 retain the legacy uniform-precision fixture ABI.
 func ProgressiveMetadata(input []byte, meta []uint32) (int, error) {
 	if len(meta) != 16 || meta[0] < 1 || meta[0] > 8 || meta[1] > 1 || meta[2] < 6 || meta[2] > 15 ||
 		meta[4] > 2 || meta[5] < 1 || meta[5] > (128<<20)/(12288*4) ||
-		(meta[4] != 0 && (meta[3] < 1 || meta[3] > 4)) {
+		(meta[4] != 0 && !progressiveStageValid(meta[3], meta[4])) {
 		return 0, fmt.Errorf("invalid Progressive compute metadata")
 	}
 	bytes := int(meta[0]) * 16384
@@ -44,4 +46,8 @@ func ProgressiveMetadata(input []byte, meta []uint32) (int, error) {
 		}
 	}
 	return int(meta[5]) * 12288 * 4, nil
+}
+
+func progressiveStageValid(stage, pass uint32) bool {
+	return stage >= 1 && stage <= 4 || pass == 1 && stage == 0x100 || pass == 2 && (stage == 0x101 || stage == 0x102)
 }

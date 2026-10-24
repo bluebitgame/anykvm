@@ -36,7 +36,9 @@ func TestLatestCapturePreservesPredictionReferences(t *testing.T) {
 }
 
 func TestFrameWindowSelectsFreshCaptureAfterAck(t *testing.T) {
-	c := &client{done: make(chan struct{}), frames: make(chan bridge.Frame, 1), ack: make(chan struct{}, 1), sent: 2}
+	c := &client{done: make(chan struct{}), frames: make(chan bridge.Frame, 1), ack: make(chan struct{}, 1)}
+	c.nextGraphicsFrame()
+	c.nextGraphicsFrame()
 	defer close(c.done)
 	result := make(chan bridge.Frame, 1)
 	go func() {
@@ -52,10 +54,9 @@ func TestFrameWindowSelectsFreshCaptureAfterAck(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 	c.frames <- bridge.Frame{Data: []byte{2}}
-	c.ackMu.Lock()
-	c.acknowledged = 1
-	c.ackMu.Unlock()
-	c.ack <- struct{}{}
+	if err := c.acknowledgeFrame(1, 0); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case f := <-result:
 		if f.Data[0] != 2 {
@@ -67,7 +68,9 @@ func TestFrameWindowSelectsFreshCaptureAfterAck(t *testing.T) {
 }
 
 func TestFrameWindowReleasesOldCaptureBeforeAck(t *testing.T) {
-	c := &client{done: make(chan struct{}), frames: make(chan bridge.Frame, 1), ack: make(chan struct{}, 1), sent: 2}
+	c := &client{done: make(chan struct{}), frames: make(chan bridge.Frame, 1), ack: make(chan struct{}, 1)}
+	c.nextGraphicsFrame()
+	c.nextGraphicsFrame()
 	defer close(c.done)
 	freed := make(chan byte, 3)
 	frame := func(id byte) bridge.Frame {
@@ -92,10 +95,9 @@ func TestFrameWindowReleasesOldCaptureBeforeAck(t *testing.T) {
 			t.Fatal("ACK wait exhausted the capture pool with an old snapshot")
 		}
 	}
-	c.ackMu.Lock()
-	c.acknowledged = 1
-	c.ackMu.Unlock()
-	c.ack <- struct{}{}
+	if err := c.acknowledgeFrame(1, 0); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case f := <-result:
 		if f.Data[0] != 3 {

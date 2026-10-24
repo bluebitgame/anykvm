@@ -548,6 +548,12 @@ func (s *Server) addClient(c *wsClient) {
 func (s *Server) activateClient(c *wsClient) {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
+	s.activateClientLocked(c)
+}
+
+// Caller holds lifecycleMu, including capability selection on hello. Otherwise
+// the previous last client's disconnect can reset that selection before start.
+func (s *Server) activateClientLocked(c *wsClient) {
 	s.mu.Lock()
 	if _, present := s.clients[c]; !present || c.active {
 		s.mu.Unlock()
@@ -560,11 +566,17 @@ func (s *Server) activateClient(c *wsClient) {
 	default:
 	}
 	c.active = true
+	recovery := c.videoRecovery
 	first := s.activeClients == 0
 	s.activeClients++
 	s.mu.Unlock()
 	if first && s.cfg.OnClientConnected != nil {
 		s.cfg.OnClientConnected()
+	}
+	// A reconnect may join a running encoder on a static desktop, with no new
+	// picture to trigger an IDR. Every new decoder needs its own recovery frame.
+	if recovery && s.cfg.OnVideoKeyframeRequested != nil {
+		s.cfg.OnVideoKeyframeRequested()
 	}
 }
 
@@ -638,9 +650,7 @@ func (s *Server) handleInput(c *wsClient, data []byte) {
 	case msgInputMouse, msgInputMouseRelative:
 		s.handlePointer(c, data)
 	case msgHello:
-		if s.handleHello(data[1:], c) {
-			s.activateClient(c)
-		}
+		s.handleClientHello(c, data[1:])
 	case msgKeyframeReq:
 		if s.cfg.OnVideoKeyframeRequested != nil && time.Since(c.lastKeyframeRequest) >= 500*time.Millisecond {
 			c.lastKeyframeRequest = time.Now()
@@ -652,6 +662,25 @@ func (s *Server) handleInput(c *wsClient, data []byte) {
 				c.lastVideoDiagnostics = time.Now()
 			}
 		}
+	}
+}
+
+func (s *Server) handleClientHello(c *wsClient, body []byte) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.mu.Lock()
+	_, present := s.clients[c]
+	s.mu.Unlock()
+	if !present {
+		return
+	}
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+	if s.handleHello(body, c) {
+		s.activateClientLocked(c)
 	}
 }
 
@@ -846,6 +875,7 @@ func (s *Server) handleHello(body []byte, clients ...*wsClient) bool {
 	s.codecsMu.RUnlock()
 	if len(clients) > 0 {
 		s.mu.Lock()
+		clients[0].videoRecovery = caps.H264 || caps.HEVC || caps.AV1
 		clients[0].audioCodecs = make(map[string]bool)
 		clients[0].audioFormats = nil
 		if caps.AudioFormats != nil {
@@ -993,15 +1023,22 @@ func (s *Server) broadcastVideo(f bridge.Frame, header []byte, ordered bool, sto
 	if f.Buffer == nil {
 		payload = owner.Bytes()
 	}
-	if len(header) == 1 && header[0] == msgH264 {
-		stamp := f.CapturedAt.UnixMicro()
-		// Sources without a usable PTS still carry a timestamp. Keep its value
-		// exactly representable in browser Number values.
-		if f.CapturedAt.IsZero() || stamp <= 0 || stamp > 1<<53-1 {
-			stamp = time.Now().UnixMicro()
+	if len(header) == 1 && (header[0] == msgH264 || header[0] == msgHEVC) {
+		stamp := f.PresentationPTS
+		if stamp == 0 {
+			// Legacy sources without an independent playback clock keep their
+			// existing timestamp. Windows QPC frames never take this path.
+			stamp = f.CapturedAt.UnixMicro()
+			if f.CapturedAt.IsZero() || stamp <= 0 || stamp > 1<<53-1 {
+				stamp = time.Now().UnixMicro()
+			}
+		} else if stamp < 0 || stamp > 1<<53-1 {
+			// Do not replace an invalid source clock with a different clock domain.
+			return
 		}
+		kind := header[0]
 		header = make([]byte, 9)
-		header[0] = msgH264
+		header[0] = kind
 		binary.LittleEndian.PutUint64(header[1:], uint64(stamp))
 	}
 	for _, c := range clients {

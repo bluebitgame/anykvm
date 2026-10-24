@@ -69,6 +69,31 @@ func QPCTime(ticks, frequency, anchorTicks int64, anchor time.Time) time.Time {
 	return anchor.Add(time.Duration(seconds)*time.Second + time.Duration(float64(remainder)*float64(time.Second)/float64(frequency)))
 }
 
+// QPCClock keeps one QPC-to-Go mapping for host diagnostics in a capture session.
+// It is independent of the source's QPC-relative playback PTS. Recalibrating on
+// every picture would add variable scheduling delay between the native counter
+// read and the Go clock read to otherwise stable source presentation intervals.
+// The capture owner serializes access and resets this clock when reopening.
+type QPCClock struct {
+	Anchor             time.Time
+	Counter, Frequency int64
+	lastCounter        int64
+}
+
+func (c *QPCClock) Observe(counter, frequency int64, anchor time.Time) {
+	if counter <= 0 || frequency <= 0 || anchor.IsZero() {
+		return
+	}
+	if c.Anchor.IsZero() || c.Frequency != frequency || counter < c.lastCounter {
+		c.Anchor, c.Counter, c.Frequency = anchor, counter, frequency
+	}
+	c.lastCounter = counter
+}
+
+func (c *QPCClock) Time(ticks int64) time.Time {
+	return QPCTime(ticks, c.Frequency, c.Counter, c.Anchor)
+}
+
 // PictureTime keeps new desktop pictures on their presentation clock. A static
 // recovery IDR is a new encoded picture of old content: give it the acquisition
 // time so protocol decoders do not discard it as a duplicate/old PTS. The trace

@@ -9,7 +9,8 @@
 static int bk_progressive_validate(const uint32_t *m, size_t input_bytes) {
     if (!m || m[0]<1 || m[0]>8 || m[1]>1 || m[2]<6 || m[2]>15 || m[4]>2 ||
         m[5]<1 || m[5]>(128u*1024*1024)/(12288*4) ||
-        (m[4] && (m[3]<1 || m[3]>4))) return 0;
+        (m[4] && !((m[3]>=1 && m[3]<=4) || (m[4]==1 && m[3]==0x100) ||
+                   (m[4]==2 && (m[3]==0x101 || m[3]==0x102))))) return 0;
     uint32_t limit=m[5];
     if (m[6]) {
         uint32_t width=m[6]/4;

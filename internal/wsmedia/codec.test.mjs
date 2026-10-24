@@ -27,6 +27,7 @@ test('H.264 native access units use actual SPS profile and preserve compressed b
   player.setSize(64, 48);
   player.decode(h264Bytes, 1000000);
   assert.equal(player._decoder.config.codec, 'avc1.42c00a');
+  assert.equal(player._decoder.config.hardwareAcceleration, 'prefer-hardware');
   assert.deepEqual(player._decoder.chunks[0].data, h264Bytes);
   assert.equal(player._decoder.chunks[0].type, 'key');
   player.reset();
@@ -97,9 +98,9 @@ test('HEVC SPS determines dimensions, profile and hvcC parameter arrays', () => 
 test('HEVC keys configure actual stream and convert NAL lengths without transcoding', () => {
   const player = new H265Player(() => {});
   player.setSize(64, 48);
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   assert.equal(player._decoder, null);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const decoder = player._decoder;
   assert.equal(decoder.config.codec, 'hvc1.1.6.L30.90');
   assert.equal(decoder.chunks[0].type, 'key');
@@ -111,13 +112,13 @@ test('HEVC keys configure actual stream and convert NAL lengths without transcod
     assert.deepEqual(chunk.slice(offset, offset + length), nal); offset += length;
   }
   const cra = idr.slice(); cra[0] = 21 << 1;
-  player.decode(au(cra));
+  player.decode(au(cra), 1791655600123456);
   assert.equal(player._decoder, decoder); assert.equal(decoder.chunks.at(-1).type, 'key');
   decoder.callbacks.output({ close() {} });
   decoder.decodeQueueSize = 32;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   assert.equal(decoder.state, 'configured'); assert.equal(player._waitingKey, true);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   assert.equal(decoder.state, 'closed'); assert.notEqual(player._decoder, decoder);
   player.setSize(48, 64);
   assert.equal(player._decoder, null);
@@ -127,9 +128,65 @@ test('HEVC capability probes Main10 and runtime failure renegotiates', async () 
   assert.equal(await H265Player.supported(), true);
   let failures = 0;
   const player = new H265Player(() => {}, () => failures++);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   player._decoder.callbacks.error(new Error('Unsupported stream profile'));
   assert.equal(failures, 1); assert.equal(player._decoder, null);
+});
+
+test('HEVC preserves source PTS through irregular arrivals and decoder output', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let now = 10;
+  t.mock.method(performance, 'now', () => now);
+  const presented = [];
+  const player = new H265Player(frame => presented.push(frame.timestamp), reason => assert.fail(reason));
+  const source = 1791655600123456;
+  player.decode(au(...sets, idr), source);
+  const decoder = player._decoder;
+  // Both frames can arrive in a burst, or after variable transport delay.
+  now = 11;
+  player.decode(au(new Uint8Array([2, 1, 9])), source + 16667);
+  now = 250;
+  player.decode(au(new Uint8Array([2, 1, 9])), source + 33334);
+  const stamps = decoder.chunks.map(chunk => chunk.timestamp);
+  assert.deepEqual(stamps, [source, source + 16667, source + 33334]);
+  for (const timestamp of stamps) decoder.callbacks.output({ timestamp, close() {} });
+  assert.deepEqual(presented, stamps);
+  player.reset();
+});
+
+test('HEVC rejects missing or invalid source PTS instead of using arrival time', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const timestamp of [undefined, 0, -1, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    let failures = 0;
+    const player = new H265Player(() => assert.fail('unexpected output'), () => failures++);
+    player.decode(au(...sets, idr), timestamp);
+    assert.equal(failures, 1);
+    assert.equal(player._decoder, null);
+    player.reset();
+  }
+});
+
+test('H.264 and HEVC preserve identical QPC-relative PTS despite arrival jitter', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let now = 10;
+  t.mock.method(performance, 'now', () => now);
+  const shownH264 = [], shownHEVC = [];
+  const h264 = new H264Player((frame, pts) => shownH264.push(pts), reason => assert.fail(reason));
+  const hevc = new H265Player(frame => shownHEVC.push(frame.timestamp), reason => assert.fail(reason));
+  const expected = [123456789, 123473456, 123490123];
+  for (let i = 0; i < expected.length; i++) {
+    now = [10, 50, 55][i];
+    h264.decode(i === 0 ? h264Bytes : au(new Uint8Array([0x41, 1])), expected[i]);
+    now += 2;
+    hevc.decode(i === 0 ? au(...sets, idr) : au(new Uint8Array([2, 1, 9])), expected[i]);
+  }
+  for (const player of [h264, hevc]) {
+    assert.deepEqual(player._decoder.chunks.map(chunk => chunk.timestamp), expected);
+    for (const chunk of player._decoder.chunks) player._decoder.callbacks.output({ timestamp: chunk.timestamp, close() {} });
+  }
+  assert.deepEqual(shownH264, expected);
+  assert.deepEqual(shownHEVC, expected);
+  h264.reset(); hevc.reset();
 });
 
 test('H264 rejects unsupported capability and reports configure failure', async () => {
@@ -150,7 +207,7 @@ test('HEVC stalled output requests a keyframe and recovers without changing code
   const failures = [];
   let requests = 0;
   const player = new H265Player(() => {}, reason => failures.push(reason), () => requests++);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const decoder = player._decoder;
   assert.equal(decoder.chunks.length, 1);
   t.mock.timers.tick(3001);
@@ -158,7 +215,7 @@ test('HEVC stalled output requests a keyframe and recovers without changing code
   assert.equal(requests, 1); assert.equal(decoder.state, 'configured');
   t.mock.timers.tick(1000);
   assert.equal(requests, 2);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   assert.notEqual(player._decoder, decoder); assert.equal(decoder.state, 'closed');
   assert.equal(player._waitingKey, false);
   player._decoder.callbacks.output({ close() {} });
@@ -171,7 +228,7 @@ test('HEVC output cancels fallback and obsolete decoder output is released', t =
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let outputs = 0, failures = 0, released = 0;
   const player = new H265Player(() => outputs++, () => failures++);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const decoder = player._decoder;
   decoder.callbacks.output({ close: () => released++ });
   t.mock.timers.tick(3001);
@@ -184,15 +241,15 @@ test('HEVC output cancels fallback and obsolete decoder output is released', t =
 test('HEVC startup under backpressure preserves decoder until its first output', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const player = new H265Player(() => {});
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const decoder = player._decoder;
   decoder.decodeQueueSize = 32;
-  for (let i = 0; i < 30; i++) player.decode(au(new Uint8Array([2, 1, 9])));
-  player.decode(au(...sets, idr));
+  for (let i = 0; i < 30; i++) player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
+  player.decode(au(...sets, idr), 1791655600123456);
   assert.equal(player._decoder, decoder);
   assert.equal(decoder.state, 'configured'); assert.equal(decoder.chunks.length, 1);
   decoder.callbacks.output({ close() {} });
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   assert.equal(decoder.state, 'closed'); assert.notEqual(player._decoder, decoder);
   player.reset();
 });
@@ -201,16 +258,16 @@ test('HEVC overflow requests a new IRAP instead of freezing after the first pict
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let outputs = 0, requests = 0;
   const player = new H265Player(() => outputs++, () => assert.fail('must stay in HEVC'), () => requests++);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const first = player._decoder;
   first.callbacks.output({ close() {} });
   first.decodeQueueSize = 32;
-  for (let i = 0; i < 40; i++) player.decode(au(new Uint8Array([2, 1, 9])));
+  for (let i = 0; i < 40; i++) player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   assert.equal(requests, 1); assert.equal(first.chunks.length, 1);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const recovered = player._decoder;
   recovered.callbacks.output({ close() {} });
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   recovered.callbacks.output({ close() {} });
   assert.equal(outputs, 3); assert.equal(recovered.chunks.length, 2);
   t.mock.timers.tick(5000);
@@ -223,26 +280,26 @@ test('HEVC transient queue bursts drain without dropping reference frames', t =>
   let now = 0, requests = 0;
   t.mock.method(performance, 'now', () => now);
   const player = new H265Player(() => {}, () => assert.fail('must stay in HEVC'), () => requests++);
-  player.decode(au(...sets, idr));
+  player.decode(au(...sets, idr), 1791655600123456);
   const decoder = player._decoder;
   decoder.callbacks.output({ close() {} });
   decoder.decodeQueueSize = 9;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   now = 100;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   assert.equal(requests, 0);
   assert.equal(decoder.chunks.length, 3);
   decoder.decodeQueueSize = 0;
   now = 200;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   decoder.decodeQueueSize = 9;
   now = 300;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   now = 549;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   assert.equal(requests, 0);
   now = 550;
-  player.decode(au(new Uint8Array([2, 1, 9])));
+  player.decode(au(new Uint8Array([2, 1, 9])), 1791655600123456);
   assert.equal(requests, 1);
   assert.equal(player._waitingKey, true);
   assert.equal(decoder.chunks.length, 6);

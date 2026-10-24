@@ -389,20 +389,8 @@ func (c *client) handleGFX(p []byte) error {
 			if !c.ready || len(body) != 12 {
 				return fmt.Errorf("%w: GFX frame-ack length %d, ready=%t", errProtocol, len(body), c.ready)
 			}
-			frame := le.Uint32(body[4:])
-			c.ackMu.Lock()
-			if frame > c.sent {
-				c.ackMu.Unlock()
-				return errors.New("acknowledgment for an unsent frame")
-			}
-			if frame > c.acknowledged {
-				c.acknowledged = frame
-			}
-			c.suspendAck = le.Uint32(body) == 0xffffffff
-			c.ackMu.Unlock()
-			select {
-			case c.ack <- struct{}{}:
-			default:
+			if err := c.acknowledgeFrame(le.Uint32(body[4:]), le.Uint32(body)); err != nil {
+				return err
 			}
 		case 0x16:
 			if !c.ready || len(body) != 12 {
@@ -492,17 +480,17 @@ func graphicsResetOutput(w, h int) []byte {
 	return gfxPDU(0xe, p)
 }
 
-func graphicsFrame(data []byte, w, h int, id, timestamp uint32) []byte {
+func graphicsFrame(data []byte, w, h int, id uint32, timestamp time.Time) []byte {
 	rect := join(u16(0), u16(0), u16(w), u16(h))
 	avc := join(u32(1), rect, []byte{22, 100}, data)
 	wire := join(u16(1), u16(0xb), []byte{0x20}, rect, u32(uint32(len(avc))), avc)
-	return join(gfxPDU(0xb, join(u32(timestamp), u32(id))), gfxPDU(1, wire), gfxPDU(0xc, u32(id)))
+	return join(graphicsStartFrame(id, timestamp), gfxPDU(1, wire), gfxPDU(0xc, u32(id)))
 }
 
 func (c *client) frameWindowFull() bool {
 	c.ackMu.Lock()
 	defer c.ackMu.Unlock()
-	return !c.suspendAck && c.sent-c.acknowledged >= 2
+	return c.graphicsWindowFull(time.Now(), false)
 }
 
 func (c *client) waitWindow() error {

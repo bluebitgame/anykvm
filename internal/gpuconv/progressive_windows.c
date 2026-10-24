@@ -52,6 +52,34 @@ void bk_d3d_progressive_free(bk_d3d_progressive *p) {
 }
 typedef HRESULT (WINAPI *progressive_compile)(LPCVOID,SIZE_T,LPCSTR,const D3D_SHADER_MACRO *,
     ID3DInclude *,LPCSTR,LPCSTR,UINT,UINT,ID3DBlob **,ID3DBlob **);
+#ifdef BK_PROGRESSIVE_PRECOMPILED
+#include "progressive_dxbc.h"
+#include "progressive_surface_dxbc.h"
+
+static HRESULT progressive_load_precompiled(ID3D11Device *device,int surface,const char *entry,
+    ID3D11ComputeShader **shader,char *error,size_t capacity) {
+    const void *code=NULL;size_t bytes=0;
+    if(surface) {
+        for(size_t i=0;i<sizeof(bk_progressive_surface_dxbc_stages)/sizeof(bk_progressive_surface_dxbc_stages[0]);i++) {
+            if(!strcmp(bk_progressive_surface_dxbc_stages[i].entry,entry)) {
+                code=bk_progressive_surface_dxbc_stages[i].bytes;bytes=bk_progressive_surface_dxbc_stages[i].size;break;
+            }
+        }
+    } else {
+        for(size_t i=0;i<sizeof(bk_progressive_dxbc_stages)/sizeof(bk_progressive_dxbc_stages[0]);i++) {
+            if(!strcmp(bk_progressive_dxbc_stages[i].entry,entry)) {
+                code=bk_progressive_dxbc_stages[i].bytes;bytes=bk_progressive_dxbc_stages[i].size;break;
+            }
+        }
+    }
+    if(!code){snprintf(error,capacity,"Progressive %s/%s precompiled DXBC missing",surface?"surface":"encoder",entry);return E_FAIL;}
+    HRESULT hr=ID3D11Device_CreateComputeShader(device,code,bytes,NULL,shader);
+    if(FAILED(hr))snprintf(error,capacity,"Progressive %s/%s CreateComputeShader failed (0x%08lx)",
+        surface?"surface":"encoder",entry,(unsigned long)hr);
+    return hr;
+}
+#endif
+
 bk_d3d_progressive *bk_d3d_progressive_new(const char *source,size_t bytes,uint64_t luid,int exact,char *error,size_t capacity) {
     bk_d3d_progressive *p=calloc(1,sizeof(*p));
     if (!p) { snprintf(error,capacity,"Progressive allocation failed"); return NULL; }
@@ -68,21 +96,26 @@ bk_d3d_progressive *bk_d3d_progressive_new(const char *source,size_t bytes,uint6
         }
         DROP(IDXGIAdapter1,adapter);
     }
+    const char *entries[]={"main","encodeTiles","indexSegments","packSegments"};
+#ifdef BK_PROGRESSIVE_PRECOMPILED
+    (void)source;(void)bytes;
+    for(int i=0;i<4;i++) TRY(progressive_load_precompiled(p->device,0,entries[i],&p->stages[i],error,capacity));
+#else
     library=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!library) { hr=HRESULT_FROM_WIN32(GetLastError()); goto done; }
     progressive_compile compile=(progressive_compile)(void *)GetProcAddress(library,"D3DCompile");
     if (!compile) { hr=E_NOINTERFACE; goto done; }
-    const char *entries[]={"main","encodeTiles","indexSegments","packSegments"};
     for (int i=0;i<4;i++) {
         ID3DBlob *code=NULL,*messages=NULL;
         hr=compile(source,bytes,"anykvm-progressive",NULL,NULL,entries[i],"cs_5_0",
-            D3DCOMPILE_OPTIMIZATION_LEVEL3|D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&messages);
+            D3DCOMPILE_OPTIMIZATION_LEVEL1|D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&messages);
         if (SUCCEEDED(hr)) hr=ID3D11Device_CreateComputeShader(p->device,ID3D10Blob_GetBufferPointer(code),ID3D10Blob_GetBufferSize(code),NULL,&p->stages[i]);
         if (FAILED(hr)&&messages) snprintf(error,capacity,"Progressive %s: %.*s",entries[i],
             (int)ID3D10Blob_GetBufferSize(messages),(char *)ID3D10Blob_GetBufferPointer(messages));
         DROP(ID3D10Blob,code); DROP(ID3D10Blob,messages);
         if (FAILED(hr)) goto done;
     }
+#endif
     D3D11_BUFFER_DESC desc={.ByteWidth=BK_PROGRESSIVE_INFO_BYTES,.Usage=D3D11_USAGE_STAGING,.CPUAccessFlags=D3D11_CPU_ACCESS_READ};
     TRY(ID3D11Device_CreateBuffer(p->device,&desc,NULL,&p->status));
 done:
@@ -176,16 +209,21 @@ done:
 
 int bk_d3d_progressive_surface_init(bk_d3d_progressive *p,const char *source,size_t bytes,char *error,size_t capacity) {
     if(!p||p->surface_shader||!source||!bytes)return -1;
+#ifdef BK_PROGRESSIVE_PRECOMPILED
+    HRESULT hr=progressive_load_precompiled(p->device,1,"main",&p->surface_shader,error,capacity);
+    return FAILED(hr)?-1:0;
+#else
     HMODULE library=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
     if(!library){snprintf(error,capacity,"D3DCompiler unavailable");return -1;}
     progressive_compile compile=(progressive_compile)(void *)GetProcAddress(library,"D3DCompile");
     ID3DBlob *code=NULL,*messages=NULL;HRESULT hr=E_NOINTERFACE;
     if(compile)hr=compile(source,bytes,"anykvm-progressive-surface",NULL,NULL,"main","cs_5_0",
-        D3DCOMPILE_OPTIMIZATION_LEVEL3|D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&messages);
+        D3DCOMPILE_OPTIMIZATION_LEVEL1|D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&messages);
     if(SUCCEEDED(hr))hr=ID3D11Device_CreateComputeShader(p->device,ID3D10Blob_GetBufferPointer(code),ID3D10Blob_GetBufferSize(code),NULL,&p->surface_shader);
     if(FAILED(hr))snprintf(error,capacity,"surface shader: %.*s (0x%08lx)",messages?(int)ID3D10Blob_GetBufferSize(messages):0,
         messages?(char *)ID3D10Blob_GetBufferPointer(messages):"",(unsigned long)hr);
     DROP(ID3D10Blob,code);DROP(ID3D10Blob,messages);FreeLibrary(library);return FAILED(hr)?-1:0;
+#endif
 }
 static HRESULT surface_buffer_ensure(bk_d3d_progressive *p,progressive_buffer *b,UINT bytes,int read,int write,int structured) {
     if(b->bytes>=bytes)return S_OK;

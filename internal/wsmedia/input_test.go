@@ -106,7 +106,10 @@ func TestHelloRouting(t *testing.T) {
 			got = 0
 		}
 	}})
-	s.handleInput(&wsClient{}, append([]byte{msgHello}, []byte(`{"h264":true}`)...))
+	c := &wsClient{done: make(chan struct{})}
+	s.addClient(c)
+	defer s.removeClient(c)
+	s.handleInput(c, append([]byte{msgHello}, []byte(`{"h264":true}`)...))
 	if got != 1 {
 		t.Fatalf("OnVideoH264Changed got %d, want 1", got)
 	}

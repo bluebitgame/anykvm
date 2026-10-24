@@ -167,6 +167,9 @@ func packProgressiveTiles(dst, p []byte, w, h int, tiles []bitmapRect, format pr
 	return dst
 }
 func (g *gpuProgressiveCodec) encodePass(p []byte, w, h int, rects []bitmapRect, frame uint32, first bool, format progressivePixelFormat, bits int, upgrade bool, _ []int32) ([]byte, error) {
+	if !validProgressivePass(bits, upgrade) {
+		return nil, fmt.Errorf("invalid Progressive GPU pass")
+	}
 	var tiles []bitmapRect
 	for _, r := range rects {
 		for y := r.y; y < r.y+r.h; y += 64 {
@@ -225,7 +228,11 @@ func (g *gpuProgressiveCodec) encodePass(p []byte, w, h int, rects []bitmapRect,
 		kind := 0xccc5
 		if upgrade {
 			kind = 0xccc7
-			body = append(body, 255)
+			quality := byte(255)
+			if progressiveOfficialPass(bits) {
+				quality = 0
+			}
+			body = append(body, quality)
 			for _, s := range c {
 				body = append(body, u16(len(s))...)
 			}

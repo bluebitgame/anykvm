@@ -9,7 +9,7 @@ package capture
 // extern void* avfoundation_start(const char *deviceName, int width, int height, double fps, unsigned int pixel_format);
 // extern void  avfoundation_stop(void* session);
 // extern void  avfoundation_rate(void* session, int *num, int *den);
-// extern int   frame_buf_take(void **sample, long long *age_ns, int wait_ms);
+// extern int   frame_buf_take_timed(void **sample, long long *age_ns, long long *pts_us, int wait_ms);
 // extern void  capture_sample_release(void *sample);
 // extern void* capture_sample_pixel(void *sample);
 // extern unsigned long capture_sample_layout(void *sample, int passthrough, int *w, int *h, int *tag);
@@ -237,7 +237,8 @@ func (d *darwinDevice) capture(keepNative bool) (*Frame, error) {
 	if keepNative {
 		waitMS = 0
 	}
-	if C.frame_buf_take(&sample, &age, waitMS) == 0 {
+	var playbackPTS C.longlong
+	if C.frame_buf_take_timed(&sample, &age, &playbackPTS, waitMS) == 0 {
 		return nil, nil
 	}
 	owned := true
@@ -256,7 +257,7 @@ func (d *darwinDevice) capture(keepNative bool) (*Frame, error) {
 	if w <= 0 || h <= 0 || w > 8192 || h > 8192 || size == 0 || size > 256*1024*1024 {
 		return nil, fmt.Errorf("capture: invalid native sample")
 	}
-	f := &Frame{CapturedAt: capturedAt, Width: int(w), Height: int(h)}
+	f := &Frame{CapturedAt: capturedAt, PresentationPTS: int64(playbackPTS), Width: int(w), Height: int(h)}
 	if keepNative && C.capture_sample_pixel(sample) != nil {
 		f.nativeBuffer = &darwinFrameBuffer{sample: sample, size: size, tag: tag}
 		if name, ok := cPixfmtName[int(tag)]; ok {

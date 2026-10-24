@@ -109,13 +109,23 @@ jobs:
   firmware:
     needs: firmware-plan
     if: needs.firmware-plan.outputs.include == 'true'
-    name: Firmware ${{ matrix.target }}
+    name: Firmware ${{ matrix.group }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        target: [pico, pico2, pico-pio-usb, pico2-pio-usb, pico-ps2, pico2-ps2, rp2350-usb-a, nrf52840-ble, nrf52840-feather, nrf52840-dongle, esp32s3-ble]
+        include:
+          - group: pico1
+            targets: pico pico-pio-usb pico-ps2
+          - group: pico2
+            targets: pico2 pico2-pio-usb pico2-ps2
+          - group: rp2350-usb-a
+            targets: rp2350-usb-a
+          - group: nrf52840
+            targets: nrf52840-xiao nrf52840-feather nrf52840-dongle
+          - group: esp32s3-ble
+            targets: esp32s3-ble
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,15 +141,17 @@ jobs:
         run: python -m unittest discover -s tools -p test_package_firmware.py
       - name: Build firmware
         env:
-          FIRMWARE_TARGET: ${{ matrix.target }}
-        run: python tools/build_firmware.py --targets "$FIRMWARE_TARGET" --jobs 2
-      - name: Package firmware and board guides
+          FIRMWARE_TARGETS: ${{ matrix.targets }}
+        run: |
+          read -ra targets <<< "$FIRMWARE_TARGETS"
+          python tools/build_firmware.py --targets "${targets[@]}" --jobs 2
+      - name: Package firmware and licenses
         env:
-          FIRMWARE_TARGET: ${{ matrix.target }}
-        run: python tools/package_firmware.py --target "$FIRMWARE_TARGET" --revision "$GITHUB_SHA"
+          FIRMWARE_GROUP: ${{ matrix.group }}
+        run: python tools/package_firmware.py --group "$FIRMWARE_GROUP" --revision "$GITHUB_SHA"
       - uses: actions/upload-artifact@v7
         with:
-          name: firmware-${{ matrix.target }}
+          name: firmware-${{ matrix.group }}
           path: build/dist/*
           if-no-files-found: error
           compression-level: 0
@@ -181,7 +193,7 @@ jobs:
             test -s "anykvm-$platform.zip"
           done
           if [[ "$INCLUDE_FIRMWARE" == "true" ]]; then
-            for board in pico pico2 pico-pio-usb pico2-pio-usb pico-ps2 pico2-ps2 rp2350-usb-a nrf52840-ble nrf52840-feather nrf52840-dongle esp32s3-ble; do
+            for board in pico1 pico2 rp2350-usb-a nrf52840 esp32s3-ble; do
               test -s "firmware-$board.zip"
             done
           fi

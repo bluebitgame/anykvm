@@ -41,12 +41,12 @@ C/C++ compiler installed:
 python3 tools/build_firmware.py --list-targets
 python3 tools/build_firmware.py --targets pico pico2 pico-pio-usb pico2-pio-usb pico-ps2 pico2-ps2
 python3 tools/build_firmware.py --targets rp2350-usb-a
-python3 tools/build_firmware.py --targets nrf52840-ble esp32s3-ble
+python3 tools/build_firmware.py --targets nrf52840-xiao esp32s3-ble
 python3 tools/build_firmware.py --targets all
 ```
 
 The eleven targets are `pico`, `pico2`, `pico-pio-usb`, `pico2-pio-usb`,
-`pico-ps2`, `pico2-ps2`, `rp2350-usb-a`, `nrf52840-ble` (XIAO),
+`pico-ps2`, `pico2-ps2`, `rp2350-usb-a`, `nrf52840-xiao` (XIAO),
 `nrf52840-feather`, `nrf52840-dongle` and `esp32s3-ble` (XIAO). Omitting `--targets`
 builds all eleven. The script compiles firmware without flashing a board.
 
@@ -80,9 +80,13 @@ scripts differ from the previous published ancestor Release containing firmware.
 The first firmware release builds every target; unchanged firmware is omitted
 from later Releases.
 
-Each `firmware-<target>.zip` is a separate attachment on the desktop Release,
-with images, SHA-256 metadata, source revision and board guides. Use the package
-for your exact board and follow its flashing instructions. Release publication
+Firmware is grouped by board: `firmware-pico1.zip` and `firmware-pico2.zip`
+each contain native USB, PIO USB and PS/2 variants in target-named subdirectories.
+`firmware-nrf52840.zip` contains XIAO, Feather and Dongle images in
+`nrf52840-xiao/`, `nrf52840-feather/` and `nrf52840-dongle/`.
+Other boards retain separate `firmware-<target>.zip` attachments. Packages come
+with images, SHA-256 metadata, source revision and licenses. Use the package
+for your exact board and follow the flashing instructions in this repository. Release publication
 waits for all required desktop and firmware builds to pass.
 
 ## Shared protocol

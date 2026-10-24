@@ -17,8 +17,11 @@ package wsmedia
 //	0x06 compressed audio: [u16 BE JSON length][JSON decoder config][raw access unit]
 //	     Decoder config includes codec, config (base64 ASC), sampleRate,
 //	     channels, timestamp (microseconds), frames, optional gain and epoch.
-//	0x10 H264 video: [0x10][u64 LE presentation time, Unix microseconds][Annex-B AU]
-//	     Uses the source timestamp, or server arrival time when unavailable.
+//	0x10 H264 video: [0x10][u64 LE playback PTS, microseconds][Annex-B AU]
+//	0x11 HEVC video: [0x11][u64 LE playback PTS, microseconds][Annex-B AU]
+//	     H.264/HEVC share the same clock: Windows desktop uses QPC-relative
+//	     microseconds, independent of Go diagnostic time. Other sources retain
+//	     their source timestamp, or server arrival time when unavailable.
 //
 // Client -> Server:
 //

@@ -76,7 +76,11 @@ test('orientation-only metadata preserves the active HEVC decoder and releases t
   const metadata = rotation => socket.onmessage({ data: new Uint8Array([0, ...new TextEncoder().encode(JSON.stringify({ w: 64, h: 48, rotation }))]).buffer });
   metadata(0);
   const bytes = readFileSync(new URL('../../testdata/passthrough.hevc', import.meta.url));
-  socket.onmessage({ data: new Uint8Array([0x11, ...bytes]).buffer });
+  const message = new Uint8Array(9 + bytes.length);
+  message[0] = 0x11;
+  new DataView(message.buffer).setBigUint64(1, 1791655600123456n, true);
+  message.set(bytes, 9);
+  socket.onmessage({ data: message.buffer });
   assert.equal(decoders.length, 1);
   for (const rotation of [90, 180, 270, 0]) {
     canvas.events.get('mousedown')({ buttons: 1, clientX: 20, clientY: 20, preventDefault() {} });

@@ -3,7 +3,7 @@ import { H265Player } from './h265.js';
 import { AV1Player } from './av1.js';
 import { JPEGPlayer } from './jpeg.js';
 import { TimestampFramePresenter } from './presenter.js';
-import { parseTimedH264 } from './timed-video.js';
+import { parseTimedVideo } from './timed-video.js';
 import { supportedAudioFormats, CompressedAudioPlayer } from './audio.js';
 import { Keyboard } from './keyboard.js';
 import { Pointer } from './pointer.js';
@@ -59,12 +59,14 @@ window.addEventListener('pagehide', () => mediaPlayer.stop());
 // --- codec selection (URL param overrides auto-detect) ---
 const urlP = new URLSearchParams(location.search);
 const forcedCodec = urlP.get('codec'); // "av1", "hevc", "h264", or "jpeg"
+const codecOrder = ['av1', 'hevc', 'h264', 'jpeg'];
+const codecStart = Math.max(0, codecOrder.indexOf(forcedCodec));
 const debugVideo = urlP.get('debug') === 'video';
 let diagnosticStart = performance.now();
 let receivedFrames = 0, receivedVideoBytes = 0, drawnFrames = 0, drawMs = 0, drawMaxMs = 0;
 let diagnosticText = '';
 let statusStart = performance.now();
-if (forcedCodec) console.log(`codec forced to: ${forcedCodec} (via ?codec=)`);
+if (forcedCodec) console.log(`codec preference: ${codecOrder.slice(codecStart).join(' -> ')} (via ?codec=)`);
 
 const hevcSupported = await H265Player.supported();
 const h264Supported = await H264Player.supported();
@@ -75,21 +77,19 @@ let av1Failed = false;
 let hevcFailed = false, h264Failed = false;
 
 function codecCap() {
-  // Explicit direct HEVC stays direct, including after decoder errors/reconnects.
-  if (forcedCodec === 'hevc') return { h264: false, hevc: hevcSupported, av1: false };
-  if (forcedCodec === 'h264') return { h264: h264Supported, hevc: false, av1: false };
-  const failedForced = forcedCodec === 'av1' && av1Failed;
-  const auto = !forcedCodec || failedForced;
+  // The URL chooses the first codec to try. Keep lower-ranked codecs in the
+  // hello so either endpoint can fall back without jumping straight to JPEG.
   return {
-    h264: !h264Failed && h264Supported && (auto || forcedCodec === 'h264'),
-    hevc: !hevcFailed && hevcSupported && (auto || forcedCodec === 'hevc'),
-    av1: !av1Failed && av1Supported && (auto || forcedCodec === 'av1'),
+    h264: codecStart <= 2 && !h264Failed && h264Supported,
+    hevc: codecStart <= 1 && !hevcFailed && hevcSupported,
+    av1: codecStart === 0 && !av1Failed && av1Supported,
   };
 }
 
 const h264ok = codecCap().h264;
 const hevcOk = codecCap().hevc;
 if (!h264ok && !hevcOk && !codecCap().av1 && forcedCodec !== 'jpeg') {
+  videoNotice = 'WebCodecs unavailable; using JPEG — use HTTPS/localhost and a supported browser';
   console.warn('No compatible WebCodecs decoder. Falling back to MJPEG; use HTTPS/localhost and a supported browser/OS.');
 }
 
@@ -123,7 +123,7 @@ const h264 = new H264Player((frame, presentationTime) => presentVideoFrame(frame
   if (h264Failed) return;
   h264Failed = true;
   videoNotice = `H.264 decoder: ${reason || 'unavailable'}`;
-  if (forcedCodec !== 'h264') sendCapabilities();
+  sendCapabilities();
 }, () => {
   videoNotice = 'H.264: requesting a keyframe';
   send(new Uint8Array([0x85]));
@@ -134,7 +134,7 @@ const h265 = new H265Player((frame) => presentVideoFrame(frame, 'hevc'), (reason
   if (hevcFailed) return;
   hevcFailed = true;
   videoNotice = `HEVC decoder: ${reason || 'unavailable'}`;
-  if (forcedCodec !== 'hevc') sendCapabilities();
+  sendCapabilities();
 }, () => {
   videoNotice = 'HEVC: requesting a keyframe';
   send(new Uint8Array([0x85]));
@@ -178,12 +178,13 @@ if (typeof ResizeObserver === 'function') new ResizeObserver(layoutScreen).obser
 layoutScreen();
 
 const jpeg = new JPEGPlayer((bmp) => {
+    if (videoNotice.startsWith('JPEG decoder:')) videoNotice = '';
     h264Presenter.reset();
     resize(bmp.width, bmp.height);
     ctx.drawImage(bmp, 0, 0);
     frameCount++;
     videoMode = 'mjpeg';
-});
+}, undefined, error => { videoNotice = `JPEG decoder: ${error?.message || 'invalid JPEG frame'}`; });
 
 // --- audio ---
 const playingAudio = new Set();
@@ -389,19 +390,22 @@ function connect() {
         } catch (e) {}
         break;
       case MSG_JPEG:
-        if (forcedCodec === 'h264') { videoNotice = 'H.264 requested; server sent JPEG — check server capture errors'; break; }
         receivedVideo = true; jpeg.push(payload); break;
       case MSG_PCM: receivedAudio(); compressedAudio.reset(); playPCM(payload); break;
       case MSG_ENCODED_AUDIO: receivedAudio(); compressedAudio.push(payload); break;
       case MSG_H264: {
-        const picture = parseTimedH264(payload);
+        const picture = parseTimedVideo(payload);
         if (!picture) { videoNotice = 'Invalid H.264 timestamp message'; break; }
         receivedFrames++; receivedVideoBytes += picture.data.byteLength;
         receivedVideo = true; jpeg.reset(); h264.decode(picture.data, picture.timestamp); break;
       }
-      case MSG_HEVC:
+      case MSG_HEVC: {
         if (forcedCodec === 'h264') { videoNotice = 'H.264 requested; server sent HEVC'; break; }
-        receivedFrames++; receivedVideoBytes += payload.byteLength; receivedVideo = true; jpeg.reset(); h265.decode(payload); break;
+        const picture = parseTimedVideo(payload);
+        if (!picture) { videoNotice = 'Invalid HEVC timestamp message'; break; }
+        receivedFrames++; receivedVideoBytes += picture.data.byteLength;
+        receivedVideo = true; jpeg.reset(); h265.decode(picture.data, picture.timestamp); break;
+      }
       case MSG_AV1: receivedVideo = true; jpeg.reset(); av1.decode(payload); break;
     }
   };
@@ -435,7 +439,7 @@ async function showTargetPicker() {
     for (const target of payload.targets) {
       const link = document.createElement('a');
       link.className = 'targetCard';
-      link.href = `/target/${encodeURIComponent(target.name)}`;
+      link.href = `/target/${encodeURIComponent(target.name)}${location.search}`;
       const cover = document.createElement('img');
       cover.src = target.cover;
       cover.alt = '';
@@ -455,11 +459,6 @@ function showTargetControl() {
   viewer.hidden = false;
   targetTitle.textContent = selectedTarget;
   layoutScreen();
-  if (forcedCodec === 'h264' && !h264Supported) {
-    videoNotice = 'H.264 WebCodecs unavailable — use localhost/HTTPS and a supported browser';
-    stat.textContent = videoNotice;
-    return;
-  }
   connect();
 }
 

@@ -3,6 +3,7 @@
 package jpegcodec
 
 /*
+#cgo d3d11_precompiled CFLAGS: -DBK_JPEG_PRECOMPILED
 #cgo LDFLAGS: -ld3d11 -ldxgi -ldxguid
 #include "d3d11_windows.h"
 #include <stdlib.h>
@@ -10,24 +11,50 @@ package jpegcodec
 import "C"
 
 import (
+	"anykvm/internal/logging"
 	"fmt"
 	"runtime"
+	"time"
 	"unsafe"
 )
 
 // D3D11Encoder supports standalone JPEG and compact changed-MCU readback.
 // Calls, including Close, must be serialized by the capture owner.
 type D3D11Encoder struct {
-	ptr        *C.bk_jpeg_gpu
-	parameters jpegFrameParameters
-	regions    *RestartJPEG
-	damage     DesktopDamageState
+	ptr           *C.bk_jpeg_gpu
+	parameters    jpegFrameParameters
+	regions       *RestartJPEG
+	damage        DesktopDamageState
+	validatedJPEG [3]int
+}
+
+// PrepareD3D11Shaders loads embedded DXBC or fills the process-wide bytecode
+// cache before services accept viewers. It does not open capture hardware.
+func PrepareD3D11Shaders() error {
+	logging.Basicf("jpegcodec: preparing D3D11 JPEG shaders...")
+	started := time.Now()
+	var message [1024]C.char
+	debug := C.int(0)
+	if logging.DebugEnabled() {
+		debug = 1
+	}
+	ok := C.bk_jpeg_gpu_prepare_shaders((*C.char)(unsafe.Pointer(unsafe.StringData(jpegComputeShader))),
+		C.size_t(len(jpegComputeShader)), debug, &message[0], C.size_t(len(message)))
+	if ok == 0 {
+		return fmt.Errorf("%s", C.GoString(&message[0]))
+	}
+	logging.Basicf("jpegcodec: D3D11 JPEG shaders ready in %s", time.Since(started).Round(time.Millisecond))
+	return nil
 }
 
 func NewD3D11Encoder(adapterLUID uint64) (*D3D11Encoder, error) {
 	var message [1024]C.char
-	p := C.bk_jpeg_gpu_open(C.uint64_t(adapterLUID), (*C.char)(unsafe.Pointer(unsafe.StringData(jpegComputeShader))),
-		C.size_t(len(jpegComputeShader)), &message[0], C.size_t(len(message)))
+	debug := C.int(0)
+	if logging.DebugEnabled() {
+		debug = 1
+	}
+	p := C.bk_jpeg_gpu_open_debug(C.uint64_t(adapterLUID), (*C.char)(unsafe.Pointer(unsafe.StringData(jpegComputeShader))),
+		C.size_t(len(jpegComputeShader)), debug, &message[0], C.size_t(len(message)))
 	if p == nil {
 		return nil, fmt.Errorf("%s", C.GoString(&message[0]))
 	}
@@ -114,8 +141,16 @@ func (e *D3D11Encoder) encodeTexture(handle uintptr, rotation, width, height, qu
 	if jpeg == nil || jpegBytes < 2 || jpegBytes > 128<<20 {
 		return nil, fmt.Errorf("invalid GPU JPEG output size")
 	}
+	data := C.GoBytes(unsafe.Pointer(jpeg), C.int(jpegBytes))
+	validationKey := [3]int{width, height, quality}
+	if !regions && e.validatedJPEG != validationKey {
+		if err := validateGPUJPEG(data, width, height); err != nil {
+			return nil, err
+		}
+		e.validatedJPEG = validationKey
+	}
 	e.damage.Commit(damage)
-	return C.GoBytes(unsafe.Pointer(jpeg), C.int(jpegBytes)), nil
+	return data, nil
 }
 
 func (e *D3D11Encoder) Close() {

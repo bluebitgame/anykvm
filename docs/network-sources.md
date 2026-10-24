@@ -4,7 +4,7 @@ Set `targets[].video.source` to a VNC, RTSP or RDP URL to feed a remote source i
 AnyKVM's viewer services. A target's `rdp` block configures its upstream
 connection; the top-level `rdp` block configures the [AnyKVM listener](rdp-server.md).
 For Apple Screen Sharing, see [ARD](ard-client.md). For Linux local QEMU
-SPICE GL and the experimental GPU-only H.264 path, see [SPICE](spice-source.md).
+SPICE TCP and the local GL/DMA-BUF path, see [SPICE](spice-source.md).
 
 ## Configuration
 

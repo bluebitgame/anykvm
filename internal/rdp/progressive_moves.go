@@ -138,6 +138,9 @@ func (e *progressiveEncoder) invalidateMovedTiles(moves []gpuconv.SurfaceMove, w
 		i := progressiveTileIndex(w, m.DestinationX, m.DestinationY)
 		if i < len(e.pending) {
 			e.pending[i] = false
+			if i < len(e.stages) {
+				e.stages[i] = 0
+			}
 		}
 		start := i * progressiveTileCoefficients
 		if start+progressiveTileCoefficients <= len(e.coefficients) {

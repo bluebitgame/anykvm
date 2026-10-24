@@ -13,6 +13,7 @@ import (
 const videoFECPercentage = 20
 
 type videoPacketizer struct {
+	playback videoPlaybackClock
 	pacer    videoPacer
 	sequence uint32
 	frame    uint32

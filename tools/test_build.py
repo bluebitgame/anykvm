@@ -17,6 +17,26 @@ class BuildTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    def test_all_release_targets_enable_o3_for_c_and_cxx(self):
+        with patch.dict(build.os.environ, {}, clear=True):
+            for target in build.TARGETS:
+                with self.subTest(target=target):
+                    env = build.target_environment(target, "darwin/amd64", "clang")
+                    for name in ("CGO_CFLAGS", "CGO_CXXFLAGS"):
+                        self.assertEqual(env[name], "-g -O3")
+
+    def test_release_o3_preserves_target_flags_and_overrides_lower_optimization(self):
+        flags = '-I"/sdk with spaces/include" -O0 -DKEEP_ABI=1'
+        with patch.dict(build.os.environ, {
+                "CGO_CFLAGS": flags, "CGO_CXXFLAGS": "-O1 -std=c++17",
+                "ANYKVM_BUILD_WINDOWS_ARM64_CGO_CFLAGS": flags + " -DARM64_TARGET=1"}, clear=True):
+            native = build.target_environment("darwin/amd64", "darwin/amd64", "clang")
+            cross = build.target_environment("windows/arm64", "darwin/amd64", "clang")
+            self.assertEqual(native["CGO_CFLAGS"], flags + " -O3")
+            self.assertEqual(native["CGO_CXXFLAGS"], "-O1 -std=c++17 -O3")
+            self.assertEqual(cross["CGO_CFLAGS"], flags + " -DARM64_TARGET=1 -O3")
+            self.assertEqual(cross["CGO_CXXFLAGS"], "-g -O3")
+
     def test_only_linux_builds_require_shader_compilation(self):
         for target in ("darwin/amd64", "windows/arm64", "linux/arm64"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary, \
@@ -37,6 +57,39 @@ class BuildTests(unittest.TestCase):
                 self.assertEqual(runtimes.call_args.args[0:2], (target, "darwin/amd64"))
                 self.assertEqual(runtimes.call_args.args[3:5], ("", False))
                 self.assertTrue(runtimes.call_args.kwargs["allow_download"])
+
+    def test_dxbc_is_enabled_only_for_windows_host_building_windows(self):
+        for host in ("darwin", "linux", "windows"):
+            for target in ("windows/amd64", "windows/arm64", "darwin/amd64"):
+                with self.subTest(host=host, target=target), tempfile.TemporaryDirectory() as temporary, \
+                        patch.object(build.subprocess, "check_output", return_value=json.dumps({
+                            "GOHOSTOS": host, "GOHOSTARCH": "amd64", "CC": "clang"})), \
+                        patch.object(build.prepare_sources, "prepare"), \
+                        patch.object(build, "prepare_windows_cross_headers"), \
+                        patch.object(build.prepare_sources, "notice_files", return_value=[]), \
+                        patch.object(build.build_dxbc, "prepare") as dxbc, \
+                        patch.object(build.prepare_runtime, "prepare", return_value=[]), \
+                        patch.object(build, "build_target") as compile, \
+                        patch.dict(build.os.environ, {}, clear=False), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(build.main(["--targets", target, "--output", temporary,
+                                                 "--no-bootstrap", "--tags", "viewer,ffmpeg"]), 0)
+                    native_windows = host == "windows" and target.startswith("windows/")
+                    self.assertEqual(dxbc.call_count, int(native_windows))
+                    expected = "viewer,ffmpeg,d3d11_precompiled" if native_windows else "viewer,ffmpeg"
+                    self.assertEqual(compile.call_args.args[-1], expected)
+
+    def test_dxbc_failure_stops_windows_build_before_go_compilation(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(build.subprocess, "check_output", return_value=json.dumps({
+                    "GOHOSTOS": "windows", "GOHOSTARCH": "amd64", "CC": "gcc"})), \
+                patch.object(build.prepare_sources, "prepare"), \
+                patch.object(build.build_dxbc, "prepare", side_effect=ValueError("FXC failed")), \
+                patch.object(build, "build_target") as compile, \
+                patch.dict(build.os.environ, {}, clear=False), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(build.main(["--targets", "windows/amd64", "--output", temporary]), 1)
+            compile.assert_not_called()
 
     def test_windows_header_adjustment_only_for_cross_builds(self):
         original = b"#include <Ws2tcpip.h>\n"

@@ -95,8 +95,13 @@ type client struct {
 	reset                                 atomic.Bool
 	ack                                   chan struct{}
 	ackMu                                 sync.Mutex
-	sent, acknowledged                    uint32
+	sent, acknowledged                    uint32 // acknowledged is a diagnostic high-water mark, not the window size
 	suspendAck                            bool
+	ackSeen                               bool
+	ackSuspendBarrier                     uint32                          // only ACKs for subsequent sends may resume a suspended epoch
+	pendingFrames                         map[uint32]graphicsPendingFrame // guarded by ackMu; exact frame IDs, not cumulative ACKs
+	frameIDsWrapped                       bool                            // guarded by ackMu
+	graphicsFlow                          graphicsFlowControl             // guarded by ackMu
 	input                                 inputState
 	vcBuf, dvcBuf                         []byte
 	vcTotal, dvcTotal                     int
@@ -801,7 +806,9 @@ func (c *client) handleShare(p []byte) error {
 						return err
 					}
 				}
-			case 33, 35:
+			case 33:
+				c.requestGraphicsRefresh()
+			case 35:
 				c.reset.Store(true)
 			case 36:
 				return io.EOF

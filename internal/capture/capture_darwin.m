@@ -47,7 +47,8 @@ void frame_buf_store_sample(CMSampleBufferRef sample) {
     if (old) CFRelease(old);
 }
 
-int frame_buf_take(void **sample, long long *age_ns, int wait_ms) {
+int frame_buf_take_timed(void **sample, long long *age_ns, long long *pts_us, int wait_ms) {
+    *pts_us = 0;
     *sample = NULL; *age_ns = 0;
     struct timeval now; gettimeofday(&now, NULL);
     struct timespec deadline = {now.tv_sec, now.tv_usec * 1000 + wait_ms * NSEC_PER_MSEC};
@@ -59,10 +60,19 @@ int frame_buf_take(void **sample, long long *age_ns, int wait_ms) {
     if (g_frame_sample) {
         *sample = (void *)g_frame_sample;
         *age_ns = capture_host_ns() - g_frame_arrival;
+        // Device PTS may have an unknown clock. Retain callback arrival on the
+        // native host clock instead of reconstructing playback time in Go.
+        *pts_us = g_frame_arrival / 1000;
         g_frame_sample = NULL; // Transfer the queue's retain to the caller.
     }
     pthread_mutex_unlock(&g_frame_mutex);
     return *sample != NULL;
+}
+
+// Keep the existing native queue API for capture tools that only need age.
+int frame_buf_take(void **sample, long long *age_ns, int wait_ms) {
+    long long pts_us;
+    return frame_buf_take_timed(sample, age_ns, &pts_us, wait_ms);
 }
 
 void frame_buf_reset(void) {

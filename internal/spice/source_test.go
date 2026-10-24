@@ -9,11 +9,13 @@ import (
 
 	"anykvm/internal/capture"
 	"anykvm/internal/dmabuf"
+	"anykvm/internal/framebuf"
 )
 
 type fakeSession struct {
 	leases               []*frameLease
 	ack, inputs          int
+	nextCalls            int
 	closed               bool
 	err                  error
 	audioQueue           []audioPacket
@@ -23,6 +25,7 @@ type fakeSession struct {
 }
 
 func (s *fakeSession) next() (*frameLease, error) {
+	s.nextCalls++
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -36,30 +39,53 @@ func (s *fakeSession) next() (*frameLease, error) {
 func (s *fakeSession) input(int, int, int, int) error { s.inputs++; return nil }
 func (s *fakeSession) close()                         { s.closed = true }
 
-type fakeEncoder struct {
+type fakePipeline struct {
 	frames, repeats   int
+	deferred          int
 	err               error
 	inEncode, release chan struct{}
 	closeCalled       bool
 }
 
-func (e *fakeEncoder) EncodeSource(f dmabuf.Frame, force bool) ([]byte, error) {
+func (e *fakePipeline) EncodeSource(f dmabuf.Frame, w, h int, at time.Time, pts int64) (*capture.Frame, error) {
+	if e.deferred > 0 {
+		e.deferred--
+		return nil, nil
+	}
 	e.frames++
 	if e.inEncode != nil {
 		close(e.inEncode)
 		<-e.release
 	}
-	return []byte{0, 0, 0, 1, 0x65}, e.err
+	if e.err != nil {
+		return nil, e.err
+	}
+	return fakeVideoFrame(w, h, at), nil
 }
-func (e *fakeEncoder) EncodeLast(force bool) ([]byte, error) {
+func (e *fakePipeline) Repeat() (*capture.Frame, error) {
 	e.repeats++
-	return []byte{0, 0, 0, 1, 0x65}, e.err
+	if e.err != nil {
+		return nil, e.err
+	}
+	return fakeVideoFrame(640, 480, time.Now()), nil
 }
-func (e *fakeEncoder) Close() { e.closeCalled = true }
-func fixture(t *testing.T) (*Device, *fakeSession, *fakeEncoder) {
+func (e *fakePipeline) Close() error { e.closeCalled = true; return nil }
+func (e *fakePipeline) Stats() capture.DMABUFStats {
+	return capture.DMABUFStats{GPUFrames: uint64(e.frames)}
+}
+func fakeVideoFrame(w, h int, at time.Time) *capture.Frame {
+	b := framebuf.New([]byte{0, 0, 0, 1, 0x65}, nil)
+	return &capture.Frame{Buffer: b, Data: b.Bytes(), Format: capture.FormatH264, Width: w, Height: h, SourceWidth: w, SourceHeight: h, CapturedAt: at}
+}
+func fixture(t *testing.T) (*Device, *fakeSession, *fakePipeline) {
 	t.Helper()
-	s, e := &fakeSession{}, &fakeEncoder{}
-	d := &Device{raw: "spice:/tmp/vm.sock", openSession: func(string, string, string) (nativeSession, error) { return s, nil }, openEncoder: func(encodeOptions) (gpuEncoder, error) { return e, nil }}
+	s, e := &fakeSession{}, &fakePipeline{}
+	d := &Device{
+		raw:         "spice:/tmp/vm.sock",
+		openSession: func(string, string, string) (nativeSession, error) { return s, nil },
+		newPipeline: func(*capture.DMABUFEncoder) (localPipeline, error) { return e, nil },
+	}
+	d.SetVideoCodec("h264")
 	if err := d.Open(); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +97,7 @@ func enqueue(s *fakeSession, change func(*dmabuf.Frame)) {
 	if change != nil {
 		change(&f)
 	}
-	s.leases = append(s.leases, &frameLease{f, func() { s.ack++ }})
+	s.leases = append(s.leases, &frameLease{frame: f, done: func() { s.ack++ }})
 }
 func TestGPUOnlyFrameAndIdleKeyframe(t *testing.T) {
 	d, s, e := fixture(t)
@@ -97,7 +123,7 @@ func TestGPUOnlyFrameAndIdleKeyframe(t *testing.T) {
 	}
 }
 func TestLeaseAcknowledgedOnFailureAndPacing(t *testing.T) {
-	for _, kind := range []string{"layout", "encoder open", "encode", "pacing"} {
+	for _, kind := range []string{"layout", "pipeline creation", "encode", "pacing"} {
 		t.Run(kind, func(t *testing.T) {
 			d, s, e := fixture(t)
 			if kind == "layout" {
@@ -106,8 +132,8 @@ func TestLeaseAcknowledgedOnFailureAndPacing(t *testing.T) {
 				enqueue(s, nil)
 			}
 			failure := errors.New("unsupported GPU")
-			if kind == "encoder open" {
-				d.openEncoder = func(encodeOptions) (gpuEncoder, error) { return nil, failure }
+			if kind == "pipeline creation" {
+				d.newPipeline = func(*capture.DMABUFEncoder) (localPipeline, error) { return nil, failure }
 			}
 			if kind == "encode" {
 				e.err = failure
@@ -248,7 +274,7 @@ func TestLocalSocketValidation(t *testing.T) {
 			t.Fatalf("local path: %q, %v", path, err)
 		}
 	}
-	for _, raw := range []string{"spice://host:5900", "spice://run/user/1000/vm.sock", "spice:///tmp/vm.sock", "spice:////tmp/vm.sock", "spice:relative", "spice:/tmp/a?password=secret", "spice:/tmp/%00sock", "spice:/tmp/a#fragment"} {
+	for _, raw := range []string{"spice:///tmp/vm.sock", "spice:////tmp/vm.sock", "spice:relative", "spice:/tmp/a?password=secret", "spice:/tmp/%00sock", "spice:/tmp/a#fragment"} {
 		if err := ValidateSource(raw, Options{}); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
@@ -260,5 +286,73 @@ func TestLocalSocketValidation(t *testing.T) {
 		if dev, ok := NewCapture(raw, Options{}); dev != nil || ok {
 			t.Fatalf("claimed unsupported source: %s", raw)
 		}
+	}
+}
+
+func TestLocalAcceptsViewerSelectedFormats(t *testing.T) {
+	for _, codec := range []string{"", "mjpeg", "rawvideo", "h264", "hevc", "av1"} {
+		t.Run(codec, func(t *testing.T) {
+			d, s, _ := fixture(t)
+			d.Close()
+			s.closed = false
+			d.SetVideoCodec(codec)
+			d.SetDecodeImage(codec == "rawvideo")
+			d.SetJPEGQuality(85)
+			d.SetJPEGRegions(true)
+			d.SetGPUSurface(codec == "rawvideo")
+			if codec == "hevc" || codec == "av1" {
+				d.SetVideoStreamOptions(&capture.VideoStreamOptions{Codec: codec, Width: 1280, Height: 720, FPS: 60, Bitrate: 16000})
+			}
+			if err := d.Open(); err != nil {
+				t.Fatalf("format was rejected before shared GPU routing: %v", err)
+			}
+			if d.pipeline == nil || d.activePipeline != nil {
+				t.Fatal("format setup did not use lazy shared GPU pipeline")
+			}
+			if _, direct := any(d).(capture.VideoStreamConfigurer); !direct {
+				t.Fatal("local source lost direct encoding")
+			}
+		})
+	}
+}
+
+func TestLocalRetainsLeaseWhenSharedPipelineDefers(t *testing.T) {
+	for _, finish := range []string{"retry", "encode failure", "close"} {
+		t.Run(finish, func(t *testing.T) {
+			d, s, e := fixture(t)
+			e.deferred = 1
+			enqueue(s, nil)
+			if frame, err := d.Capture(); frame != nil || err != nil {
+				t.Fatalf("deferred capture: %+v %v", frame, err)
+			}
+			if d.pending == nil || s.ack != 0 || s.nextCalls != 1 {
+				t.Fatal("pipeline backpressure released the draw or consumed another frame")
+			}
+			switch finish {
+			case "close":
+				d.Close()
+				if !s.closed || !e.closeCalled {
+					t.Fatal("close left deferred source or pipeline live")
+				}
+			case "encode failure":
+				e.err = errors.New("GPU failed during retry")
+				if frame, err := d.Capture(); frame != nil || !errors.Is(err, capture.ErrStreamStopped) {
+					t.Fatalf("retry failure: %+v %v", frame, err)
+				}
+			default:
+				frame, err := d.Capture()
+				if err != nil || frame == nil {
+					t.Fatalf("last deferred update lost: %v", err)
+				}
+				frame.Release()
+			}
+			if d.pending != nil || s.ack != 1 || s.nextCalls != 1 {
+				t.Fatalf("draw ownership after %s: pending=%t ack=%d polls=%d", finish, d.pending != nil, s.ack, s.nextCalls)
+			}
+			d.Close()
+			if s.ack != 1 {
+				t.Fatal("close acknowledged the same draw twice")
+			}
+		})
 	}
 }

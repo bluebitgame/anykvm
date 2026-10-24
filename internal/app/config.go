@@ -81,7 +81,7 @@ type RDPConfig struct {
 	AutoShortcutMapping     bool                        `yaml:"auto_shortcut_mapping"`   // default true; false disables shortcut conversion for every client.
 	Codecs                  RDPCodecsConfig             `yaml:"codecs"`
 	ProgressiveQuantization int                         `yaml:"quant"`  // Progressive only: 6..15, 0=6; larger is coarser.
-	ProgressiveRefinement   int                         `yaml:"refine"` // default 2; 0=complete tiles; 1..4 AC FIRST bits refined per stable tile.
+	ProgressiveRefinement   int                         `yaml:"refine"` // default 2; 0=SIMPLE, 1..4 enable FIRST 50%, UPGRADE 75%, 100%.
 }
 
 // RDPCodecsConfig controls which implemented encodings clients may negotiate.

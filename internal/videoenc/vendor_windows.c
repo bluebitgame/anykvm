@@ -16,8 +16,28 @@ struct bk_vendor_encoder {
     uint8_t *output;
     size_t output_size;
     int stop, force, result;
+    void *volatile phase;
     char error[512];
 };
+
+// Retain ownership while a driver call is outstanding. Timing out and freeing
+// this encoder would let its worker access released textures and buffers.
+static void bk_vendor_wait(bk_vendor_encoder *e, HANDLE event, const char *operation) {
+    for (;;) {
+        DWORD status = WaitForSingleObject(event, 5000);
+        if (status == WAIT_OBJECT_0) return;
+        const char *phase = InterlockedCompareExchangePointer(&e->phase, NULL, NULL);
+        if (status == WAIT_TIMEOUT)
+            fprintf(stderr, "videoenc: native %s still waiting after 5s; stage=%s\n",
+                    operation, phase ? phase : "unknown");
+        else {
+            fprintf(stderr, "videoenc: native %s wait failed (error %lu); stage=%s\n",
+                    operation, GetLastError(), phase ? phase : "unknown");
+            Sleep(1000);
+        }
+        fflush(stderr);
+    }
+}
 
 HMODULE bk_vendor_library(const wchar_t *name) {
     return LoadLibraryExW(name, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -163,8 +183,10 @@ static DWORD WINAPI bk_vendor_worker(void *opaque) {
             SetEvent(e->done);
         }
     }
-    if (e->backend)
+    if (e->backend) {
+        bk_vendor_phase(&e->options, "closing encoder");
         e->api->close(e->backend);
+    }
     if (SUCCEEDED(hr))
         CoUninitialize();
     return 0;
@@ -187,6 +209,8 @@ bk_vendor_encoder *bk_vendor_open(int vendor, int width, int height, int num, in
     e->api = apis[vendor];
     e->options = (bk_vendor_options){.width=width, .height=height, .num=num, .den=den,
         .bitrate=bitrate, .codec=codec, .adapter_set=adapter_set, .luid=luid};
+    e->options.phase = &e->phase;
+    bk_vendor_phase(&e->options, "opening encoder");
     if (timing) e->options.timing = &e->timing;
     e->request = CreateEventW(NULL, FALSE, FALSE, NULL);
     e->done = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -198,7 +222,7 @@ bk_vendor_encoder *bk_vendor_open(int vendor, int width, int height, int num, in
         bk_vendor_close(e);
         return NULL;
     }
-    WaitForSingleObject(e->done, INFINITE);
+    bk_vendor_wait(e, e->done, "open/encode");
     if (e->result != 0) {
         snprintf(error, capacity, "%s", e->error);
         bk_vendor_close(e);
@@ -221,7 +245,7 @@ int bk_vendor_encode(bk_vendor_encoder *e, const uint8_t *input, size_t size, in
     memset(&e->timing, 0, sizeof(e->timing));
     e->force = force;
     SetEvent(e->request);
-    WaitForSingleObject(e->done, INFINITE);
+    bk_vendor_wait(e, e->done, "open/encode");
     e->input = NULL;
     if (e->result != 0) {
         snprintf(error, capacity, "%s", e->error);
@@ -248,7 +272,7 @@ int bk_vendor_encode_texture(bk_vendor_encoder *e, uintptr_t handle, int rotatio
     e->rotation = rotation;
     e->force = force;
     SetEvent(e->request);
-    WaitForSingleObject(e->done, INFINITE);
+    bk_vendor_wait(e, e->done, "open/encode");
     e->texture_handle = 0;
     if (e->result != 0) {
         snprintf(error, capacity, "%s", e->error);
@@ -275,7 +299,7 @@ void bk_vendor_close(bk_vendor_encoder *e) {
     if (e->thread) {
         e->stop = 1;
         SetEvent(e->request);
-        WaitForSingleObject(e->thread, INFINITE);
+        bk_vendor_wait(e, e->thread, "close");
         CloseHandle(e->thread);
     }
     if (e->request)

@@ -65,7 +65,11 @@ type Frame struct {
 	nativeBuffer nativeFrameBuffer
 	// CapturedAt is the source presentation time, or earliest available capture
 	// time when the device clock cannot be mapped; zero when unavailable.
-	CapturedAt                time.Time
+	CapturedAt time.Time
+	// PresentationPTS is an optional positive playback timestamp in microseconds
+	// on the source's monotonic clock (not Unix time). Zero means unavailable.
+	// Windows desktop frames use QPC directly; CapturedAt remains independent.
+	PresentationPTS           int64
 	Data                      []byte      // payload bytes, encoding specified by Format
 	Format                    VideoFormat // FormatRaw, FormatJPEG, FormatH264, or FormatYUV
 	Width                     int

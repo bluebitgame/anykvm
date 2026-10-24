@@ -35,13 +35,13 @@ func TestLinuxKMSVulkanJPEG(t *testing.T) {
 		}
 		defer d.Close()
 		for index := 0; index < 6; index++ {
-			before := d.gpuFrames
+			before := d.enc.gpuFrames
 			frame := captureOne(t, d, 10*time.Second)
 			image, err := jpeg.Decode(bytes.NewReader(frame.Data))
 			valid := err == nil && image.Bounds().Dx() == frame.Width && image.Bounds().Dy() == frame.Height
 			frame.Release()
-			if !valid || frame.Format != FormatJPEG || d.jpegEncoder == nil || d.jpegDisabled || d.gpuFrames != before+1 || d.readbacks != 0 || d.converter != nil {
-				t.Fatalf("Vulkan JPEG path: decode=%v GPU=%d pixel readbacks=%d disabled=%v", err, d.gpuFrames, d.readbacks, d.jpegDisabled)
+			if !valid || frame.Format != FormatJPEG || d.enc.jpegEncoder == nil || d.enc.jpegDisabled || d.enc.gpuFrames != before+1 || d.enc.readbacks != 0 || d.enc.converter != nil {
+				t.Fatalf("Vulkan JPEG path: decode=%v GPU=%d pixel readbacks=%d disabled=%v", err, d.enc.gpuFrames, d.enc.readbacks, d.enc.jpegDisabled)
 			}
 		}
 
@@ -49,7 +49,7 @@ func TestLinuxKMSVulkanJPEG(t *testing.T) {
 		for index := 0; index < 3; index++ {
 			frame := captureOne(t, d, 10*time.Second)
 			snapshot := frame.JPEGRegions
-			if snapshot == nil || len(frame.Data) != 0 || d.jpegDisabled || d.readbacks != 0 {
+			if snapshot == nil || len(frame.Data) != 0 || d.enc.jpegDisabled || d.enc.readbacks != 0 {
 				frame.Release()
 				t.Fatal("compact Vulkan JPEG mode fell back or returned full JPEG")
 			}
@@ -67,7 +67,7 @@ func TestLinuxKMSVulkanJPEG(t *testing.T) {
 		}
 		d.SetJPEGRegions(false)
 		if pi {
-			major, minor := d.jpegEncoder.DRMDevice()
+			major, minor := d.enc.jpegEncoder.DRMDevice()
 			for _, device := range []struct {
 				major, minor uint32
 				driver       string
@@ -88,7 +88,7 @@ func TestLinuxKMSVulkanJPEG(t *testing.T) {
 		if err := d.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if d.jpegEncoder != nil {
+		if d.enc.jpegEncoder != nil {
 			t.Fatal("JPEG encoder survived capture close")
 		}
 	}
@@ -149,9 +149,9 @@ func TestLinuxKMSVulkanVideo(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		}
-		if d.gpuFrames < 12 || d.readbacks != 0 {
+		if d.enc.gpuFrames < 12 || d.enc.readbacks != 0 {
 			d.Close()
-			t.Fatalf("GPU frames=%d pixel readbacks=%d", d.gpuFrames, d.readbacks)
+			t.Fatalf("GPU frames=%d pixel readbacks=%d", d.enc.gpuFrames, d.enc.readbacks)
 		}
 		sort.Slice(elapsed, func(i, j int) bool { return elapsed[i] < elapsed[j] })
 		t.Logf("capture + encode including pacing: p50=%s max=%s", elapsed[len(elapsed)/2], elapsed[len(elapsed)-1])

@@ -186,10 +186,11 @@ export class H265Player {
     }, 3000);
   }
 
-  decode(au) {
+  decode(au, presentationTime) {
     this._stats.received++;
     if (this._failed) { this._stats.discarded++; return; }
     try {
+      if (!Number.isSafeInteger(presentationTime) || presentationTime <= 0) throw new Error('Invalid HEVC presentation timestamp');
       const units = splitAnnexB(au);
       if (!units.length) throw new Error('Missing HEVC Annex B NAL units');
       this._watchFirstFrame();
@@ -255,7 +256,7 @@ export class H265Player {
         this._keyframeTimer = null;
       }
       if (!this._decoder || this._decoder.state !== 'configured') { this._stats.discarded++; return; }
-      this._decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: Math.round(performance.now() * 1000), data: lengthPrefixed(units) }));
+      this._decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: presentationTime, data: lengthPrefixed(units) }));
       this._stats.submitted++;
     } catch (e) {
       this._fail(e.message);

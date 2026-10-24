@@ -13,7 +13,7 @@ BINDING(3) RWByteAddressBuffer segments : register(u1);
 BINDING(4) RWStructuredBuffer<uint> info : register(u2);
 BINDING(5) RWByteAddressBuffer output : register(u3);
 
-// Metadata words: tile count, NV12, quant, omitted bits, pass (SIMPLE/FIRST/UPGRADE),
+// Metadata words: tile count, NV12, quant, quality stage (or legacy omitted bits), pass (SIMPLE/FIRST/UPGRADE),
 // cache tile count, reserved, reserved, then one coefficient-cache index per tile.
 static const uint SEGMENT_BYTES = 32768;
 static const uint MAX_SEGMENTS = 48;
@@ -21,6 +21,19 @@ groupshared int a[4096];
 groupshared int b[4096];
 
 uint parameter(uint i) { return metadata.Load(i * 4); }
+static const uint qualityBits[3][3][10] = {
+    {{1,1,1,1,2,2,2,1,1,1},{1,1,1,1,2,2,2,1,1,1},{1,1,1,1,2,2,2,1,1,0}},
+    {{0,1,1,1,1,1,1,0,0,0},{0,1,1,1,2,1,1,0,0,0},{0,1,1,1,2,1,1,1,0,0}},
+    {{0,0,0,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0,0,0}}
+};
+uint qualityBand(uint i) {
+    if(i<1023)return 7;if(i<2046)return 8;if(i<3007)return 9;
+    if(i<3279)return 4;if(i<3551)return 5;if(i<3807)return 6;
+    if(i<3879)return 1;if(i<3951)return 2;if(i<4015)return 3;return 0;
+}
+uint qualityBit(uint stage,uint component,uint i) {
+    return qualityBits[stage-0x100][component][qualityBand(i)];
+}
 uint byteAt(uint i) { return (pixels.Load(i & ~3u) >> ((i & 3) * 8)) & 255; }
 int sampleLine(bool vertical, int lineIndex, int i, int size) {
     if (vertical) return a[i * size + lineIndex];
@@ -142,7 +155,12 @@ void finish(Writer w,uint segment) {
 }
 int entropyValue(uint base,uint i) {
     int v=coefficients[base+i];
-    if (parameter(4)==1 && i<4015) v/=int(1u<<parameter(3));
+    if (parameter(4)==1) {
+        if(parameter(3)>=0x100) {
+            uint n=qualityBit(parameter(3),(base/4096)%3,i);
+            v=i>=4015?v>>n:v/int(1u<<n);
+        } else if(i<4015) v/=int(1u<<parameter(3));
+    }
     return v;
 }
 int deltaValue(uint base,uint i) {
@@ -174,20 +192,28 @@ void encodeTiles(uint3 group : SV_GroupID) {
     Writer w=writer(segment),raw=writer(segment+1);
     int kp=8,krp=8;
     if (parameter(4)==2) {
-        uint bits=parameter(3),mask=(1u<<bits)-1;
+        bool official=parameter(3)>=0x100;
+        uint bits=official?0:parameter(3),mask=official?0:(1u<<bits)-1;
         uint run=0;
-        // SRL sees only coefficients whose magnitude was zero in FIRST.
-        for (uint i=0;i<=4015;i++) {
-            int v=i<4015?coefficients[base+i]:0;
+        uint end=official?4096:4015;
+        // SRL follows the previous pass's sign state, separately per subband.
+        for (uint i=0;i<=end;i++) {
+            int v=i<end?coefficients[base+i]:0;
             uint magnitude=abs(v);
-            if (i<4015 && magnitude>mask) { writeBits(raw,magnitude&mask,bits); continue; }
-            if (i<4015 && v==0) { run++; continue; }
+            if(i<end && official) {
+                uint from=qualityBit(parameter(3)-1,c,i),to=qualityBit(parameter(3),c,i);
+                bits=from-to;if(bits==0)continue;mask=(1u<<bits)-1;
+                if(i>=4015) {writeBits(raw,uint(v>>to)&mask,bits);continue;}
+                if((magnitude>>from)!=0) {writeBits(raw,(magnitude>>to)&mask,bits);continue;}
+                magnitude=(magnitude>>to)&mask;v=v<0?-int(magnitude):int(magnitude);
+            } else if (i<end && magnitude>mask) { writeBits(raw,magnitude&mask,bits); continue; }
+            if (i<end && v==0) { run++; continue; }
             // An empty SRL stream has only the mandatory lookahead byte.
-            if (i==4015 && run==0) break;
+            if (i==end && run==0) break;
             uint k=kp>>3;
             while (run >= (1u<<k)) { writeBits(w,0,1); run-=1u<<k; kp=min(80,kp+4); k=kp>>3; }
             writeBits(w,1,1); writeBits(w,run,k); kp=max(0,kp-6); run=0;
-            if (i==4015) break;
+            if (i==end) break;
             writeBits(w,v<0?1:0,1);
             writeBits(w,0,magnitude-1);
             if (magnitude<mask) writeBits(w,1,1);

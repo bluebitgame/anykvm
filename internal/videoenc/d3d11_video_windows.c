@@ -144,12 +144,15 @@ int bk_d3d_convert(bk_d3d_converter *converter, ID3D11Device *device, ID3D11Devi
     D3D11_VIDEO_PROCESSOR_STREAM stream = {0};
     stream.Enable = TRUE;
     stream.pInputSurface = e->input_view;
+    bk_vendor_phase(o, "D3D11 AcquireSync");
     hr = IDXGIKeyedMutex_AcquireSync(e->shared_mutex, 0, 1000);
     if (hr != S_OK) {
         hr = E_FAIL;
         goto fallback;
     }
+    bk_vendor_phase(o, "D3D11 VideoProcessorBlt");
     hr = ID3D11VideoContext_VideoProcessorBlt(e->video_context, e->processor, e->output_view, 0, 1, &stream);
+    bk_vendor_phase(o, "D3D11 ReleaseSync");
     HRESULT unlocked = IDXGIKeyedMutex_ReleaseSync(e->shared_mutex, 0);
     if (FAILED(hr))
         goto fallback;
@@ -157,6 +160,7 @@ int bk_d3d_convert(bk_d3d_converter *converter, ID3D11Device *device, ID3D11Devi
         hr = unlocked;
         goto fallback;
     }
+    bk_vendor_phase(o, "D3D11 Flush");
     ID3D11DeviceContext_Flush(context);
     BK_MARK(o, conversion_end);
     return 0;

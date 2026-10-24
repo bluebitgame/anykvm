@@ -29,7 +29,7 @@ func TestJPEGEntropyShaderBytes(t *testing.T) {
 	gate := source[strings.Index(source, "// MCU tile gate."):strings.Index(source, "// Shared DCT workspace.")]
 	source = source[:strings.Index(source, "#ifdef __spirv__")] + gate + source[strings.Index(source, "// One restart interval"):]
 	source = regexp.MustCompile(`\[numthreads\([^\]]+\)\]`).ReplaceAllString(source, "")
-	source = strings.NewReplacer("inout EntropyWriter writer", "EntropyWriter &writer", "inout int previousDC", "int &previousDC",
+	source = strings.NewReplacer("ENTROPY_LOOP", "", "inout EntropyWriter writer", "EntropyWriter &writer", "inout int previousDC", "int &previousDC",
 		"inout uint mcu", "uint &mcu", "(EntropyWriter)0", "EntropyWriter{}", "groupshared ", "",
 		" : SV_DispatchThreadID", "", " : SV_GroupID", "", " : SV_GroupThreadID", "").Replace(source)
 	// Count actual coefficient requests in the executed shader. DC-only blocks
@@ -45,6 +45,9 @@ func TestJPEGEntropyShaderBytes(t *testing.T) {
 	command := exec.Command(compiler, "-std=c++17", "-O2", "-pthread", "-I"+dir, "testdata/entropy_shader.cpp", "-o", program)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("compile entropy shader: %v\n%s", err, output)
+	}
+	if output, err := exec.Command(program, "writer").CombinedOutput(); err != nil {
+		t.Fatalf("bit writer alignment/stuffing: %v\n%s", err, output)
 	}
 	var inputs bytes.Buffer
 	var expected [][]byte

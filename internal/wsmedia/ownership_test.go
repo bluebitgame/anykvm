@@ -124,7 +124,7 @@ func TestWSLargeBorrowedPayloadDeliveredAndReleased(t *testing.T) {
 			s.PushFrame(f)
 			f.Release()
 			_, msg, err := c.ReadMessage()
-			if err != nil || len(msg) != len(data)+1 || msg[0] != msgHEVC || !bytes.Equal(msg[1:], data) {
+			if err != nil || len(msg) != len(data)+9 || msg[0] != msgHEVC || !bytes.Equal(msg[9:], data) {
 				t.Fatalf("fragmented media delivery: %v (%d bytes)", err, len(msg))
 			}
 			deadline := time.Now().Add(time.Second)

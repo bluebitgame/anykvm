@@ -20,6 +20,7 @@
 #include <sys/sysmacros.h>
 #endif
 #include <unistd.h>
+#include <time.h>
 
 struct bk_kms {
     int fd;
@@ -213,6 +214,10 @@ bk_kms *bk_kms_open(int index, bk_kms_output *output, char *error, size_t capaci
 int bk_kms_next(bk_kms *k, bk_kms_frame *out, char *error, size_t capacity) {
     memset(out, 0, sizeof(*out));
     out->fd = -1;
+    struct timespec acquired;
+    if (clock_gettime(CLOCK_MONOTONIC, &acquired) < 0)
+        return failure(error, capacity, "read capture clock");
+    out->pts_us = (int64_t)acquired.tv_sec * 1000000 + acquired.tv_nsec / 1000;
     struct drm_mode_crtc crtc = {.crtc_id = k->output.crtc};
     struct drm_mode_get_plane plane = {.plane_id = k->output.plane};
     if (call(k->fd, DRM_IOCTL_MODE_GETCRTC, &crtc) < 0 || !crtc.mode_valid || crtc.mode.hdisplay != k->output.width ||

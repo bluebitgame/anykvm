@@ -49,9 +49,13 @@ func (c *client) setOutputSize(w, h int) {
 	if previous == 0 || previous == size {
 		return
 	}
+	c.requestGraphicsRefresh()
+}
+
+func (c *client) requestGraphicsRefresh() {
 	c.reset.Store(true)
 	// A fixed-size source may be idle. Reuse its last independent picture so a
-	// client layout change does not wait for fresh source damage.
+	// refresh or client layout change does not wait for fresh source damage.
 	c.framePushMu.Lock()
 	defer c.framePushMu.Unlock()
 	if c.lastSource != nil && !c.compressedSource {

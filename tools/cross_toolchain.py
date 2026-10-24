@@ -323,7 +323,7 @@ def macos_sdl(dry_run):
 
 def append_flags(env, name, args):
     # Setting CGO_CFLAGS replaces Go's defaults; keep release code optimized.
-    default = "-O2 -g" if name in ("CGO_CFLAGS", "CGO_CXXFLAGS") else ""
+    default = "-O3 -g" if name in ("CGO_CFLAGS", "CGO_CXXFLAGS") else ""
     env[name] = " ".join(filter(None, (env.get(name, default), command_string(args))))
 
 

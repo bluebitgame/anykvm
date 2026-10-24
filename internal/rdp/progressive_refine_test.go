@@ -106,7 +106,7 @@ func TestProgressiveLayeredNativeEquivalence(t *testing.T) {
 									end := progressiveBatchEnd(rects, i)
 									batch := rects[i:end]
 									initial := e.first || e.w != w || e.h != h
-									want := encodeProgressivePass(pixels, w, h, batch, 1, initial, quant, format, bits, false, cache)
+									want := encodeProgressivePass(pixels, w, h, batch, 1, initial, quant, format, progressiveFirst50, false, cache)
 									got, err := e.encodeFormat(pixels, w, h, batch, 1, format)
 									if err != nil || !bytes.Equal(got, want) {
 										t.Fatalf("FIRST %dx%d %s format=%d: %v", w, h, pattern, format, err)
@@ -117,13 +117,16 @@ func TestProgressiveLayeredNativeEquivalence(t *testing.T) {
 									t.Fatal("cached base coefficients differ")
 								}
 								for batch := e.pendingRects(8); len(batch) > 0; batch = e.pendingRects(8) {
-									want := encodeProgressivePass(nil, w, h, batch, 2, false, quant, format, bits, true, cache)
+									stage := progressiveFirst50 + int(e.tileStage(progressiveTileIndex(w, batch[0].x, batch[0].y)))
+									want := encodeProgressivePass(nil, w, h, batch, 2, false, quant, format, stage, true, cache)
 									got, err := e.upgrade(batch, 2)
 									if err != nil || !bytes.Equal(got, want) {
 										t.Fatalf("UPGRADE %dx%d %s: %v", w, h, pattern, err)
 									}
-									if _, err := e.upgrade(batch, 3); err == nil {
-										t.Fatal("repeated upgrade accepted")
+									if !e.pending[progressiveTileIndex(w, batch[0].x, batch[0].y)] {
+										if _, err := e.upgrade(batch, 3); err == nil {
+											t.Fatal("repeated upgrade accepted")
+										}
 									}
 								}
 							}
@@ -220,8 +223,12 @@ func TestProgressiveLayeredFailureFallback(t *testing.T) {
 				}
 				continue
 			}
-			want := encodeProgressivePass(pixels, 64, 64, rects, 2, false, 8, progressiveBGRA, 2, upgrade, cache)
-			if err != nil || !bytes.Equal(got, want) || !broken.closed || e.pending[0] == upgrade {
+			stage := progressiveFirst50
+			if upgrade {
+				stage = progressiveUpgrade75
+			}
+			want := encodeProgressivePass(pixels, 64, 64, rects, 2, false, 8, progressiveBGRA, stage, upgrade, cache)
+			if err != nil || !bytes.Equal(got, want) || !broken.closed || !e.pending[0] {
 				t.Fatalf("fallback upgrade=%v err=%v", upgrade, err)
 			}
 		}
@@ -244,9 +251,10 @@ func TestProgressiveRefinementPriority(t *testing.T) {
 	}
 	c := channelTestClient()
 	c.frames = make(chan bridge.Frame, 2)
-	c.acknowledged = c.sent - 1 // FIRST can still be in flight.
+	c.pendingFrames = map[uint32]graphicsPendingFrame{c.sent: {}} // FIRST can still be in flight.
+	c.graphicsFlow = graphicsFlowControl{interval: time.Second / 60, rtt: 50 * time.Millisecond, baseline: 50 * time.Millisecond}
 	n, payload, _, _, err := c.sendProgressiveRefinement(e, time.Now())
-	if err != nil || n != 2 || payload == 0 || len(e.pendingRects(8)) != 0 {
+	if err != nil || n != 2 || payload == 0 || len(e.pendingRects(8)) != 2 || e.tileStage(0) != 2 {
 		t.Fatalf("fresh FIRST was not immediately refined: tiles=%d payload=%d err=%v", n, payload, err)
 	}
 }
@@ -257,7 +265,8 @@ func TestProgressiveRefinementRespectsWindowAndCapturePriority(t *testing.T) {
 		c := &client{frames: make(chan bridge.Frame, 2), done: make(chan struct{})}
 		switch reason {
 		case "full":
-			c.sent = 2
+			c.nextGraphicsFrame()
+			c.nextGraphicsFrame()
 		case "queued":
 			c.frames <- bridge.Frame{}
 		case "reset":
@@ -299,16 +308,16 @@ func TestProgressiveRefinementYieldsToNewCapture(t *testing.T) {
 	}
 	c := channelTestClient()
 	c.frames = make(chan bridge.Frame, 2)
-	c.acknowledged = c.sent
+	clear(c.pendingFrames)
 	e.native = &captureDuringUpgradeCodec{queued: c.frames}
 	n, _, _, _, err := c.sendProgressiveRefinement(e, time.Now())
-	if err != nil || n != 8 || len(e.pendingRects(64)) != 8 || len(c.frames) != 1 {
-		t.Fatalf("new capture did not stop refinement after its current batch: tiles=%d err=%v", n, err)
+	if err != nil || n != 0 || len(e.pendingRects(64)) != 16 || len(c.frames) != 1 || len(c.pendingFrames) != 0 {
+		t.Fatalf("new capture did not discard unwritten refinement: tiles=%d err=%v", n, err)
 	}
-	c.acknowledged = c.sent
+	clear(c.pendingFrames)
 	before := c.sent
 	n, _, _, _, err = c.sendProgressiveRefinement(e, time.Now())
-	if err != nil || n != 0 || c.sent != before || len(e.pendingRects(64)) != 8 {
+	if err != nil || n != 0 || c.sent != before || len(e.pendingRects(64)) != 16 {
 		t.Fatal("queued capture did not take priority over remaining refinements")
 	}
 }

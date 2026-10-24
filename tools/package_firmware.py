@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package board firmware with checksums, source revision and flashing guides."""
+"""Package board firmware with checksums, source revision and licenses."""
 
 import argparse
 import hashlib
@@ -12,7 +12,15 @@ import zipfile
 from build_firmware import ROOT, TARGETS
 
 
-def package(target, source, output, revision, root=ROOT):
+GROUPS = {
+    "pico1": ("pico", "pico-pio-usb", "pico-ps2"),
+    "pico2": ("pico2", "pico2-pio-usb", "pico2-ps2"),
+    "nrf52840": ("nrf52840-xiao", "nrf52840-feather", "nrf52840-dongle"),
+    **{target: (target,) for target in TARGETS if not target.startswith(("pico", "nrf52840"))},
+}
+
+
+def stage_target(target, source, staging, revision):
     family, _, board, _ = TARGETS[target]
     manifest = json.loads((source / "artifacts.json").read_text())
     if not isinstance(manifest, dict) or not manifest:
@@ -30,47 +38,63 @@ def package(target, source, output, revision, root=ROOT):
         files.append(path)
     if not any(path.suffix == required for path in files):
         raise ValueError(f"Missing {required} image for {target}")
-    name = "firmware-" + target
+    staging.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        shutil.copy2(path, staging / path.name)
+    shutil.copy2(source / "artifacts.json", staging / "artifacts.json")
+    metadata = {"target": target, "board": board, "source_revision": revision,
+                "protocol_version": 1}
+    (staging / "release.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+
+def write_archive(staging, output):
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="firmware-") as temporary:
-        staging = Path(temporary) / name
-        staging.mkdir()
-        for path in files:
-            shutil.copy2(path, staging / path.name)
-        shutil.copy2(source / "artifacts.json", staging / "artifacts.json")
-        shutil.copy2(root / "LICENSE", staging / "LICENSE")
-        # Preserve relative links between board guides and shared wiring notes.
-        for guide in (root / "firmware").rglob("*.md"):
-            destination = staging / "firmware" / guide.relative_to(root / "firmware")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(guide, destination)
-        metadata = {"target": target, "board": board, "source_revision": revision,
-                    "protocol_version": 1}
-        (staging / "release.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-        (staging / "README.md").write_text(
-            f"# AnyKVM firmware: {target}\n\nBoard: `{board}`\n\nSource: `{revision}`\n\n"
-            "Use only with the matching board. See `firmware/README.md` and the board guide "
-            "for wiring and flashing instructions. Firmware uses AnyKVM serial HID protocol v1.\n"
-            "`artifacts.json` contains image SHA-256 checksums.\n", encoding="utf-8")
-        archive = output / (name + ".zip")
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
-            for path in sorted(staging.rglob("*")):
-                if path.is_file():
-                    bundle.write(path, path.relative_to(staging.parent).as_posix())
+    archive = output / (staging.name + ".zip")
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for path in sorted(staging.rglob("*")):
+            if path.is_file():
+                bundle.write(path, path.relative_to(staging.parent).as_posix())
     checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
     archive.with_suffix(".zip.sha256").write_text(f"{checksum}  {archive.name}\n", encoding="utf-8")
     return archive
 
 
+def package(target, source, output, revision, root=ROOT):
+    with tempfile.TemporaryDirectory(prefix="firmware-") as temporary:
+        staging = Path(temporary) / ("firmware-" + target)
+        stage_target(target, source, staging, revision)
+        shutil.copy2(root / "LICENSE", staging / "LICENSE")
+        return write_archive(staging, output)
+
+
+def package_group(group, source, output, revision, root=ROOT):
+    targets = GROUPS[group]
+    if len(targets) == 1:
+        return package(targets[0], source / targets[0], output, revision, root)
+    with tempfile.TemporaryDirectory(prefix="firmware-") as temporary:
+        staging = Path(temporary) / ("firmware-" + group)
+        for target in targets:
+            # Variants can have identical image names; keep each in its own directory.
+            stage_target(target, source / target, staging / target, revision)
+        shutil.copy2(root / "LICENSE", staging / "LICENSE")
+        return write_archive(staging, output)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=TARGETS, required=True)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--target", choices=TARGETS)
+    selection.add_argument("--group", choices=GROUPS)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "build/dist")
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()
-    source = args.source or ROOT / "build/firmware/releases" / args.target
-    print(package(args.target, source, args.output, args.revision))
+    if args.group:
+        source = args.source or ROOT / "build/firmware/releases"
+        print(package_group(args.group, source, args.output, args.revision))
+    else:
+        source = args.source or ROOT / "build/firmware/releases" / args.target
+        print(package(args.target, source, args.output, args.revision))
 
 
 if __name__ == "__main__":

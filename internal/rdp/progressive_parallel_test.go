@@ -360,7 +360,7 @@ func TestProgressiveParallelWindowOrderAndFailure(t *testing.T) {
 					for j := range payload {
 						payload[j] = byte(i*8 + j)
 					}
-					want := progressiveLayeredWire(rects[i*8:(i+1)*8], 23, i == 0, 6, 2, false, payload, 8)
+					want := progressiveLayeredWire(rects[i*8:(i+1)*8], 23, i == 0, 6, progressiveFirst50, false, payload, 8)
 					if !bytes.Equal(packet, want) {
 						t.Fatalf("packet %d lost FIRST/wire order", i)
 					}

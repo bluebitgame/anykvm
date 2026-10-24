@@ -76,7 +76,7 @@ func TestAsyncEncoderPreservesSourceMetadataAndPendingIDR(t *testing.T) {
 	e := &asyncTestEncoder{}
 	d := &ffmpegDevice{encoder: e}
 	o := videoenc.Options{Width: 640, Height: 480, FPS: 30, Rate: framerate.New(30, 1), Codec: "hevc"}
-	first := &Frame{Width: 1280, Height: 720, CapturedAt: time.Now().Add(-time.Second)}
+	first := &Frame{Width: 1280, Height: 720, CapturedAt: time.Now().Add(-time.Second), PresentationPTS: 1000000}
 	if out, err := d.submitEncoded(e, o, first, first.CapturedAt); err != nil || out != nil {
 		t.Fatalf("premature completion: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestAsyncEncoderPreservesSourceMetadataAndPendingIDR(t *testing.T) {
 		t.Fatal("busy submission lost IDR or retained rejected input")
 	}
 	e.busy = false
-	second := &Frame{Width: 1280, Height: 720, CapturedAt: time.Now()}
+	second := &Frame{Width: 1280, Height: 720, CapturedAt: time.Now(), PresentationPTS: 1033333}
 	if _, err := d.submitEncoded(e, o, second, second.CapturedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestAsyncEncoderPreservesSourceMetadataAndPendingIDR(t *testing.T) {
 	e.packets = []*videoenc.Packet{{ID: e.ids[0], Data: []byte{1}}, {ID: e.ids[1], Data: []byte{2}}}
 	for _, src := range []*Frame{first, second} {
 		out, err := d.receiveEncoded()
-		if err != nil || out == nil || out.CapturedAt != src.CapturedAt || out.Width != 640 || out.SourceWidth != 1280 || out.Format != FormatHEVC || out.nativeBuffer != nil {
+		if err != nil || out == nil || out.CapturedAt != src.CapturedAt || out.PresentationPTS != src.PresentationPTS || out.Width != 640 || out.SourceWidth != 1280 || out.Format != FormatHEVC || out.nativeBuffer != nil {
 			t.Fatalf("wrong completion: %+v, %v", out, err)
 		}
 	}

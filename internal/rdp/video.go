@@ -298,8 +298,7 @@ func (c *client) videoLoop() error {
 	defer v.close()
 	w, h := 0, 0
 	var layoutRequestW, layoutRequestH int
-	started := time.Now()
-	statsStarted := started
+	statsStarted := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	var received, frames, skipped int64
@@ -313,20 +312,18 @@ func (c *client) videoLoop() error {
 			return nil
 		case <-ticker.C:
 			elapsed := time.Since(statsStarted).Seconds()
-			c.ackMu.Lock()
-			pending, suspended := c.sent-c.acknowledged, c.suspendAck
-			c.ackMu.Unlock()
-			logging.Debugf("rdp: %s: video input=%.1f fps output=%.1f fps skipped=%d process_ms=%.1f/%.1f send_ms=%.1f/%.1f ack_wait_ms=%.1f/%.1f pending=%d ack_suspended=%t queued=%d (mean/max)",
+			logging.Debugf("rdp: %s: video input=%.1f fps output=%.1f fps skipped=%d process_ms=%.1f/%.1f send_ms=%.1f/%.1f ack_wait_ms=%.1f/%.1f %s queued=%d (mean/max)",
 				c.conn.RemoteAddr(), float64(received)/elapsed, float64(frames)/elapsed, skipped,
 				float64(processTotal)/float64(max(received, 1))/float64(time.Millisecond), float64(processMax)/float64(time.Millisecond),
 				float64(sendTotal)/float64(max(frames, 1))/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond),
-				float64(ackTotal)/float64(max(frames, 1))/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond), pending, suspended, len(c.frames))
+				float64(ackTotal)/float64(max(frames, 1))/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond), c.graphicsFlowStatus(), len(c.frames))
 			statsStarted = time.Now()
 			received, frames, skipped = 0, 0, 0
 			processTotal, sendTotal, ackTotal, processMax, sendMax, ackMax = 0, 0, 0, 0, 0, 0
 		case f := <-c.frames:
 			received++
 			held = f
+			c.setGraphicsFPS(captureFPS(f))
 			var frameAckWait time.Duration
 			if !predictionCoded(f.Format) {
 				ackStarted := time.Now()
@@ -395,12 +392,10 @@ func (c *client) videoLoop() error {
 			}
 			f.ContentRect = frameContentRect(f)
 			c.frameGeometry(f, w, h)
-			c.ackMu.Lock()
-			c.sent++
-			id := c.sent
-			c.ackMu.Unlock()
-			packet := graphicsFrame(data, w, h, id, uint32(time.Since(started)/time.Millisecond))
+			id := c.nextGraphicsFrame()
+			packet := graphicsFrame(data, w, h, id, time.Now())
 			sendStarted := time.Now()
+			c.recordGraphicsWrite(id, len(packet), true, sendStarted)
 			if err := c.sendGFX(packet); err != nil {
 				return err
 			}

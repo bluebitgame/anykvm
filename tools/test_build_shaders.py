@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +10,42 @@ import build_shaders
 
 
 class ShaderPreparationTests(unittest.TestCase):
+    def test_highest_optimization_for_both_spirv_backends_and_cache_invalidation(self):
+        for compiler, backend, optimization, output_flag in (
+                ("glslang", "glslang", "-O", "-o"), ("dxc.exe", "dxc", "-O3", "-Fo")):
+            with self.subTest(compiler=compiler), tempfile.TemporaryDirectory() as temporary:
+                source = Path(temporary) / "desktop.hlsl"
+                source.write_text("void main() {}")
+                output = source.with_suffix(".spv")
+
+                def compile_shader(command, **kwargs):
+                    self.assertIn(optimization, command)
+                    self.assertNotIn("-Od", command)
+                    self.assertNotIn("-Os", command)
+                    self.assertEqual(Path(command[command.index(output_flag) + 1]), output)
+                    output.write_bytes(b"SPIR-V fixture")
+
+                with patch.object(build_shaders, "SOURCES", (source,)), \
+                        patch.object(build_shaders.shutil, "which", return_value=compiler), \
+                        patch.object(build_shaders.subprocess, "run", side_effect=compile_shader) as compile:
+                    build_shaders.prepare()
+                    manifest_path = output.with_suffix(".json")
+                    manifest = json.loads(manifest_path.read_text())
+                    self.assertEqual(manifest["compiler_backend"], backend)
+                    self.assertIn(optimization, manifest["compiler_options"])
+                    build_shaders.prepare()
+                    self.assertEqual(compile.call_count, 1)
+                    # A valid source/output hash cannot keep an older, less
+                    # optimized artifact alive after the release policy changes.
+                    for obsolete in ({key: value for key, value in manifest.items()
+                                      if not key.startswith("compiler_")},
+                                     {**manifest, "compiler_options": ["-Od"]}):
+                        manifest_path.write_text(json.dumps(obsolete))
+                        self.assertFalse(build_shaders.current(source))
+                        build_shaders.prepare()
+                        self.assertTrue(build_shaders.current(source))
+                    self.assertEqual(compile.call_count, 3)
+
     def test_missing_offline_compiler_never_downloads(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(build_shaders.cross_toolchain, "CACHE", Path(temporary)), \

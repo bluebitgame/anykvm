@@ -10,6 +10,9 @@ import (
 
 var verbosity atomic.Int32
 
+// DebugEnabled lets native backends gate diagnostics at the same log level.
+func DebugEnabled() bool { return verbosity.Load() >= 2 }
+
 // Configure enables connection logs with info, and all logs with debug.
 // Debug takes precedence when both flags are supplied.
 func Configure(info, debug bool) {

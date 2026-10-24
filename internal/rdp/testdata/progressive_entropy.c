@@ -23,7 +23,7 @@ int main(void) {
         } else {
             if (fread(e->coeffs, sizeof(int32_t), count, stdin) != count) return 3;
             if (kind == 1 && count == 4096) rlgr(e);
-            else if (kind == 2 && extra >= 1 && extra <= 4) srl(e, count, extra);
+            else if (kind == 2 && extra >= 1 && extra <= 4) srl(e, count, extra, NULL);
             else return 4;
         }
         if (e->failed) return 5;

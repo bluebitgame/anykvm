@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TimestampFramePresenter } from '../web/presenter.js';
-import { parseTimedH264 } from '../web/timed-video.js';
+import { parseTimedVideo } from '../web/timed-video.js';
 
 function fixture(draw, bufferMs = 1000 / 60) {
   let now = 100, next = 0;
@@ -429,13 +429,13 @@ test('timestamp payload parsing preserves exact microseconds and Annex-B bytes',
   const payload = storage.subarray(3, 17);
   new DataView(payload.buffer, payload.byteOffset).setBigUint64(0, source, true);
   payload.set([0, 0, 0, 1, 0x65, 0x80], 8);
-  const parsed = parseTimedH264(payload);
+  const parsed = parseTimedVideo(payload);
   assert.equal(parsed.timestamp, Number(source));
   assert.deepEqual([...parsed.data], [0, 0, 0, 1, 0x65, 0x80]);
   assert.equal(parsed.data.buffer, storage.buffer);
-  assert.equal(parseTimedH264(payload.subarray(0, 8)), null);
+  assert.equal(parseTimedVideo(payload.subarray(0, 8)), null);
   new DataView(payload.buffer, payload.byteOffset).setBigUint64(0, 0n, true);
-  assert.equal(parseTimedH264(payload), null);
+  assert.equal(parseTimedVideo(payload), null);
   new DataView(payload.buffer, payload.byteOffset).setBigUint64(0, 1n << 53n, true);
-  assert.equal(parseTimedH264(payload), null);
+  assert.equal(parseTimedVideo(payload), null);
 });

@@ -2,12 +2,12 @@ package rdp
 
 import (
 	"errors"
+	"time"
 
 	"anykvm/internal/logging"
 )
 
-// MS-RDPEGFX 3.1.8.1.3 and 3.2.8.1.5: one coarse original FIRST,
-// followed by one UPGRADE to the existing base quantization (quality 255).
+// MS-RDPEGFX 3.1.8.1.3 and 3.2.8.1.5: FIRST 50%, UPGRADE 75%, UPGRADE 100%.
 // No temporal differences are used. Keep un-differenced quantized coefficients
 // so refinements need neither source pixels nor another color conversion/DWT.
 const progressiveTileCoefficients = 3 * 4096
@@ -37,6 +37,8 @@ func (e *progressiveEncoder) setRefinement(bits int) error {
 
 func (e *progressiveEncoder) initRefinement(w, h int) {
 	e.coefficients, e.pending = nil, nil
+	e.stages = nil
+	e.refineCursor = 0
 	n := ((w + 63) / 64) * ((h + 63) / 64)
 	if e.refineBits == 0 {
 		return
@@ -50,17 +52,51 @@ func (e *progressiveEncoder) initRefinement(w, h int) {
 		e.coefficients = make([]int32, n*progressiveTileCoefficients)
 	}
 	e.pending = make([]bool, n)
+	e.stages = make([]uint8, n)
 }
 
 func progressiveTileIndex(w, x, y int) int { return (y/64)*((w+63)/64) + x/64 }
 
-func (e *progressiveEncoder) discardRefinements() { clear(e.pending) }
+func (e *progressiveEncoder) discardRefinements() {
+	clear(e.pending)
+	clear(e.stages)
+	e.refineCursor = 0
+}
 
 func (e *progressiveEncoder) pendingRects(limit int) []bitmapRect {
+	return e.pendingRectsExcept(limit, nil)
+}
+
+func (e *progressiveEncoder) hasRefinements() bool {
+	if e != nil {
+		for _, pending := range e.pending {
+			if pending {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Rotate between tiles, preserving FIRST -> 75% -> 100% per tile rather than
+// globally preferring all 75% passes. Repeated FIRSTs in a changing tile must
+// not starve an unchanged neighbor's final pass. Each packet has one quality.
+func (e *progressiveEncoder) pendingRectsExcept(limit int, blocked []bool) []bitmapRect {
 	var rects []bitmapRect
+	if limit <= 0 || len(e.pending) == 0 {
+		return nil
+	}
 	columns := (e.w + 63) / 64
-	for i, pending := range e.pending {
-		if !pending {
+	stage := uint8(0)
+	for offset := range e.pending {
+		i := (e.refineCursor + offset) % len(e.pending)
+		if !e.pending[i] || len(blocked) > i && blocked[i] {
+			continue
+		}
+		if stage == 0 {
+			stage = e.tileStage(i)
+		}
+		if e.tileStage(i) != stage {
 			continue
 		}
 		x, y := (i%columns)*64, (i/columns)*64
@@ -73,8 +109,12 @@ func (e *progressiveEncoder) pendingRects(limit int) []bitmapRect {
 }
 
 func (e *progressiveEncoder) encodeLayered(pixels []byte, rects []bitmapRect, frame uint32, format progressivePixelFormat, upgrade bool) ([]byte, error) {
+	bits := progressiveFirst50
+	if upgrade {
+		bits += int(e.tileStage(progressiveTileIndex(e.w, rects[0].x, rects[0].y)))
+	}
 	if native, ok := e.native.(nativeProgressiveLayered); ok {
-		out, err := native.encodePass(pixels, e.w, e.h, rects, frame, e.first, format, e.refineBits, upgrade, e.coefficients)
+		out, err := native.encodePass(pixels, e.w, e.h, rects, frame, e.first, format, bits, upgrade, e.coefficients)
 		if err == nil {
 			return out, nil
 		}
@@ -87,10 +127,51 @@ func (e *progressiveEncoder) encodeLayered(pixels []byte, rects []bitmapRect, fr
 		e.native.close()
 		e.native = nil
 	}
-	return encodeProgressivePass(pixels, e.w, e.h, rects, frame, e.first, e.quantization, format, e.refineBits, upgrade, e.coefficients), nil
+	return encodeProgressivePass(pixels, e.w, e.h, rects, frame, e.first, e.quantization, format, bits, upgrade, e.coefficients), nil
+}
+
+func (e *progressiveEncoder) tileStage(i int) uint8 {
+	if len(e.stages) == len(e.pending) && e.stages[i] != 0 {
+		return e.stages[i]
+	}
+	return 1
+}
+
+// Source copies need final pixels before their scratch snapshot. Complete both
+// remaining stages, retaining separate progressive packets and sign histories.
+func (e *progressiveEncoder) finishUpgrades(rects []bitmapRect, frame uint32) ([][]byte, error) {
+	var out [][]byte
+	for stage := uint8(1); stage <= 2; stage++ {
+		var batch []bitmapRect
+		for _, r := range rects {
+			i := progressiveTileIndex(e.w, r.x, r.y)
+			if e.pending[i] && e.tileStage(i) == stage {
+				batch = append(batch, r)
+			}
+		}
+		if len(batch) > 0 {
+			packet, err := e.upgrade(batch, frame)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, packet)
+		}
+	}
+	return out, nil
 }
 
 func (e *progressiveEncoder) upgrade(rects []bitmapRect, frame uint32) ([]byte, error) {
+	out, err := e.prepareUpgrade(rects, frame)
+	if err == nil {
+		e.commitUpgrade(rects)
+	}
+	return out, err
+}
+
+// Encoding an UPGRADE only reads the full coefficient cache, on both CPU and
+// GPU. Background work can discard this packet without advancing the client's
+// precision/sign history; commit only after its transport write succeeds.
+func (e *progressiveEncoder) prepareUpgrade(rects []bitmapRect, frame uint32) ([]byte, error) {
 	if e.closed || len(e.pending) == 0 || len(rects) == 0 || len(rects) > progressiveBatchRects {
 		return nil, errors.New("invalid Progressive upgrade batch")
 	}
@@ -100,19 +181,43 @@ func (e *progressiveEncoder) upgrade(rects []bitmapRect, frame uint32) ([]byte, 
 			!e.pending[progressiveTileIndex(e.w, r.x, r.y)] {
 			return nil, errors.New("Progressive upgrade requires a pending FIRST tile")
 		}
+		if e.tileStage(progressiveTileIndex(e.w, r.x, r.y)) != e.tileStage(progressiveTileIndex(e.w, rects[0].x, rects[0].y)) {
+			return nil, errors.New("mixed Progressive upgrade stages")
+		}
 		for _, prior := range rects[:i] {
 			if prior.x == r.x && prior.y == r.y {
 				return nil, errors.New("duplicate Progressive upgrade tile")
 			}
 		}
 	}
+	started := time.Now()
 	out, err := e.encodeLayered(nil, rects, frame, progressiveBGRA, true)
 	if err == nil {
-		for _, r := range rects {
-			e.pending[progressiveTileIndex(e.w, r.x, r.y)] = false
+		cost := max(time.Nanosecond, time.Since(started)/time.Duration(len(rects)))
+		e.upgradeCostAt = time.Now()
+		if e.upgradeTileCost == 0 || cost > e.upgradeTileCost {
+			e.upgradeTileCost = cost
+		} else {
+			e.upgradeTileCost += (cost - e.upgradeTileCost) / 4
 		}
 	}
 	return out, err
+}
+
+func (e *progressiveEncoder) commitUpgrade(rects []bitmapRect) {
+	for _, r := range rects {
+		i := progressiveTileIndex(e.w, r.x, r.y)
+		stage := e.tileStage(i)
+		if len(e.stages) != len(e.pending) {
+			e.stages = make([]uint8, len(e.pending))
+		}
+		e.pending[i] = stage == 1
+		e.stages[i] = 0
+		if stage == 1 {
+			e.stages[i] = 2
+		}
+		e.refineCursor = (i + 1) % len(e.pending)
+	}
 }
 
 func encodeProgressivePass(pixels []byte, w, h int, rects []bitmapRect, frame uint32, first bool, quantization int, format progressivePixelFormat, bits int, upgrade bool, cache []int32) []byte {
@@ -125,9 +230,17 @@ func encodeProgressivePass(pixels []byte, w, h int, rects []bitmapRect, frame ui
 				var components [6][]byte
 				if upgrade {
 					for c := 0; c < 3; c++ {
-						components[2*c], components[2*c+1] = encodeProgressiveUpgradeComponent(base[c*4096:][:4096], bits)
+						if progressiveOfficialPass(bits) {
+							components[2*c], components[2*c+1] = encodeProgressiveQualityUpgrade(base[c*4096:][:4096], bits, c)
+						} else {
+							components[2*c], components[2*c+1] = encodeProgressiveUpgradeComponent(base[c*4096:][:4096], bits)
+						}
 					}
-					body := join([]byte{0, 0, 0}, u16(x/64), u16(y/64), []byte{255})
+					quality := byte(255)
+					if progressiveOfficialPass(bits) {
+						quality = 0
+					}
+					body := join([]byte{0, 0, 0}, u16(x/64), u16(y/64), []byte{quality})
 					for _, c := range components {
 						body = append(body, u16(len(c))...)
 					}
@@ -142,10 +255,10 @@ func encodeProgressivePass(pixels []byte, w, h int, rects []bitmapRect, frame ui
 						coeffs := progressiveReduceDWT(planes[c][:])
 						quantizeProgressive(coeffs, quantization)
 						copy(base[c*4096:], coeffs)
-						// Preserve LL3 in FIRST: floor rounding of signed chroma DC
-						// shifts the whole coarse tile's hue (often toward green).
-						for i := 0; i < progressiveReduceLL; i++ {
-							coeffs[i] /= int32(1 << bits)
+						// FIRST uses the stage's per-band precision; retain full
+						// coefficients in the cache for the two UPGRADE passes.
+						for i := 0; i < len(coeffs); i++ {
+							coeffs[i] = progressiveCoarse(coeffs[i], bits, c, i)
 						}
 						for i := 4095; i > progressiveReduceLL; i-- {
 							coeffs[i] -= coeffs[i-1]

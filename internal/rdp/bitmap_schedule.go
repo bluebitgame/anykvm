@@ -15,6 +15,7 @@ func predictionCoded(format capture.VideoFormat) bool {
 // Keep replacing independent captures while the client is busy. Releasing an
 // old GPU snapshot here also leaves capture pool space for a fresher snapshot.
 func (c *client) waitCaptureWindow(f bridge.Frame) (bridge.Frame, int, error) {
+	c.setGraphicsFPS(captureFPS(f))
 	dropped := 0
 	var timer *time.Timer
 	defer func() {
@@ -38,12 +39,14 @@ func (c *client) waitCaptureWindow(f bridge.Frame) (bridge.Frame, int, error) {
 			next = mergeProgressiveDamage(f, next)
 			f.Release()
 			f = next
+			c.setGraphicsFPS(captureFPS(f))
 			dropped++
 		case <-timer.C:
 			return f, dropped, errors.New("graphics frame acknowledgment timed out")
 		}
 	}
 	f, extra := c.latestCapture(f)
+	c.setGraphicsFPS(captureFPS(f))
 	return f, dropped + extra, nil
 }
 

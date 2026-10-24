@@ -362,7 +362,7 @@ func TestProgressiveMovePriorityRefinement(t *testing.T) {
 			if _, err := oracle.encode(old, w, h, dirtyProgressiveRectsFormat(old, nil, w, h, progressiveBGRA), 1); err != nil {
 				t.Fatal(err)
 			}
-			wantUpgrade, err := oracle.upgrade(sourceRects, 2)
+			wantUpgrade, err := oracle.finishUpgrades(sourceRects, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -419,10 +419,17 @@ func TestProgressiveMovePriorityRefinement(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("priority refinement stalled")
 			}
-			if !reflect.DeepEqual(events, []uint16{2, 5, 5, 2}) {
+			if len(events) < 5 || len(events) > 6 || !reflect.DeepEqual(events[:5], []uint16{2, 2, 5, 5, 2}) || len(events) == 6 && events[5] != 2 {
 				t.Fatalf("UPGRADE/snapshot/copy/FIRST order: %v", events)
 			}
-			if !bytes.Equal(payloads[0], wantUpgrade) {
+			if len(events) == 6 {
+				for _, tile := range progressiveCaptureTiles(t, payloads[3]) {
+					if tile.kind != 0xccc7 || tile.x != 2 {
+						t.Fatal("optional refinement touched the changed source or copied destination")
+					}
+				}
+			}
+			if !bytes.Equal(payloads[0], wantUpgrade[0]) || !bytes.Equal(payloads[1], wantUpgrade[1]) {
 				t.Fatal("source UPGRADE did not use the old coefficients or tiles were not deduplicated")
 			}
 			if fixture != nil && (fixture.resident.Load() != 2 || fixture.uploads.Load() != 0) {

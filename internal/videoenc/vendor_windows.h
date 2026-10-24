@@ -33,7 +33,11 @@ typedef struct {
     int adapter_set;
     uint64_t luid;
     bk_vendor_timing *timing;
+    void *volatile *phase; // Static stage name, published by the worker for stalled waits.
 } bk_vendor_options;
+static inline void bk_vendor_phase(const bk_vendor_options *o, const char *phase) {
+    if (o->phase) InterlockedExchangePointer(o->phase, (PVOID)phase);
+}
 static inline void bk_vendor_mark(int64_t *field) {
     LARGE_INTEGER clock;
     QueryPerformanceCounter(&clock);

@@ -3,6 +3,7 @@
 
 Requires Go. Missing cross toolchains and target/runtime libraries are prepared locally.
 macOS builds require the Apple SDK; macOS FFmpeg also needs Make and pkg-config.
+Windows-host Windows builds require Windows SDK FXC for offline JPEG/RemoteFX shaders.
 Run without arguments to choose platform, architecture, viewer support and FFmpeg support.
 FFmpeg is excluded by default; --tags ffmpeg enables its optional media backend.
 Target-specific environment overrides use ANYKVM_BUILD_<OS>_<ARCH>_<VARIABLE>,
@@ -22,6 +23,7 @@ import sys
 import tempfile
 
 import cross_toolchain
+import build_dxbc
 import build_shaders
 import prepare_sources
 import prepare_runtime
@@ -92,6 +94,10 @@ def target_environment(target, host, native_cc):
             triple = "linux-gnu" if system == "linux" else "w64-mingw32"
             env["CC"] = f"{cpu}-{triple}-gcc"
     env.update(GOOS=system, GOARCH=arch, CGO_ENABLED="1")
+    # Keep include/ABI flags supplied by the caller, but make the release
+    # optimization level authoritative (GCC/Clang use the last -O option).
+    for name in ("CGO_CFLAGS", "CGO_CXXFLAGS"):
+        env[name] = " ".join(filter(None, (env.get(name, "-g"), "-O3")))
     # The native macOS implementation uses ScreenCaptureKit (macOS 12.3+).
     if system == "darwin":
         env.setdefault("MACOSX_DEPLOYMENT_TARGET", "12.3")
@@ -249,6 +255,10 @@ def main(argv=None):
         succeeded, failed = [], []
         for target in targets:
             try:
+                tags = args.tags
+                if host.startswith("windows/") and target.startswith("windows/"):
+                    build_dxbc.prepare(dry_run=args.dry_run)
+                    tags = ",".join(dict.fromkeys([*tags.replace(",", " ").split(), build_dxbc.BUILD_TAG]))
                 env = target_environment(target, host, info["CC"])
                 runtime_files = []
                 if not args.no_bootstrap:
@@ -263,7 +273,7 @@ def main(argv=None):
                 if not args.dry_run:
                     runtime_files += prepare_sources.notice_files(
                         {target.split('/')[0]}, "ffmpeg" in args.tags.replace(",", " ").split())
-                build_target(target, output, env, args.dry_run, runtime_files, args.tags)
+                build_target(target, output, env, args.dry_run, runtime_files, tags)
                 succeeded.append(target)
             except (OSError, ValueError, subprocess.CalledProcessError) as exc:
                 failed.append(target)

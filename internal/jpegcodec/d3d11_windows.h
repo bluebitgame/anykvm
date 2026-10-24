@@ -8,7 +8,9 @@ typedef struct {
     size_t count;
     uint32_t source_width, source_height;
 } bk_jpeg_damage;
+int bk_jpeg_gpu_prepare_shaders(const char *shader, size_t length, int debug, char *error, size_t capacity);
 bk_jpeg_gpu *bk_jpeg_gpu_open(uint64_t luid, const char *shader, size_t length, char *error, size_t capacity);
+bk_jpeg_gpu *bk_jpeg_gpu_open_debug(uint64_t luid, const char *shader, size_t length, int debug, char *error, size_t capacity);
 int bk_jpeg_gpu_encode(bk_jpeg_gpu *, uintptr_t, int, int, int,
     const uint32_t *, const uint32_t *, const uint8_t *, size_t, uint8_t **, size_t *, char *, size_t);
 int bk_jpeg_gpu_encode_mode(bk_jpeg_gpu *, uintptr_t, int, int, int,

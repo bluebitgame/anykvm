@@ -123,7 +123,7 @@ func (p *parallelProgressive) encodePass(pixels []byte, w, h int, rects []bitmap
 		(format != progressiveBGRA && format != progressiveNV12) || (!upgrade && len(pixels) != progressivePixelBytes(w, h, format)) {
 		return nil, errors.New("invalid Progressive frame or batch")
 	}
-	if bits < 0 || bits > 4 || (upgrade && bits == 0) ||
+	if !validProgressivePass(bits, upgrade) ||
 		(bits != 0 && len(cache) != ((w+63)/64)*((h+63)/64)*progressiveTileCoefficients) {
 		return nil, errors.New("invalid Progressive pass or coefficient cache")
 	}
@@ -205,7 +205,7 @@ func (p *parallelProgressive) encodeBatches(pixels []byte, w, h int, rects []bit
 	}
 	if w < 1 || h < 1 || w > 8192 || h > 8192 || len(rects) == 0 || len(rects) > progressiveWindowTiles ||
 		(format != progressiveBGRA && format != progressiveNV12) || len(pixels) != progressivePixelBytes(w, h, format) ||
-		bits < 0 || bits > 4 || (bits != 0 && len(cache) != ((w+63)/64)*((h+63)/64)*progressiveTileCoefficients) {
+		!validProgressivePass(bits, false) || (bits != 0 && len(cache) != ((w+63)/64)*((h+63)/64)*progressiveTileCoefficients) {
 		return nil, errors.New("invalid Progressive window")
 	}
 	// Duplicate FIRST tiles must retain serial cache replacement semantics.

@@ -45,6 +45,45 @@ func TestQPCMappingPreservesOldPresentationAndLongUptime(t *testing.T) {
 	}
 }
 
+func TestQPCClockPreservesCadenceAcrossSchedulingDelays(t *testing.T) {
+	anchor := time.Now()
+	var clock QPCClock
+	const frequency int64 = 10_000_000
+	const start int64 = 1_000_000_000
+	var previous time.Time
+	for i, delay := range []time.Duration{0, 30 * time.Millisecond, 0, 8 * time.Millisecond, 0} {
+		counter := start + int64(i)*160000
+		clock.Observe(counter, frequency, anchor.Add(time.Duration(i)*16*time.Millisecond+delay))
+		got := clock.Time(counter - 10000)
+		if i > 0 && got.Sub(previous) != 16*time.Millisecond {
+			t.Fatalf("scheduler delay changed source interval: %v", got.Sub(previous))
+		}
+		previous = got
+	}
+	if !clock.Anchor.Equal(anchor) || clock.Counter != start {
+		t.Fatal("presentation mapping changed during capture")
+	}
+}
+
+func TestQPCClockReanchorsAfterCounterOrFrequencyChange(t *testing.T) {
+	anchor := time.Now()
+	var clock QPCClock
+	clock.Observe(0, 1000, anchor)
+	if !clock.Time(100).IsZero() {
+		t.Fatal("invalid observation initialized the clock")
+	}
+	for _, counter := range []int64{1000, 2000, 100} {
+		clock.Observe(counter, 1000, anchor)
+	}
+	if clock.Counter != 100 {
+		t.Fatal("counter reset retained stale mapping")
+	}
+	clock.Observe(200, 2000, anchor.Add(time.Second))
+	if clock.Frequency != 2000 || !clock.Time(2200).Equal(anchor.Add(2*time.Second)) {
+		t.Fatal("frequency change retained stale mapping")
+	}
+}
+
 func TestMissingAndRepeatedStagesDoNotInventDurations(t *testing.T) {
 	now := time.Now()
 	v := make(map[string]time.Duration)

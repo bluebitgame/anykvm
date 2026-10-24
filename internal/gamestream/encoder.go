@@ -54,7 +54,7 @@ func (x *streamSession) videoLoopUsing(newEncoder func(videoenc.Options) (videoe
 		v.gcm = x.gcm
 	}
 	epoch := time.Now()
-	if !first.CapturedAt.IsZero() && (first.PreserveSource || first.Format == capture.FormatH264 || first.Format == capture.FormatHEVC || first.Format == capture.FormatAV1) {
+	if first.PresentationPTS == 0 && !first.CapturedAt.IsZero() && (first.PreserveSource || first.Format == capture.FormatH264 || first.Format == capture.FormatHEVC || first.Format == capture.FormatAV1) {
 		// Native input can predate PLAY by seconds. Starting its clock at PLAY
 		// would wrap the first RTP timestamp to almost 2^32 and then jump back
 		// to zero. Keep a small nonzero origin (zero asks Moonlight to synthesize
@@ -74,7 +74,7 @@ func (x *streamSession) videoLoopUsing(newEncoder func(videoenc.Options) (videoe
 			// The source picture may already be old when it replaces waiting
 			// video. Anchor it to the current output clock once, avoiding a
 			// backward RTP jump while preserving all later source intervals.
-			if next.PreserveSource && !next.CapturedAt.IsZero() {
+			if next.PresentationPTS == 0 && next.PreserveSource && !next.CapturedAt.IsZero() {
 				epoch = next.CapturedAt.Add(-time.Since(epoch))
 			}
 			waitingForSource = false
@@ -227,7 +227,13 @@ func (x *streamSession) encodeVideoUsing(first bridge.Frame, v *videoPacketizer,
 			maxPacing = max(maxPacing, time.Since(pacingStart))
 		}
 		sendStart := time.Now()
-		timestamp := captureRTPTimestamp(capturedAt, epoch, sendStart)
+		// The session clock detects retained-picture repeats, including the
+		// first output after rebuilding an encoder around the same raw frame.
+		timestamp, err := v.playback.timestamp(current.PresentationPTS, capturedAt, epoch, sendStart, o.FPS, true)
+		if err != nil {
+			encoded.Release()
+			return current, err
+		}
 		batch, err := v.packBatch(au, idr, timestamp, x.options.PacketSize, x.options.MinFEC)
 		encoded.Release() // The final FEC shards now own the packet payload.
 		if err != nil {

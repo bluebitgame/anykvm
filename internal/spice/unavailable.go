@@ -8,5 +8,5 @@ import (
 )
 
 func newDevice(string, Options) capture.Device {
-	return capture.Failed(fmt.Errorf("SPICE GPU upstream requires Linux, CGO and -tags spice; install spice-client-glib, EGL, GBM and libdrm development packages"))
+	return capture.Failed(fmt.Errorf("SPICE upstream requires Linux, CGO and -tags spice; install spice-client-glib, EGL, GBM and libdrm development packages"))
 }

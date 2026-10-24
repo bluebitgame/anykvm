@@ -32,6 +32,11 @@ class FirmwareBuildTests(unittest.TestCase):
                 builder.ncs()
                 run.assert_called_once()
 
+    def test_xiao_target_names_the_board_and_uses_shared_nrf_sources(self):
+        self.assertNotIn("nrf52840-ble", firmware.TARGETS)
+        self.assertEqual(firmware.TARGETS["nrf52840-xiao"],
+                         ("nrf", "nrf52840-ble", "xiao_ble", "zephyr"))
+
     def test_pico_output_matrix(self):
         # Every output has distinct build/output directories for each chip.
         expected = {

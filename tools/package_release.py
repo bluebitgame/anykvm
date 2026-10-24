@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archive a desktop build with its runtime files, documentation and licenses."""
+"""Archive a desktop build with its runtime files and licenses."""
 
 import argparse
 import hashlib
@@ -25,10 +25,12 @@ def package(target, source, output, root=ROOT):
     # Stage separately so packaging never changes the original build directory.
     with tempfile.TemporaryDirectory(prefix="anykvm-release-") as temporary:
         staging = Path(temporary) / name
-        shutil.copytree(source, staging, symlinks=True)
+
+        def exclude_docs(directory, names):
+            return set(names) & {"docs", "doc", "README.md"} if Path(directory) == source else set()
+
+        shutil.copytree(source, staging, symlinks=True, ignore=exclude_docs)
         shutil.copy2(root / "LICENSE", staging / "LICENSE")
-        shutil.copy2(root / "README.md", staging / "README.md")
-        shutil.copytree(root / "docs", staging / "docs", ignore=shutil.ignore_patterns("plans"))
         if target.startswith("windows/"):
             archive = Path(shutil.make_archive(str(output.resolve() / name), "zip",
                                                root_dir=temporary, base_dir=name))

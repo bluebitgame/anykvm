@@ -11,7 +11,7 @@ import package_release
 
 
 class ReleasePackagingTests(unittest.TestCase):
-    def test_archives_preserve_runtime_licenses_docs_and_executable(self):
+    def test_archives_preserve_runtime_licenses_and_exclude_docs(self):
         for target in package_release.TARGETS:
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -29,11 +29,14 @@ class ReleasePackagingTests(unittest.TestCase):
                 (root / "docs/plans").mkdir(parents=True)
                 (root / "docs/build.md").write_text("build guide")
                 (root / "docs/plans/private.md").write_text("local plan")
+                (source / "docs").mkdir()
+                (source / "docs/stale.md").write_text("old build documentation")
+                (source / "README.md").write_text("old readme")
                 archive = package_release.package(target, source, root / "dist", root)
                 prefix = "anykvm-" + target.replace("/", "-") + "/"
                 expected = {prefix + name for name in (
                     executable, "lib/opus.dll", "licenses/dependency/LICENSE",
-                    "LICENSE", "README.md", "docs/build.md")}
+                    "LICENSE")}
                 if windows:
                     with zipfile.ZipFile(archive) as bundle:
                         self.assertEqual({n for n in bundle.namelist() if not n.endswith("/")}, expected)
@@ -44,7 +47,7 @@ class ReleasePackagingTests(unittest.TestCase):
                         self.assertEqual(bundle.getmember(prefix + executable).mode & 0o777, 0o755)
                 self.assertEqual(archive.with_name(archive.name + ".sha256").read_text(),
                                  f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
-                self.assertFalse((source / "README.md").exists())
+                self.assertEqual((source / "README.md").read_text(), "old readme")
 
     def test_unix_archive_permissions_do_not_depend_on_host(self):
         original_gettarinfo = tarfile.TarFile.gettarinfo

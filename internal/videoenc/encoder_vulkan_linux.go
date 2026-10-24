@@ -46,5 +46,6 @@ func (e *vulkanEncoder) EncodeDMABUF(f dmabuf.Frame, force bool) ([]byte, bool, 
 	}
 	return data, true, err
 }
-func (e *vulkanEncoder) Close()       { e.encoder.Close() }
-func (e *vulkanEncoder) Name() string { return e.options.Codec + "_vulkan_native" }
+func (e *vulkanEncoder) EncodeLast(force bool) ([]byte, error) { return e.encoder.EncodeLast(force) }
+func (e *vulkanEncoder) Close()                                { e.encoder.Close() }
+func (e *vulkanEncoder) Name() string                          { return e.options.Codec + "_vulkan_native" }

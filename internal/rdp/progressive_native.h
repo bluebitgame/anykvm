@@ -40,7 +40,9 @@ void bk_rfx_close(void *context);
 enum { ANYKVM_RFX_SIMPLE = 0, ANYKVM_RFX_FIRST = 1, ANYKVM_RFX_UPGRADE = 2 };
 /* Synchronous, caller-owned full tile-grid cache: 3*4096 int32 coefficients
  * per tile, row-major. FIRST writes base quantization before LL differencing;
- * UPGRADE reads it without retaining any pointers. extra_bits is 1..4. */
+ * UPGRADE reads it without retaining any pointers. extra_bits selects FIRST 50%
+ * (0x100), UPGRADE 75% (0x101), or UPGRADE 100% (0x102). Values 1..4 retain the
+ * legacy uniform precision ABI used by entropy fixtures. */
 int bk_rfx_run_pass(void *context, const uint8_t *pixels, size_t pixel_bytes, int format,
                uint32_t width, uint32_t height, const anykvm_rfx_rect *rects,
                size_t count, uint32_t frame, int first, int pass, unsigned extra_bits,

@@ -3,8 +3,8 @@
 package spice
 
 import (
+	"bytes"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +31,7 @@ func TestNativeSPICEDMABUF(t *testing.T) {
 		t.Skip("set ANYKVM_SPICE_TEST_SOCKET on a Linux GPU host with a running SPICE GL VM")
 	}
 	d := newDevice("spice:"+socket, Options{RenderNode: os.Getenv("ANYKVM_SPICE_TEST_RENDER_NODE"), Timeout: 15 * time.Second, PasswordEnv: os.Getenv("ANYKVM_SPICE_TEST_PASSWORD_ENV")}).(*Device)
+	d.SetVideoCodec("h264")
 	if err := d.OpenWithFormat(0, 0, 30); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,67 @@ func TestNativeSourceBuildSelection(t *testing.T) {
 	if _, ok := device.(*Device); !ok {
 		t.Fatal("native SPICE implementation missing from tagged Linux build")
 	}
-	if err := ValidateSource("spice://127.0.0.1:5900", Options{}); err == nil || !strings.Contains(err.Error(), "DMA-BUF") {
-		t.Fatal("accepted TCP for GPU-only path")
+	remote, ok := NewCapture("spice://127.0.0.1:5900", Options{})
+	if !ok {
+		t.Fatal("remote source not selected")
+	}
+	if _, ok := remote.(*remoteDevice); !ok {
+		t.Fatal("remote source not using bitmap capture")
+	}
+	if _, direct := remote.(capture.VideoStreamConfigurer); direct {
+		t.Fatal("remote source claims direct GPU encoding")
+	}
+}
+
+// Opt-in network integration check. This uses a real remote SPICE server but
+// requires no local render node or Vulkan Video encoder.
+func TestNativeSPICERemote(t *testing.T) {
+	address := os.Getenv("ANYKVM_SPICE_TEST_REMOTE")
+	if address == "" {
+		t.Skip("set ANYKVM_SPICE_TEST_REMOTE=host:port for a running SPICE VM")
+	}
+	device, ok := NewCapture("spice://"+address, Options{Timeout: 15 * time.Second, PasswordEnv: os.Getenv("ANYKVM_SPICE_TEST_PASSWORD_ENV")})
+	if !ok {
+		t.Fatal("remote source not selected")
+	}
+	if err := device.OpenWithFormat(0, 0, 30); err != nil {
+		t.Fatal(err)
+	}
+	defer device.Close()
+	deadline := time.Now().Add(20 * time.Second)
+	var first *capture.Frame
+	for time.Now().Before(deadline) {
+		frame, err := device.Capture()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame != nil {
+			first = frame
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if first == nil {
+		t.Fatal("no remote desktop received")
+	}
+	defer first.Release()
+	if first.Format != capture.FormatRaw || first.Width < 1 || first.Height < 1 || len(first.Data) != first.Width*first.Height*4 {
+		t.Fatal("invalid remote BGRA frame")
+	}
+	snapshot := bytes.Clone(first.Data)
+	remote := device.(*remoteDevice)
+	if err := remote.RequestKeyframe(); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := device.Capture()
+	if err != nil || repeated == nil {
+		t.Fatalf("remote idle refresh: %v", err)
+	}
+	repeated.Release()
+	if !bytes.Equal(first.Data, snapshot) {
+		t.Fatal("remote polling overwrote an outstanding frame")
+	}
+	if remote.Stats().GPUFrames != 0 || remote.Stats().BitmapFrames < 1 {
+		t.Fatal("remote capture selected GPU path")
 	}
 }

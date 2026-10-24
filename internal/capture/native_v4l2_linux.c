@@ -506,7 +506,8 @@ failed:
     return NULL;
 }
 int bk_v4l_read(bk_v4l_capture *c, int latest, uint8_t **data, size_t *size, int *index,
-                char *error, size_t n) {
+                int64_t *pts_us, char *error, size_t n) {
+    *pts_us = 0;
     int held = -1;
     struct v4l2_buffer current = {0};
     // Bound draining even if a driver replenishes its queue faster than the reader.
@@ -542,6 +543,20 @@ int bk_v4l_read(bk_v4l_capture *c, int latest, uint8_t **data, size_t *size, int
     *index = held;
     *size = current.bytesused;
     *data = c->buffers[held].data;
+    if ((current.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC &&
+        current.timestamp.tv_sec >= 0 && current.timestamp.tv_usec >= 0 && current.timestamp.tv_usec < 1000000) {
+        *pts_us = (int64_t)current.timestamp.tv_sec * 1000000 + current.timestamp.tv_usec;
+    }
+    if (*pts_us <= 0) {
+        // Unknown/realtime device clocks must not enter the monotonic timeline.
+        struct timespec acquired;
+        if (clock_gettime(CLOCK_MONOTONIC, &acquired) < 0) {
+            bk_v4l_done(c, held, error, n);
+            snprintf(error, n, "V4L2 capture clock unavailable");
+            return -1;
+        }
+        *pts_us = (int64_t)acquired.tv_sec * 1000000 + acquired.tv_nsec / 1000;
+    }
     return 1;
 }
 int bk_v4l_done(bk_v4l_capture *c, int index, char *error, size_t n) {

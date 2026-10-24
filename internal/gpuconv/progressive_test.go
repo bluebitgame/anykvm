@@ -60,3 +60,22 @@ func TestProgressiveResidentMetadataBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestProgressiveOfficialStageMetadata(t *testing.T) {
+	for _, stage := range []uint32{0x100, 0x101, 0x102} {
+		pass := uint32(2)
+		size := 4
+		if stage == 0x100 {
+			pass = 1
+			size = 16384
+		}
+		m := []uint32{1, 0, 6, stage, pass, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		if _, err := ProgressiveMetadata(make([]byte, size), m); err != nil {
+			t.Fatal(stage, err)
+		}
+		m[4] = 3 - pass
+		if _, err := ProgressiveMetadata(make([]byte, 16384), m); err == nil {
+			t.Fatal("accepted mismatched Progressive stage/pass")
+		}
+	}
+}

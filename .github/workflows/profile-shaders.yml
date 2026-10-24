@@ -1,0 +1,48 @@
+name: Profile JPEG shader compilation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - internal/jpegcodec/shaders/jpeg420.hlsl
+      - internal/jpegcodec/testdata/entropy_writer_legacy.hlsl
+      - tools/profile_jpeg_shader.py
+      - .github/workflows/profile-shaders.yml
+  pull_request:
+    paths:
+      - internal/jpegcodec/shaders/jpeg420.hlsl
+      - internal/jpegcodec/testdata/entropy_writer_legacy.hlsl
+      - tools/profile_jpeg_shader.py
+      - .github/workflows/profile-shaders.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shader-profile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Check profiling tools
+        run: python -m unittest discover -s tools -p test_profile_jpeg_shader.py
+      - name: Measure system D3DCompiler without a GPU
+        run: python tools/profile_jpeg_shader.py --repeats 2 --timeout 60
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: jpeg-shader-compile-profile
+          path: build/shader-profile/
+          if-no-files-found: warn
+          retention-days: 14

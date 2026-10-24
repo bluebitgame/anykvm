@@ -181,7 +181,8 @@ func (d *v4l2Device) Capture() (out *Frame, err error) {
 	if d.inputFormat == "h264" {
 		latest = 0
 	}
-	result := C.bk_v4l_read(d.ptr, latest, &data, &size, &index, &msg[0], C.size_t(len(msg)))
+	var playbackPTS C.int64_t
+	result := C.bk_v4l_read(d.ptr, latest, &data, &size, &index, &playbackPTS, &msg[0], C.size_t(len(msg)))
 	if result < 0 {
 		return nil, fmt.Errorf("%w: %s", ErrStreamStopped, C.GoString(&msg[0]))
 	}
@@ -193,7 +194,7 @@ func (d *v4l2Device) Capture() (out *Frame, err error) {
 		C.bk_v4l_done(d.ptr, index, &msg[0], C.size_t(len(msg)))
 		return nil, nil
 	}
-	f := &Frame{Width: d.width, Height: d.height, SourceWidth: d.width, SourceHeight: d.height, CapturedAt: when, Format: FormatRaw}
+	f := &Frame{Width: d.width, Height: d.height, SourceWidth: d.width, SourceHeight: d.height, CapturedAt: when, PresentationPTS: int64(playbackPTS), Format: FormatRaw}
 
 	// Borrow NV12 until synchronous encoding completes. The defer runs while mu
 	// is held, so Close cannot unmap the buffer during encoder access.

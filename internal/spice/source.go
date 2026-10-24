@@ -10,15 +10,17 @@ import (
 
 	"anykvm/internal/capture"
 	"anykvm/internal/dmabuf"
-	"anykvm/internal/framebuf"
 	"anykvm/internal/logging"
 )
 
-// A lease includes both FD ownership and upstream draw ownership. Duplicating an
-// FD alone cannot prevent the producer from overwriting the displayed pixels.
+// A lease carries a local GPU draw or an owned remote bitmap snapshot. Local
+// leases include upstream draw ownership: duplicating the FD alone cannot
+// prevent the producer from overwriting pixels before encoding completes.
 type frameLease struct {
-	frame dmabuf.Frame
-	done  func()
+	frame  dmabuf.Frame
+	done   func()
+	bitmap *bitmapFrame
+	reset  bool
 }
 
 type nativeSession interface {
@@ -27,22 +29,13 @@ type nativeSession interface {
 	close()
 }
 
-type gpuEncoder interface {
-	EncodeSource(dmabuf.Frame, bool) ([]byte, error)
-	EncodeLast(bool) ([]byte, error)
-	Close()
-}
-
-type encodeOptions struct {
-	major, minor                uint32
-	width, height, fps, bitrate int
-}
-
+// Session factories receive an address, password and render node. An empty
+// render node selects TCP; a non-empty node selects the local GL socket path.
 type sessionFactory func(string, string, string) (nativeSession, error)
-type encoderFactory func(encodeOptions) (gpuEncoder, error)
 
 type Stats struct {
 	GPUFrames, RepeatedFrames uint64
+	BitmapFrames              uint64
 	CPUReadbacks              uint64
 	AudioFrames               uint64
 }
@@ -60,7 +53,7 @@ type Device struct {
 	raw         string
 	opts        Options
 	openSession sessionFactory
-	openEncoder encoderFactory
+	newPipeline pipelineFactory
 
 	// Session lifetime and audio enablement are guarded by sessionMu. Video
 	// callers may also read session/generation under mu because writers hold both.
@@ -69,18 +62,27 @@ type Device struct {
 	audioEnabled bool
 	audioFrames  atomic.Uint64
 
-	// Video state, guarded by mu. pending keeps the producer's draw lease alive
-	// until the next paced encode; encoder owns the image used for idle keyframes.
-	pending                        *frameLease
-	encoder                        gpuEncoder
-	encoding                       encodeOptions
-	stream                         *capture.VideoStreamOptions
-	codec                          string
-	bitrate, targetW, targetH, fps int
-	width, height                  int
-	force                          bool
-	openedAt, lastFrame            time.Time
-	stats                          Stats
+	// Remote bitmap state, guarded by mu. Keep an owned idle snapshot and the
+	// start of the current wait for a primary surface (initial open or reset).
+	remote       bool
+	lastBitmap   *bitmapFrame
+	bitmapWaitAt time.Time
+
+	// Local video state, guarded by mu. pipeline keeps viewer settings across
+	// reopen; activePipeline is selected on the first draw and closed per session.
+	// pending retains the producer's draw while pacing or GPU admission defers it.
+	pending        *frameLease
+	activePipeline localPipeline
+	pipeline       *capture.DMABUFEncoder
+
+	// Viewer settings and current frame metadata, guarded by mu.
+	stream              *capture.VideoStreamOptions
+	codec               string
+	fps                 int
+	width, height       int
+	force               bool
+	openedAt, lastFrame time.Time
+	stats               Stats
 
 	// Input and cursor state, guarded by mu.
 	buttons                        int
@@ -96,12 +98,11 @@ func (d *Device) OpenWithFormat(w, h, fps int) error {
 	if d.session != nil {
 		return fmt.Errorf("SPICE source is already open")
 	}
-	if d.codec != "" && d.codec != "h264" {
-		return fmt.Errorf("SPICE GPU upstream currently requires H.264 output")
+	e, err := parseEndpoint(d.raw)
+	if err != nil {
+		return err
 	}
-	if d.stream != nil && d.stream.Codec != "" && d.stream.Codec != "h264" {
-		return fmt.Errorf("SPICE GPU upstream currently requires H.264 output")
-	}
+	d.remote = e.remote()
 	password := d.opts.Password
 	if d.opts.PasswordEnv != "" {
 		var ok bool
@@ -113,17 +114,19 @@ func (d *Device) OpenWithFormat(w, h, fps int) error {
 	if len(password) > 4096 || strings.ContainsRune(password, 0) {
 		return fmt.Errorf("invalid SPICE password")
 	}
-	path, err := socketPath(d.raw)
-	if err != nil {
-		return err
+	if d.remote && d.codec != "" && d.codec != "rawvideo" {
+		return fmt.Errorf("SPICE remote capture produces raw video")
 	}
 	node := d.opts.RenderNode
 	if node == "" {
 		node = "/dev/dri/renderD128"
 	}
-	session, err := d.openSession(path, password, node)
+	if d.remote {
+		node = ""
+	}
+	session, err := d.openSession(e.address(), password, node)
 	if err != nil {
-		return fmt.Errorf("SPICE GPU connect: %w", err)
+		return fmt.Errorf("SPICE connect: %w", err)
 	}
 	d.sessionMu.Lock()
 	d.session = session
@@ -134,7 +137,6 @@ func (d *Device) OpenWithFormat(w, h, fps int) error {
 		s.setAudioEnabled(d.audioEnabled)
 	}
 	d.sessionMu.Unlock()
-	d.targetW, d.targetH = w, h
 	d.fps = fps
 	if d.fps <= 0 {
 		d.fps = 30
@@ -148,7 +150,14 @@ func (d *Device) OpenWithFormat(w, h, fps int) error {
 	d.width, d.height, d.buttons = 0, 0, 0
 	d.keys = [256]bool{}
 	d.stats = Stats{}
-	logging.Infof("spice: local GL source; render_node=%s; H.264 DMA-BUF hardware encoding; CPU pixel readback disabled", node)
+	d.lastBitmap = nil
+	d.bitmapWaitAt = d.openedAt
+	if d.remote {
+		logging.Infof("spice: remote display source; decoded BGRA frames")
+	} else {
+		d.sharedPipeline().Configure(w, h, d.fps)
+		logging.Infof("spice: local GL source; render_node=%s; shared DMA-BUF desktop encoding", node)
+	}
 	return nil
 }
 
@@ -158,112 +167,10 @@ func (d *Device) Capture() (*capture.Frame, error) {
 	if d.session == nil {
 		return nil, capture.ErrStreamStopped
 	}
-	lease := d.pending
-	d.pending = nil
-	var err error
-	if lease == nil {
-		lease, err = d.session.next()
+	if d.remote {
+		return d.captureBitmap()
 	}
-	if err != nil {
-		return nil, fmt.Errorf("%w: SPICE: %v", capture.ErrStreamStopped, err)
-	}
-	if lease == nil {
-		if d.encoder != nil && d.force {
-			data, err := d.encoder.EncodeLast(true)
-			if err != nil {
-				return nil, fmt.Errorf("%w: SPICE cached GPU frame: %v", capture.ErrStreamStopped, err)
-			}
-			d.force = false
-			d.stats.RepeatedFrames++
-			return d.output(data, time.Now()), nil
-		}
-		timeout := d.opts.Timeout
-		if timeout == 0 {
-			timeout = 15 * time.Second
-		}
-		if d.encoder == nil && time.Since(d.openedAt) > timeout {
-			return nil, fmt.Errorf("%w: SPICE did not provide a usable GL scanout within %s; enable local SPICE GL and virtio-gpu scanout (CPU fallback disabled)", capture.ErrStreamStopped, timeout)
-		}
-		return nil, nil
-	}
-	f := lease.frame
-	if err := f.Validate(); err != nil {
-		lease.done()
-		return nil, fmt.Errorf("%w: SPICE scanout: %v", capture.ErrStreamStopped, err)
-	}
-	now := time.Now()
-	o := d.options(f)
-	if o.width < 2 || o.height < 2 || o.width > 8192 || o.height > 8192 {
-		lease.done()
-		return nil, fmt.Errorf("%w: invalid SPICE output dimensions", capture.ErrStreamStopped)
-	}
-	changed := d.encoder == nil || d.encoding != o
-	if !changed && !d.force && now.Sub(d.lastFrame) < time.Second/time.Duration(o.fps) {
-		// Hold the upstream draw until due. Dropping the last update before an
-		// idle desktop would otherwise leave the viewer permanently stale.
-		d.pending = lease
-		return nil, nil
-	}
-	defer lease.done() // acknowledge only after GPU completion, including failures
-	if changed {
-		if d.encoder != nil {
-			d.encoder.Close()
-			d.encoder = nil
-		}
-		encoder, err := d.openEncoder(o)
-		if err != nil {
-			return nil, fmt.Errorf("%w: SPICE DMA-BUF hardware encoder: %v (CPU fallback disabled)", capture.ErrStreamStopped, err)
-		}
-		d.encoder = encoder
-		d.encoding = o
-		d.force = true
-	}
-	data, err := d.encoder.EncodeSource(f, d.force)
-	if err != nil {
-		return nil, fmt.Errorf("%w: SPICE DMA-BUF encoding: %v (CPU fallback disabled)", capture.ErrStreamStopped, err)
-	}
-	d.force = false
-	d.lastFrame = now
-	d.width, d.height = int(f.Width), int(f.Height)
-	d.stats.GPUFrames++
-	if d.stats.GPUFrames == 1 {
-		logging.Infof("spice: first DMA-BUF -> Vulkan Video H.264 frame; source=%dx%d fourcc=%08x modifier=%016x flip_y=%t; cpu_readbacks=0", f.Width, f.Height, f.FourCC, f.Modifier, f.FlipY)
-	}
-	return d.output(data, now), nil
-}
-
-func (d *Device) options(f dmabuf.Frame) encodeOptions {
-	w, h := int(f.Width), int(f.Height)
-	tw, th := d.targetW, d.targetH
-	bitrate := d.bitrate
-	if bitrate <= 0 {
-		bitrate = 12000
-	}
-	if d.stream != nil {
-		tw, th = d.stream.Width, d.stream.Height
-		if d.stream.Bitrate > 0 {
-			bitrate = d.stream.Bitrate
-		}
-	}
-	if tw > 0 && th > 0 {
-		w, h = tw, th
-	}
-	return encodeOptions{
-		major: f.DeviceMajor, minor: f.DeviceMinor,
-		width: w &^ 1, height: h &^ 1,
-		fps: d.fps, bitrate: bitrate,
-	}
-}
-
-func (d *Device) output(data []byte, at time.Time) *capture.Frame {
-	buffer := framebuf.New(data, nil)
-	return &capture.Frame{
-		Format: capture.FormatH264,
-		Buffer: buffer, Data: buffer.Bytes(),
-		Width: d.encoding.width, Height: d.encoding.height,
-		SourceWidth: d.width, SourceHeight: d.height,
-		CapturedAt: at,
-	}
+	return d.captureGL()
 }
 
 func (d *Device) Close() error {
@@ -289,11 +196,14 @@ func (d *Device) Close() error {
 		d.session = nil
 	}
 	d.sessionMu.Unlock()
-	if d.encoder != nil {
-		d.encoder.Close()
-		d.encoder = nil
+	d.lastBitmap = nil
+	if d.activePipeline != nil {
+		native := d.activePipeline.Stats()
+		d.stats.GPUFrames, d.stats.CPUReadbacks = native.GPUFrames, native.CPUReadbacks
+		_ = d.activePipeline.Close()
+		d.activePipeline = nil
 	}
-	logging.Infof("spice: closed; gpu_frames=%d repeated_frames=%d audio_frames=%d cpu_readbacks=%d", d.stats.GPUFrames, d.stats.RepeatedFrames, d.audioFrames.Load(), d.stats.CPUReadbacks)
+	logging.Infof("spice: closed; gpu_frames=%d bitmap_frames=%d repeated_frames=%d audio_frames=%d cpu_readbacks=%d", d.stats.GPUFrames, d.stats.BitmapFrames, d.stats.RepeatedFrames, d.audioFrames.Load(), d.stats.CPUReadbacks)
 	return nil
 }
 
@@ -301,6 +211,10 @@ func (d *Device) Stats() Stats {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	stats := d.stats
+	if d.activePipeline != nil {
+		native := d.activePipeline.Stats()
+		stats.GPUFrames, stats.CPUReadbacks = native.GPUFrames, native.CPUReadbacks
+	}
 	stats.AudioFrames = d.audioFrames.Load()
 	return stats
 }

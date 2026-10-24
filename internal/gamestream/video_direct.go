@@ -112,11 +112,15 @@ func (x *streamSession) streamEncodedVideo(first bridge.Frame, v *videoPacketize
 				// bounded decoder queue. UDP burst pacing only spaces packets inside
 				// a picture; source pacing spaces whole pictures without dropping
 				// H.264 references or changing their RTP capture timestamps.
-				if err := waitVideoPacing(x.ctx, framePacer.reserve(current.CapturedAt, time.Now())); err != nil {
+				if err := waitVideoPacing(x.ctx, framePacer.reservePlayback(current.PresentationPTS, current.CapturedAt, time.Now())); err != nil {
 					return current, err
 				}
 				sendStart := time.Now()
-				batch, err := v.packBatch(current.Data, idr, captureRTPTimestamp(current.CapturedAt, epoch, sendStart), x.options.PacketSize, x.options.MinFEC)
+				timestamp, err := v.playback.timestamp(current.PresentationPTS, current.CapturedAt, epoch, sendStart, x.options.FPS, false)
+				if err != nil {
+					return current, err
+				}
+				batch, err := v.packBatch(current.Data, idr, timestamp, x.options.PacketSize, x.options.MinFEC)
 				if err != nil {
 					return current, err
 				}

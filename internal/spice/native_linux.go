@@ -11,39 +11,61 @@ import "C"
 
 import (
 	"fmt"
+	"net"
 	"unsafe"
 
 	"anykvm/internal/capture"
 	"anykvm/internal/dmabuf"
-	"anykvm/internal/gpuconv"
 )
 
-type glibSession struct{ ptr *C.bk_spice }
-
-func newDevice(raw string, o Options) capture.Device {
-	return &Device{
-		raw: raw, opts: o,
-		openSession: openGLib,
-		openEncoder: func(o encodeOptions) (gpuEncoder, error) {
-			return gpuconv.NewVideoEncoder(o.major, o.minor, o.width, o.height, o.fps, 1, o.bitrate)
-		},
-	}
+type glibSession struct {
+	ptr    *C.bk_spice
+	remote bool
 }
 
-func openGLib(path, password, node string) (nativeSession, error) {
-	socketPath, ticket, renderNode := C.CString(path), C.CString(password), C.CString(node)
-	defer C.free(unsafe.Pointer(socketPath))
+func newDevice(raw string, o Options) capture.Device {
+	d := &Device{
+		raw: raw, opts: o,
+		openSession: openGLib,
+	}
+	e, _ := parseEndpoint(raw)
+	if e.remote() {
+		return wrapRemote(d)
+	}
+	return d
+}
+
+func openGLib(address, password, node string) (nativeSession, error) {
+	ticket := C.CString(password)
 	defer C.free(unsafe.Pointer(ticket))
-	defer C.free(unsafe.Pointer(renderNode))
 	var msg [512]C.char
-	ptr := C.bk_spice_open(socketPath, ticket, renderNode, &msg[0], 512)
+	var ptr *C.bk_spice
+	remote := node == ""
+	if remote {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		hostname, service := C.CString(host), C.CString(port)
+		defer C.free(unsafe.Pointer(hostname))
+		defer C.free(unsafe.Pointer(service))
+		ptr = C.bk_spice_open_remote(hostname, service, ticket, &msg[0], 512)
+	} else {
+		socketPath, renderNode := C.CString(address), C.CString(node)
+		defer C.free(unsafe.Pointer(socketPath))
+		defer C.free(unsafe.Pointer(renderNode))
+		ptr = C.bk_spice_open(socketPath, ticket, renderNode, &msg[0], 512)
+	}
 	if ptr == nil {
 		return nil, fmt.Errorf("%s", C.GoString(&msg[0]))
 	}
-	return &glibSession{ptr}, nil
+	return &glibSession{ptr: ptr, remote: remote}, nil
 }
 
 func (s *glibSession) next() (*frameLease, error) {
+	if s.remote {
+		return s.nextBitmap()
+	}
 	var f C.bk_spice_frame
 	var msg [512]C.char
 	status := C.bk_spice_next(s.ptr, &f, &msg[0], 512)
@@ -133,4 +155,31 @@ func (s *glibSession) cursor() (*cursorSnapshot, error) {
 		snapshot.rgba = C.GoBytes(unsafe.Pointer(state.rgba), C.int(state.width*state.height*4))
 	}
 	return snapshot, nil
+}
+
+func (s *glibSession) nextBitmap() (*frameLease, error) {
+	var bitmap C.bk_spice_bitmap
+	var msg [512]C.char
+	status := C.bk_spice_bitmap_next(s.ptr, &bitmap, &msg[0], 512)
+	if status < 0 {
+		return nil, fmt.Errorf("%s", C.GoString(&msg[0]))
+	}
+	if status == C.BK_SPICE_BITMAP_RESET {
+		return &frameLease{reset: true, done: func() {}}, nil
+	}
+	if status == C.BK_SPICE_BITMAP_IDLE {
+		return nil, nil
+	}
+	defer C.bk_spice_bitmap_release(&bitmap)
+	if bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 8192 || bitmap.height > 8192 ||
+		bitmap.size != C.size_t(bitmap.width)*C.size_t(bitmap.height)*4 || bitmap.data == nil {
+		return nil, fmt.Errorf("invalid SPICE bitmap snapshot")
+	}
+	return &frameLease{
+		bitmap: &bitmapFrame{
+			pixels: C.GoBytes(unsafe.Pointer(bitmap.data), C.int(bitmap.size)),
+			width:  int(bitmap.width), height: int(bitmap.height),
+		},
+		done: func() {},
+	}, nil
 }

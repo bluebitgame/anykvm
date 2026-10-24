@@ -76,6 +76,7 @@ type Frame struct {
 	CaptureFPS                int
 	CaptureRate               framerate.Rate
 	CapturedAt                time.Time
+	PresentationPTS           int64 // source monotonic microseconds; zero means unavailable
 	Format                    capture.VideoFormat
 	PixFmt                    string
 	Data                      []byte
@@ -937,24 +938,26 @@ func (b *Bridge) updateCodec() {
 }
 
 func (b *Bridge) updateCodecLocked() {
-	b.codecMu.Lock()
-	defer b.codecMu.Unlock()
-
 	dev := b.activeDevice()
 	if dev == nil {
 		return
 	}
 
-	b.mu.Lock()
+	// Snapshot preferences only. startCaptureLocked reads codecMu again for
+	// GPU policy configuration, so never hold it across device calls or reopen.
+	b.codecMu.Lock()
 	wantAV1 := b.wantAV1
 	wantHEVC := b.wantHEVC
 	wantH264 := b.wantH264
+	wantNV12 := b.wantNV12
+	b.codecMu.Unlock()
+	b.mu.Lock()
 	needPixels := b.needPixels.Load()
 	cur := b.videoCodec
 	capturing := b.capturing
 	b.mu.Unlock()
 	b.sessionMu.Lock()
-	wantNV12 := b.wantNV12 && b.activeProto == "rdp"
+	wantNV12 = wantNV12 && b.activeProto == "rdp"
 	b.sessionMu.Unlock()
 
 	if b.gsVideo != nil {
@@ -1086,6 +1089,8 @@ func (b *Bridge) OnClientConnected() {
 }
 
 func (b *Bridge) OnClientDisconnected() {
+	stopWatch := logging.WatchStall("bridge client disconnect", 5*time.Second)
+	defer stopWatch()
 	b.captureMu.Lock()
 	defer b.captureMu.Unlock()
 	b.mu.Lock()
@@ -1513,15 +1518,18 @@ func (b *Bridge) stopCaptureLocked() {
 
 	if m != nil {
 		if m.Capture != nil {
+			logging.Infof("bridge: closing capture device for %q", m.Name)
 			run.reopenMu.Lock()
 			m.Capture.Close()
 			run.reopenMu.Unlock()
+			logging.Infof("bridge: capture device closed for %q", m.Name)
 		}
 		if audioOn && m.AudioDev != nil {
 			m.AudioDev.Close()
 		}
 	}
 	run.wg.Wait()
+	logging.Infof("bridge: capture workers stopped")
 }
 
 func waitCapture(stop <-chan struct{}, delay time.Duration) bool {
@@ -1714,7 +1722,7 @@ func (b *Bridge) captureLoop(m *MachineSession, run *captureRun) {
 			bufferH264 = source.BufferH264Presentation()
 		}
 		maxW, maxH := m.outputLimit(frame)
-		b.pushFrame(Frame{Damage: frame.Damage, JPEGRegions: frame.JPEGRegions, Surface: frame.Surface, Timing: videotiming.Delivery{Trace: frame.Timing}, BufferH264Presentation: bufferH264, PreserveSource: preserve, CaptureScalesOutput: scalesOutput, OutputMaxW: maxW, OutputMaxH: maxH, CaptureFPS: sourceFPS, CaptureRate: sourceRate, Buffer: frame.Buffer, CapturedAt: frame.CapturedAt, Format: frame.Format, PixFmt: frame.PixFmt, Data: frame.Data, Width: frame.Width, Height: frame.Height, Rotation: frame.Rotation, SourceWidth: frame.SourceWidth, SourceHeight: frame.SourceHeight, ContentRect: frame.ContentRect}, run.stop)
+		b.pushFrame(Frame{Damage: frame.Damage, JPEGRegions: frame.JPEGRegions, Surface: frame.Surface, Timing: videotiming.Delivery{Trace: frame.Timing}, BufferH264Presentation: bufferH264, PreserveSource: preserve, CaptureScalesOutput: scalesOutput, OutputMaxW: maxW, OutputMaxH: maxH, CaptureFPS: sourceFPS, CaptureRate: sourceRate, Buffer: frame.Buffer, CapturedAt: frame.CapturedAt, PresentationPTS: frame.PresentationPTS, Format: frame.Format, PixFmt: frame.PixFmt, Data: frame.Data, Width: frame.Width, Height: frame.Height, Rotation: frame.Rotation, SourceWidth: frame.SourceWidth, SourceHeight: frame.SourceHeight, ContentRect: frame.ContentRect}, run.stop)
 		frame.Release()
 		maxPush = max(maxPush, time.Since(pushStart))
 		frames++

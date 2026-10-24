@@ -274,21 +274,25 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 		}
 		logging.Infof("rdp: %s: bitmap codec=%s encoder=%q quantization=%d refine=%d", c.conn.RemoteAddr(), c.codec, progressive.backend(), progressive.quantization, progressive.refineBits)
 	}
-	started := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	statsStarted := started
+	refinementTimer := time.NewTimer(time.Hour)
+	refinementTimer.Stop()
+	defer refinementTimer.Stop()
+	statsStarted := time.Now()
 	var frames, tiles int64
 	var held bridge.Frame
 	defer func() { held.Release() }()
 	var refinementFrames, refinementTiles int64
 	var encodeMax, sendMax, ackMax time.Duration
 	for {
+		refinementTimer.Stop()
 		held.Release()
+		var refinementWake <-chan time.Time
 		if progressive != nil && progressive.refineBits != 0 {
 			// Fresh captures take priority. In the gaps, refine immediately and
 			// resume on each ACK rather than waiting for a tile to stop changing.
-			n, _, encoded, sent, err := c.sendProgressiveRefinement(progressive, started)
+			n, _, encoded, sent, err := c.sendProgressiveRefinement(progressive, time.Now())
 			if err != nil {
 				return err
 			}
@@ -298,23 +302,36 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				encodeMax, sendMax = max(encodeMax, encoded), max(sendMax, sent)
 				continue
 			}
+			if progressive.hasRefinements() {
+				if delay := c.refinementRetryDelay(time.Now()); delay > 0 {
+					refinementTimer.Reset(delay)
+					refinementWake = refinementTimer.C
+				} else if !c.refinementPreempted(nil) {
+					// Recovery may expire between admission and reading its
+					// deadline. Retry without waiting for an unrelated event.
+					continue
+				}
+			}
 		}
 		select {
 		case <-c.done:
 			return nil
 		case <-ticker.C:
 			elapsed := time.Since(statsStarted).Seconds()
-			logging.Debugf("rdp: %s: bitmap output=%.1f fps refine=%.1f fps tiles=%d refine_tiles=%d encode_max=%.1fms send_max=%.1fms ack_wait_max=%.1fms",
+			logging.Debugf("rdp: %s: bitmap output=%.1f fps refine=%.1f fps tiles=%d refine_tiles=%d encode_max=%.1fms send_max=%.1fms ack_wait_max=%.1fms %s",
 				c.conn.RemoteAddr(), float64(frames)/elapsed, float64(refinementFrames)/elapsed, tiles, refinementTiles,
-				float64(encodeMax)/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond))
+				float64(encodeMax)/float64(time.Millisecond), float64(sendMax)/float64(time.Millisecond), float64(ackMax)/float64(time.Millisecond), c.graphicsFlowStatus())
 			statsStarted = time.Now()
 			frames, tiles = 0, 0
 			refinementFrames, refinementTiles = 0, 0
 			encodeMax, sendMax, ackMax = 0, 0, 0
 		case <-c.ack:
 			// A released ACK slot can immediately carry the next refinement.
+		case <-refinementWake:
+			// Congestion recovery expired while the desktop was idle.
 		case f := <-c.frames:
 			held = f
+			c.setGraphicsFPS(captureFPS(f))
 			var frameAckWait, lateAckWait time.Duration
 			if !predictionCoded(f.Format) {
 				ackStarted := time.Now()
@@ -460,6 +477,15 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				rects = coalesceBitmapRects(rects, width, height)
 			}
 			if len(rects) == 0 && len(copies) == 0 {
+				n, encoded, sent, err := c.sendCheckedCaptureRefinement(progressive, processingStarted)
+				if err != nil {
+					return err
+				}
+				if n != 0 {
+					refinementFrames++
+					refinementTiles += int64(n)
+					encodeMax, sendMax = max(encodeMax, encoded), max(sendMax, sent)
+				}
 				damageState.Commit(damage)
 				continue
 			}
@@ -487,16 +513,15 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				clear = newClearEncoder()
 			}
 			c.frameGeometry(f, w, h)
-			c.ackMu.Lock()
-			c.sent++
-			id := c.sent
-			c.ackMu.Unlock()
-			batch := gfxPDU(0xb, join(u32(uint32(time.Since(started)/time.Millisecond)), u32(id)))
+			id := c.nextGraphicsFrame()
+			batch := graphicsStartFrame(id, time.Now())
 			encodeTime := prepareTime
 			var sendTime time.Duration
 			var firstWrite time.Time
+			frameComplete := false
 			sendBatch := func(p []byte) error {
 				writeStarted := time.Now()
+				c.recordGraphicsWrite(id, len(p), frameComplete, writeStarted)
 				if firstWrite.IsZero() {
 					firstWrite = writeStarted
 				}
@@ -511,18 +536,20 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 				for i := 0; i < len(refinements); {
 					end := progressiveBatchEnd(refinements, i)
 					encodeStarted := time.Now()
-					encoded, err := progressive.upgrade(refinements[i:end], id)
+					packets, err := progressive.finishUpgrades(refinements[i:end], id)
 					encodeTime += time.Since(encodeStarted)
 					if err != nil {
 						return err
 					}
-					if len(batch)+graphicsProgressiveHeaderSize+len(encoded) > 256<<10 {
-						if err := sendBatch(batch); err != nil {
-							return err
+					for _, encoded := range packets {
+						if len(batch)+graphicsProgressiveHeaderSize+len(encoded) > 256<<10 {
+							if err := sendBatch(batch); err != nil {
+								return err
+							}
+							batch = batch[:0]
 						}
-						batch = batch[:0]
+						batch = appendGraphicsProgressive(batch, encoded)
 					}
-					batch = appendGraphicsProgressive(batch, encoded)
 					i = end
 				}
 				batch = append(batch, graphicsProgressiveCopies(w, h, copies, !scratchActive)...)
@@ -587,9 +614,23 @@ func (c *client) bitmapLoopWithEncoder(progressive *progressiveEncoder) error {
 					batch = append(batch, update...)
 				}
 			}
+			refining := time.Now()
+			refined, extra, err := c.prepareCaptureRefinement(progressive, rects, copies, id, processingStarted, len(batch))
+			encodeTime += time.Since(refining)
+			if err != nil {
+				return err
+			}
+			if len(refined) != 0 {
+				batch = appendGraphicsProgressive(batch, extra)
+			}
 			batch = append(batch, gfxPDU(0xc, u32(id))...)
+			frameComplete = true
 			if err := sendBatch(batch); err != nil {
 				return err
+			}
+			if len(refined) != 0 {
+				progressive.commitUpgrade(refined)
+				refinementTiles += int64(len(refined))
 			}
 			processing := time.Since(processingStarted) - lateAckWait - sendTime
 			f.Timing.SentRDP("rdp-bitmap", firstWrite, processing, sendTime, frameAckWait)

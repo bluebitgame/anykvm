@@ -19,7 +19,7 @@ The [shared builder](../README.md#build) prepares nRF Connect SDK, west and the
 ARM toolchain under `build/`. From the repository root:
 
 ```sh
-python3 tools/build_firmware.py --targets nrf52840-ble
+python3 tools/build_firmware.py --targets nrf52840-xiao
 python3 tools/build_firmware.py --targets nrf52840-feather nrf52840-dongle
 ```
 
@@ -28,6 +28,10 @@ These select Zephyr boards `xiao_ble`, `adafruit_feather_nrf52840` and
 `build/firmware/releases/<target>/`. Flash the HEX through a debugger or the
 board's supported bootloader. Where a UF2 is produced, double-press RESET on
 XIAO/Feather and copy it to the bootloader drive. Building does not flash hardware.
+
+Release packages group all three boards in `firmware-nrf52840.zip`. Select the
+`nrf52840-xiao/`, `nrf52840-feather/` or `nrf52840-dongle/` directory for your
+board. This source directory is shared by all three targets.
 
 ## Connection topology
 
